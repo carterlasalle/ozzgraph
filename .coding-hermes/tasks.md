@@ -12,7 +12,6 @@ commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
 | ID | Task | Pri | Cpx | Deps | Tags | Model | Reasoning | Fallback |
 |----|------|-----|-----|------|------|-------|-----------|----------|
-| T03 | PR3: heartbeat, budgets, lifecycle (SIGTERM/SIGINT) | High | 4±1 | T02 | +++python, +++async, -vision | DS-V4-Flash | Medium | GLM-5.2 |
 | T04 | PR4: structured event logging | High | 3±1 | T01 | +++python, ++logging, -vision | DS-V4-Flash | Medium | GLM-5.2 |
 | T05 | PR5: OpenAI-compatible model client (list/complete, retry, timeout, token usage) | High | 4±1 | T02 | +++python, +++httpx, ++async, -vision | GLM-5.2 | High | DS-V4-Pro |
 | T06 | PR6: MCP client + `halctl` adapter (challenge/status/submit/hint/exit) | High | 5±1 | T02 | +++python, ++cli, ++integration, -vision | GLM-5.2 | High | DS-V4-Pro |
@@ -48,6 +47,7 @@ commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
 | T00 | Bootstrap init — repo, spec docs, AGENTS.md, uv scaffold | Trivial | 1±0 | — | DS-V4-Flash |
+| T03 | PR3: heartbeat, budgets, lifecycle (SIGTERM/SIGINT) | High | 4±1 | T02 | DS-V4-Flash | 41b16a4 |
 | T01 | PR1: init uv project + CI skeleton (lint, format, type, test gates) | Critical | 2±1 | e4deda1 | DS-V4-Flash |
 | T02 | PR2: runtime configuration + supervisor skeleton | Critical | 4±1 | 02711ad | DS-V4-Flash |
 
