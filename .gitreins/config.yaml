@@ -9,8 +9,14 @@ guards:
     python:
     - pyright
 evaluator:
-  max_iterations: 15
+  max_iterations: 60
+  max_time: 20m
+  max_input_tokens: 1M
+  max_output_tokens: 400k
   static_analysis_diagnostics: false
+defaults:
+  model: deepseek-v4-flash
+  api_key_env: GITREINS_LLM_API_KEY
 history:
   enabled: true
   storage: git

@@ -11,7 +11,6 @@ __pycache__/
 
 # uv
 .venv/
-uv.lock
 
 # GitReins local task state — never commit (foreman keeps these in sync)
 .gitreins/tasks.yaml
@@ -22,6 +21,9 @@ uv.lock
 *.db
 *.db-shm
 *.db-wal
+
+# hilo
+.vfs/
 
 # env / secrets
 .env
