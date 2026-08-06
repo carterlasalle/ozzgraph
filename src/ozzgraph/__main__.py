@@ -6,6 +6,7 @@ and exits with a code derived from the structured termination reason.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 
 from ozzgraph import __version__
@@ -16,6 +17,7 @@ _EXIT_CODES: dict[TerminationReason, int] = {
     TerminationReason.COMPLETED: 0,
     TerminationReason.INTERRUPTED: 130,
     TerminationReason.FAILED: 1,
+    TerminationReason.BUDGET_EXHAUSTED: 3,
 }
 
 
@@ -24,11 +26,11 @@ def main(argv: list[str] | None = None) -> int:
 
     Args:
         argv: CLI arguments. ``--version`` prints the package version and
-            exits 0. All other arguments are ignored by the PR2 skeleton.
+            exits 0. All other arguments are ignored by the PR3 kernel.
 
     Returns:
         Process exit code: 0 on clean completion, 1 on configuration or
-        runtime failure, 130 on interruption.
+        runtime failure, 130 on interruption, 3 on budget exhaustion.
     """
     args = sys.argv[1:] if argv is None else argv
 
@@ -43,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
         return _EXIT_CODES[TerminationReason.FAILED]
 
     supervisor = Supervisor(config)
-    reason = supervisor.run()
+    reason = asyncio.run(supervisor.run())
     return _EXIT_CODES[reason]
 
 

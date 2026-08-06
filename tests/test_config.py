@@ -52,3 +52,62 @@ def test_config_model_is_pydantic_v2() -> None:
     """The config model is a pydantic v2 BaseModel with validated fields."""
     OzzGraphConfig(hal_user_id="u", state_dir=Path("s"), artifact_dir=Path("a"))
     assert OzzGraphConfig.model_fields["hal_user_id"].is_required()
+
+
+def test_load_config_applies_budget_defaults() -> None:
+    """Budget and heartbeat knobs default without explicit env vars."""
+    config = load_config(environ={"HAL_USER_ID": "user-42"})
+    assert config.heartbeat_interval_s == 30
+    assert config.max_runtime_s == 7200
+    assert config.max_tokens == 0
+    assert config.max_model_calls == 0
+    assert config.max_tool_calls == 0
+    assert config.max_workers == 4
+    assert config.max_hints == 1
+
+
+def test_load_config_respects_budget_overrides() -> None:
+    """Explicit budget env vars override the defaults."""
+    config = load_config(
+        environ={
+            "HAL_USER_ID": "user-42",
+            "OZZGRAPH_HEARTBEAT_INTERVAL_S": "5",
+            "OZZGRAPH_MAX_RUNTIME_S": "60",
+            "OZZGRAPH_MAX_TOKENS": "100000",
+            "OZZGRAPH_MAX_MODEL_CALLS": "50",
+            "OZZGRAPH_MAX_TOOL_CALLS": "200",
+            "OZZGRAPH_MAX_WORKERS": "8",
+            "OZZGRAPH_MAX_HINTS": "3",
+        }
+    )
+    assert config.heartbeat_interval_s == 5
+    assert config.max_runtime_s == 60
+    assert config.max_tokens == 100000
+    assert config.max_model_calls == 50
+    assert config.max_tool_calls == 200
+    assert config.max_workers == 8
+    assert config.max_hints == 3
+
+
+def test_load_config_rejects_non_integer_budget() -> None:
+    """A non-integer budget env var fails loudly."""
+    with pytest.raises(ConfigError, match="OZZGRAPH_MAX_RUNTIME_S"):
+        load_config(environ={"HAL_USER_ID": "user-42", "OZZGRAPH_MAX_RUNTIME_S": "soon"})
+
+
+def test_load_config_ignores_blank_budget_env() -> None:
+    """A blank budget env var falls back to the default."""
+    config = load_config(environ={"HAL_USER_ID": "user-42", "OZZGRAPH_MAX_WORKERS": "  "})
+    assert config.max_workers == 4
+
+
+def test_config_model_validates_budget_ranges() -> None:
+    """Budget fields enforce their gt/ge constraints via pydantic."""
+    with pytest.raises(ValueError):
+        OzzGraphConfig(hal_user_id="u", max_runtime_s=0)
+    with pytest.raises(ValueError):
+        OzzGraphConfig(hal_user_id="u", max_tokens=-1)
+    with pytest.raises(ValueError):
+        OzzGraphConfig(hal_user_id="u", max_workers=0)
+    with pytest.raises(ValueError):
+        OzzGraphConfig(hal_user_id="u", max_hints=0)

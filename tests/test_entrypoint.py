@@ -1,21 +1,23 @@
-"""Entry-point tests for ``python -m ozzgraph`` (PR2)."""
+"""Entry-point tests for ``python -m ozzgraph`` (PR2/PR3)."""
 
 import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 from ozzgraph.__main__ import main
 
 
-def test_main_prints_identity_and_exits_zero(tmp_path, capsys, monkeypatch) -> None:
-    """A configured run prints the USER ID and terminates cleanly (exit 0)."""
+def test_main_prints_identity_and_exits_budget_exhausted(tmp_path, capsys, monkeypatch) -> None:
+    """A configured run prints USER ID, emits heartbeats, then exits 3 when
+    the (tiny) runtime budget exhausts."""
     monkeypatch.setenv("HAL_USER_ID", "user-42")
     monkeypatch.setenv("OZZGRAPH_STATE_DIR", str(tmp_path / "state"))
-    assert main([]) == 0
+    monkeypatch.setenv("OZZGRAPH_MAX_RUNTIME_S", "2")
+    monkeypatch.setenv("OZZGRAPH_HEARTBEAT_INTERVAL_S", "1")
+    assert main([]) == 3  # budget_exhausted
     out = capsys.readouterr().out
     assert out.startswith("USER ID: user-42")
+    assert "HEARTBEAT" in out
 
 
 def test_main_missing_required_env_fails_loudly(capsys, monkeypatch) -> None:
@@ -52,16 +54,36 @@ def test_module_invocation_requires_env(tmp_path: Path) -> None:
     assert "HAL_USER_ID" in result.stderr
 
 
-@pytest.mark.parametrize("extra", [(), ("--version",)])
-def test_module_invocation_with_env(tmp_path: Path, extra: tuple[str, ...]) -> None:
-    """With HAL_USER_ID set, the module prints the identity line and exits 0."""
+def test_module_invocation_with_env_budget_exhausted(tmp_path: Path) -> None:
+    """With HAL_USER_ID and a tiny runtime budget, the module prints the
+    identity line and exits 3 (budget_exhausted)."""
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "HAL_USER_ID": "user-42",
+        "OZZGRAPH_STATE_DIR": str(tmp_path / "state"),
+        "OZZGRAPH_MAX_RUNTIME_S": "1",
+    }
+    result = subprocess.run(
+        [sys.executable, "-m", "ozzgraph"],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 3
+    assert result.stdout.startswith("USER ID: user-42")
+
+
+def test_module_invocation_version_flag(tmp_path: Path) -> None:
+    """The --version flag bypasses the supervisor and exits 0."""
     env = {
         "PATH": "/usr/bin:/bin",
         "HAL_USER_ID": "user-42",
         "OZZGRAPH_STATE_DIR": str(tmp_path / "state"),
     }
     result = subprocess.run(
-        [sys.executable, "-m", "ozzgraph", *extra],
+        [sys.executable, "-m", "ozzgraph", "--version"],
         capture_output=True,
         text=True,
         env=env,
@@ -69,5 +91,4 @@ def test_module_invocation_with_env(tmp_path: Path, extra: tuple[str, ...]) -> N
         check=False,
     )
     assert result.returncode == 0
-    if not extra:
-        assert result.stdout.startswith("USER ID: user-42")
+    assert result.stdout.startswith("ozzgraph")
