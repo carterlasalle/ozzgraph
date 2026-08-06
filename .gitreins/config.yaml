@@ -1,0 +1,17 @@
+guards:
+  secrets: true
+  lint: true
+  tests: true
+  test_mode: full
+  test_command: uv run pytest -x --tb=short
+  static_analysis: true
+  static_analysis_tools:
+    python:
+    - pyright
+evaluator:
+  max_iterations: 15
+  static_analysis_diagnostics: false
+history:
+  enabled: true
+  storage: git
+  max_verdicts: 1000

@@ -1,0 +1,27 @@
+# ruff
+__pycache__/
+*.py[cod]
+.ruff_cache/
+
+# mypy
+.mypy_cache/
+
+# pytest
+.pytest_cache/
+
+# uv
+.venv/
+uv.lock
+
+# GitReins local task state — never commit (foreman keeps these in sync)
+.gitreins/tasks.yaml
+.gitreins/history/
+
+# runtime / state
+/state/
+*.db
+*.db-shm
+*.db-wal
+
+# env / secrets
+.env
