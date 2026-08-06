@@ -7,17 +7,20 @@ challenge-category logic (AGENTS.md architecture rule 10).
 
 PR3 turns :meth:`Supervisor.run` into an asyncio loop that emits heartbeats,
 enforces budgets, and terminates gracefully on ``SIGTERM``/``SIGINT``. PR4 adds
-structured event logging.
+append-only structured event logging (bootstrap and termination events).
 """
 
 from __future__ import annotations
 
 import asyncio
 import signal
+from datetime import UTC, datetime
 from enum import Enum
+from uuid import uuid4
 
 from ozzgraph.budgets import Budgets
 from ozzgraph.config import OzzGraphConfig
+from ozzgraph.events import BOOTSTRAP, TERMINATION, Event, EventLog
 from ozzgraph.heartbeat import Heartbeat
 
 _POLL_SECONDS = 0.25
@@ -41,13 +44,20 @@ class Supervisor:
 
     def __init__(self, config: OzzGraphConfig) -> None:
         self._config = config
+        self._run_id = uuid4().hex
         self._started = False
         self._budgets: Budgets | None = None
+        self._event_log: EventLog | None = None
 
     @property
     def config(self) -> OzzGraphConfig:
         """The validated configuration this supervisor runs with."""
         return self._config
+
+    @property
+    def run_id(self) -> str:
+        """Unique identifier for this run, minted once at construction."""
+        return self._run_id
 
     def budgets(self) -> Budgets:
         """The active budget tracker, after :meth:`run` has started."""
@@ -60,11 +70,34 @@ class Supervisor:
 
         The identity line must be the first output of the process so the
         competition platform can attribute the run (TECHNICAL_REQUIREMENTS).
-        Directory creation is idempotent.
+        Directory creation is idempotent. Once the directories exist, a
+        ``bootstrap`` event is appended to ``state_dir/actions.jsonl``.
         """
         print(f"USER ID: {self._config.hal_user_id}", flush=True)
         self._config.state_dir.mkdir(parents=True, exist_ok=True)
         self._config.artifact_dir.mkdir(parents=True, exist_ok=True)
+        self._event_log = EventLog.for_run(self._config.state_dir)
+        self._event_log.append(
+            Event(
+                run_id=self._run_id,
+                timestamp=datetime.now(UTC),
+                event_type=BOOTSTRAP,
+                producer="supervisor",
+                payload={
+                    "hal_user_id": self._config.hal_user_id,
+                    "state_dir": str(self._config.state_dir),
+                    "artifact_dir": str(self._config.artifact_dir),
+                    "budget": {
+                        "max_tokens": self._config.max_tokens,
+                        "max_model_calls": self._config.max_model_calls,
+                        "max_tool_calls": self._config.max_tool_calls,
+                        "max_workers": self._config.max_workers,
+                        "max_hints": self._config.max_hints,
+                        "max_runtime_s": self._config.max_runtime_s,
+                    },
+                },
+            )
+        )
         self._started = True
 
     async def run(self) -> TerminationReason:
@@ -130,6 +163,11 @@ class Supervisor:
     def stop(self, reason: TerminationReason = TerminationReason.INTERRUPTED) -> TerminationReason:
         """Terminate cleanly with a structured reason.
 
+        Once started, appends a ``termination`` event carrying the reason to
+        the run log before clearing the started flag, so both ``run()``
+        terminal paths (budget exhausted, interrupted) end with a structured
+        termination record. Stopping before :meth:`start` writes no event.
+
         Args:
             reason: Why the run ended.
 
@@ -138,5 +176,15 @@ class Supervisor:
         """
         if not self._started:
             return reason
+        assert self._event_log is not None  # start() sets it before _started
+        self._event_log.append(
+            Event(
+                run_id=self._run_id,
+                timestamp=datetime.now(UTC),
+                event_type=TERMINATION,
+                producer="supervisor",
+                payload={"reason": reason.value},
+            )
+        )
         self._started = False
         return reason

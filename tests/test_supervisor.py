@@ -1,11 +1,15 @@
-"""Tests for the supervisor kernel (PR2/PR3): identity, dirs, lifecycle,
-heartbeat, budget exhaustion, and signal handling."""
+"""Tests for the supervisor kernel (PR2–PR4): identity, dirs, lifecycle,
+heartbeat, budget exhaustion, signal handling, and structured event
+logging."""
 
 import asyncio
+import json
+from pathlib import Path
 
 import pytest
 
 from ozzgraph.config import OzzGraphConfig
+from ozzgraph.events import BOOTSTRAP, TERMINATION
 from ozzgraph.supervisor import Supervisor, TerminationReason
 
 
@@ -88,3 +92,57 @@ def test_run_raises_config_error_when_dirs_unwritable(tmp_path) -> None:
     )
     with pytest.raises(OSError):
         Supervisor(bad).start()
+
+
+def _read_records(tmp_path: Path) -> list[dict[str, object]]:
+    """Parse every line of the supervisor's run log."""
+    path = tmp_path / "state" / "actions.jsonl"
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def test_run_writes_bootstrap_and_termination_events(tmp_path) -> None:
+    """run() records a bootstrap event and ends with a termination event."""
+    supervisor = Supervisor(_config(tmp_path, max_runtime_s=1))
+    asyncio.run(supervisor.run())
+    records = _read_records(tmp_path)
+    bootstraps = [r for r in records if r["event_type"] == BOOTSTRAP]
+    assert len(bootstraps) == 1
+    assert bootstraps[0]["producer"] == "supervisor"
+    assert bootstraps[0]["run_id"] == supervisor.run_id
+    payload = bootstraps[0]["payload"]
+    assert isinstance(payload, dict)
+    assert payload["hal_user_id"] == "user-42"
+    assert "state_dir" in payload
+    assert "artifact_dir" in payload
+    assert isinstance(payload["budget"], dict)
+    assert records[-1]["event_type"] == TERMINATION
+    assert records[-1]["payload"] == {"reason": "budget_exhausted"}
+
+
+def test_run_id_fixed_at_construction_and_read_only(tmp_path) -> None:
+    """run_id is minted once per supervisor and cannot be reassigned."""
+    supervisor = Supervisor(_config(tmp_path))
+    run_id = supervisor.run_id
+    assert supervisor.run_id == run_id
+    assert run_id != Supervisor(_config(tmp_path)).run_id
+    with pytest.raises(AttributeError):
+        # Plain assignment would be a static type error, so probe via setattr.
+        setattr(supervisor, "run_id", "other")  # noqa: B010 - deliberate read-only check
+
+
+def test_stop_writes_termination_event_with_reason(tmp_path) -> None:
+    """stop(reason) records a termination event carrying the reason."""
+    supervisor = Supervisor(_config(tmp_path))
+    supervisor.start()
+    supervisor.stop(reason=TerminationReason.BUDGET_EXHAUSTED)
+    records = _read_records(tmp_path)
+    assert [r["event_type"] for r in records] == [BOOTSTRAP, TERMINATION]
+    assert records[1]["payload"] == {"reason": "budget_exhausted"}
+    assert records[1]["run_id"] == supervisor.run_id
+
+
+def test_stop_before_start_writes_no_event(tmp_path) -> None:
+    """stop() before start() is a no-op that writes no event log."""
+    supervisor = Supervisor(_config(tmp_path))
+    supervisor.stop(reason=TerminationReason.INTERRUPTED)
+    assert not (tmp_path / "state" / "actions.jsonl").exists()
