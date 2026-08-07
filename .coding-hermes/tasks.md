@@ -12,7 +12,6 @@ commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
 | ID | Task | Pri | Cpx | Deps | Tags | Model | Reasoning | Fallback |
 |----|------|-----|-----|------|------|-------|-----------|----------|
-| T05 | PR5: OpenAI-compatible model client (list/complete, retry, timeout, token usage) | High | 4±1 | T02 | +++python, +++httpx, ++async, -vision | GLM-5.2 | High | DS-V4-Pro |
 | T06 | PR6: MCP client + `halctl` adapter (challenge/status/submit/hint/exit) | High | 5±1 | T02 | +++python, ++cli, ++integration, -vision | GLM-5.2 | High | DS-V4-Pro |
 | T07 | PR7: SQLite state graph (entities, edges, schema_version, migrations) | Critical | 5±1 | T02 | +++python, +++aiosqlite, +++sqlite, -vision | GLM-5.2 | High | DS-V4-Pro |
 | T08 | PR8: artifact store + JSONL event log + replay (graph hash) | Critical | 5±1 | T07 | +++python, +++sqlite, ++replay, -vision | GLM-5.2 | High | DS-V4-Pro |
@@ -45,6 +44,7 @@ commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
+| T05 | PR5: OpenAI-compatible model client (list/complete, retry, timeout, token usage) | High | 4±1 | 60f4be6 | DS-V4-Flash |
 | T04 | PR4: structured event logging | High | 3±1 | 0948763 | DS-V4-Flash |
 | T00 | Bootstrap init — repo, spec docs, AGENTS.md, uv scaffold | Trivial | 1±0 | — | DS-V4-Flash |
 | T03 | PR3: heartbeat, budgets, lifecycle (SIGTERM/SIGINT) | High | 4±1 | T02 | DS-V4-Flash | 41b16a4 |
