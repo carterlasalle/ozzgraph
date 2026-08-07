@@ -1149,6 +1149,104 @@ Configuration knobs: none new — the scheduler reuses the existing
 is wired into the supervisor's idle loop or main flow; the scheduler is
 delivered as the component plus its contracts (PR step 24).
 
+## Workers
+
+The workers module (PR25) implements the second slice of Phase 9
+"Workers" (docs/IMPLEMENTATION_PLAN.md, step 25; docs/ARCHITECTURE.md,
+"Scheduler" + "Parallelism"): the declarative worker-scope model and
+the concrete scope-limited specialist workers the scheduler drives. It
+enforces the AGENTS.md data invariant "a worker cannot mutate state
+outside its declared task scope" deterministically and fail-closed
+(see docs/adr/0005). The reducer (step 26) and supervisor wiring are
+separate later PRs.
+
+```python
+class WorkerScope(BaseModel):
+    name: str  # stable scope name, for errors and logs
+    command_families: tuple[str, ...]  # subset of policy families; "shell" NOT implied
+    phases: tuple[Phase, ...]  # canonical Phase order, deduplicated
+    mutating: bool  # read-only vs mutating work
+    target_allowlist: tuple[str, ...]  # optional narrowing (hostnames/IPs/CIDRs)
+
+
+class WorkerTask(BaseModel):
+    task: Task  # the scheduler's DAG node (looked up by task.id)
+    command: str  # exactly one bounded action (AGENTS.md rule #4)
+    phase: Phase  # the phase this action serves (within required_scope.phases)
+    required_scope: WorkerScope  # the scope this task needs
+    timeout_seconds: int  # bounded action budget
+    output_limit: int  # per-stream output cap
+    working_directory: str
+
+
+class SpecialistWorker(ABC):  # implements the TaskRunner protocol
+    scope: ClassVar[WorkerScope]  # declared by each concrete worker
+    worker_id: ClassVar[str]
+    default_confidence: ClassVar[float]
+
+    def assign(self, work: WorkerTask) -> None: ...  # scope gate, before scheduling
+    async def run_task(self, task: Task) -> TaskOutcome: ...  # enforced run
+```
+
+A concrete worker declares its `scope`, `worker_id`, and
+`default_confidence` as class attributes; everything else is inherited.
+Built-in specialists:
+
+| Worker | Scope | Purpose |
+|---|---|---|
+| `ReconWorker` | read-only, `recon`+`shell`, BOOTSTRAP/RECON/ENUMERATION/PIVOT | service enumeration, host discovery, read-only probing (safe parallel work) |
+| `ArtifactAnalysisWorker` | read-only, `shell`, ENUMERATION/POST_EXPLOITATION/FLAG_HUNT | bounded artifact analysis (`file`, `strings`, `binwalk`, ...) |
+| `SubmissionWorker` | mutating, `shell`, VERIFY_AND_SUBMIT | supervisor-serialized submission wrapper — refuses any task without the reserved `serialized` conflict key |
+
+Execution pipeline (deterministic, fail-closed): `run_task` looks the
+task up in the worker's assignments and re-checks scope coverage, then
+rejects the action itself — a command whose classified family is
+outside the declared families, or a mutating-family command on a
+read-only worker, raises a typed `WorkerScopeError` BEFORE anything
+executes. Approved commands pass the scope-narrowed policy (when target
+narrowing is declared) and the operator `ScopePolicy` (the worker's
+families as `worker_scope`), have their fingerprint recorded (loop
+prevention), and run through the bounded shell runner. On success the
+bounded output is stored as content-addressed artifacts and returned as
+one structured `Finding` (reused from the scheduler) with provenance
+(task id, worker source) and mandatory evidence references — never
+free-form prose as state. A nonzero exit or timeout returns a structured
+failed `TaskOutcome`. When driven through the scheduler, a worker scope
+violation becomes a structured failed `worker_run` (never silent, never
+retried).
+
+Supervisor-only serialization composes (AGENTS.md rule #7):
+`SubmissionWorker` can only ever run tasks created with
+`serialized_task()` — its gate requires the reserved
+`SERIALIZED_CONFLICT_KEY`, and the scheduler already serializes such
+tasks against every other task. Only the supervisor may wire this
+worker (rule #5); nothing is wired in this PR.
+
+Worker errors (all `RuntimeError` subclasses):
+
+| Error | Raised when |
+|---|---|
+| `WorkerError` | base error for the worker layer (missing scope/worker_id/confidence declaration) |
+| `WorkerScopeError` | base error for every scope rejection (fail closed) |
+| `EmptyWorkerScopeError` | a scope declares no command families or no phases |
+| `UnknownCommandFamilyError` | a scope declares a family the policy gate does not know |
+| `ReadOnlyScopeError` | a read-only scope declares a mutating family |
+| `TaskOutOfScopeError` | a task is not covered by the worker's scope, or is unassigned |
+| `FamilyOutOfScopeError` | a command classifies into a family outside the declared families |
+| `ReadOnlyViolationError` | a read-only worker attempts a mutating-family command |
+| `SerializationRequiredError` | a serialized worker refuses a task without the `serialized` conflict key |
+| `WorkerTaskError` | base error for task-assignment failures |
+| `DuplicateAssignmentError` | a worker is assigned the same task id twice |
+
+Determinism: the mutating partition is a module-level constant
+(`MUTATING_COMMAND_FAMILIES = {"exploit"}`), artifact ids are
+content-addressed sha256 digests, finding summaries derive from the
+command, exit code, and evidence ids, and confidence is a per-worker
+declared constant — no randomness, no wall-clock decisions, no dynamic
+imports. Workers persist nothing; the scheduler owns the `task` and
+`worker_run` entities and the event log (no new entities, edges, or
+events in this PR). Configuration knobs: none new.
+
 ## State Graph
 
 ```python

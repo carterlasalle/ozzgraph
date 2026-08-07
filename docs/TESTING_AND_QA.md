@@ -85,6 +85,24 @@ failed outcome and a crashing runner both become failed `worker_run`
 records), and graph/event persistence with replay consistency
 (replaying the event log reconstructs the identical graph hash).
 
+The "worker scopes" unit-test area (PR25) is covered by
+`tests/test_workers.py`: scope construction validation (empty scopes,
+blank/duplicate/unknown families, read-only scopes declaring mutating
+families, target-allowlist validation, deterministic canonicalization),
+scope containment (families, phases, mutation permission, CIDR-aware
+target narrowing), the assignment gate (out-of-scope tasks rejected
+with the typed `TaskOutOfScopeError`, duplicate assignments, the
+supervisor-serialized task gate), run-time action enforcement (a
+read-only worker can never run a mutating-family command, families
+outside the declared scope are rejected loudly — every rejection test
+uses an instrumented recording runner and asserts nothing ever
+executed), the bounded execution pipeline (policy gate + fingerprint
+duplicate rejection + content-addressed artifact evidence in findings),
+structured failed outcomes, and an integration of a TaskDAG of
+specialist workers (recon, artifact analysis, serialized submission)
+driven through the scheduler with deterministic results and replay
+consistency (in-memory SQLite plus file-backed replay).
+
 ## Synthetic Challenge Suite
 
 Include isolated targets for:
