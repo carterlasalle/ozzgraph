@@ -831,6 +831,11 @@ Submission errors (all `RuntimeError` subclasses):
 | `DEFAULT_FLAG_PATTERN` | `r"flag\{[^{}\s]+\}"` | default `flag{...}` format (no braces or whitespace inside) |
 | `DEFAULT_MAX_SUBMISSIONS` | `3` | default per-candidate and run-total attempt cap |
 
+Run-only events never carry the raw flag text: `flags.candidate_found`
+and the `submission.*` verdict events persist only `flag_sha256` +
+`flag_length` digests (FLAGLEAK-001) — the plaintext flag lives only in
+the replay-required `graph.*` entity payloads.
+
 Configuration knobs (validated at load time — an invalid regex or
 non-integer cap is a `ConfigError`):
 

@@ -36,7 +36,10 @@ Design rules:
   (producer ``submissions``): ``submission.attempted`` before the wire
   call, then ``submission.accepted`` or ``submission.rejected`` after
   the verdict — mirroring the executor's "record the attempt before
-  execution" boundary.
+  execution" boundary. These run-only events carry ``flag_sha256`` +
+  ``flag_length`` digests, never the raw flag text (FLAGLEAK-001: they
+  are not replay-required, so the plaintext flag is not persisted at
+  rest in the event log).
 
 - Rejected candidates are terminal (docs/TECHNICAL_REQUIREMENTS.md:
   not previously rejected): a platform rejection marks the candidate
@@ -56,6 +59,7 @@ Payload contracts (docs/DATA_STRATEGY.md):
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from typing import Protocol
 
@@ -254,7 +258,8 @@ class SubmissionCoordinator:
                 "submission_id": submission_id,
                 "candidate_id": candidate.id,
                 "challenge_id": self._challenge_id,
-                "flag": flag,
+                "flag_sha256": hashlib.sha256(flag.encode("utf-8")).hexdigest(),
+                "flag_length": len(flag),
             },
         )
         result = await self._client.submit_flag(self._challenge_id, flag)
@@ -265,7 +270,8 @@ class SubmissionCoordinator:
                 {
                     "submission_id": submission_id,
                     "candidate_id": candidate.id,
-                    "flag": flag,
+                    "flag_sha256": hashlib.sha256(flag.encode("utf-8")).hexdigest(),
+                    "flag_length": len(flag),
                     "accepted": True,
                     "points": result.points,
                     "message": result.message,
@@ -279,7 +285,8 @@ class SubmissionCoordinator:
             {
                 "submission_id": submission_id,
                 "candidate_id": candidate.id,
-                "flag": flag,
+                "flag_sha256": hashlib.sha256(flag.encode("utf-8")).hexdigest(),
+                "flag_length": len(flag),
                 "accepted": False,
                 "message": result.message,
             },

@@ -32,7 +32,10 @@ Design rules:
   mutation shares one timestamp with its ``graph.*`` event (the PR20
   executor pattern), so replaying the log reconstructs the identical
   graph hash. Each found candidate also emits a ``flags.candidate_found``
-  run event (producer ``flags``).
+  run event (producer ``flags``) whose payload carries only a
+  ``flag_sha256`` digest and ``flag_length`` — never the raw flag text
+  (FLAGLEAK-001: run-only events are not replay-required, so the
+  plaintext flag is not persisted at rest in the event log).
 
 - Fail loudly (AGENTS.md rule #9): an invalid configured flag pattern
   is rejected at construction (:class:`InvalidFlagPatternError`), and
@@ -402,7 +405,8 @@ class FlagCandidateExtractor:
             FLAGS_CANDIDATE_FOUND,
             {
                 "candidate_id": candidate_id,
-                "flag": flag,
+                "flag_sha256": hashlib.sha256(flag.encode("utf-8")).hexdigest(),
+                "flag_length": len(flag),
                 "source_observation_id": observation_id,
                 "evidence_ids": list(evidence_ids),
             },

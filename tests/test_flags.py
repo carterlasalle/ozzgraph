@@ -16,6 +16,7 @@ replay tests use a file-backed live graph plus a fresh replay database.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -523,10 +524,53 @@ async def test_extractor_events_replay_to_identical_graph_hash(tmp_path: Path) -
     assert found["producer"] == "flags"
     payload = found["payload"]
     assert isinstance(payload, dict)
-    assert payload["flag"] == "flag{replay-me}"
+    assert payload["flag_sha256"] == hashlib.sha256(b"flag{replay-me}").hexdigest()
+    assert payload["flag_length"] == len("flag{replay-me}")
+    assert "flag" not in payload  # FLAGLEAK-001: no raw flag in run-only events
     assert payload["candidate_id"] == flag_candidate_id("flag{replay-me}")
     assert payload["source_observation_id"] == "obs-1"
     assert payload["evidence_ids"] == ["ev-1"]
+
+
+@pytest.mark.asyncio
+async def test_run_only_events_never_carry_raw_flag(tmp_path: Path) -> None:
+    """FLAGLEAK-001: run-only events carry digests, never the raw flag.
+
+    A full extract + accepted-submit cycle writes every run-only event
+    type to the log. The raw flag text must appear nowhere in a run-only
+    event payload (they are not replay-required), while the
+    replay-required ``graph.*`` events may still carry it via entity
+    payloads — the sweep below asserts both directions.
+    """
+    event_log = EventLog(tmp_path / "actions.jsonl")
+    raw_flag = "flag{leak-sweep}"
+    async with StateGraph(tmp_path / "live.db") as live:
+        await _seed_observed_flag_logged(live, event_log, text=f"the flag is {raw_flag}")
+        await FlagCandidateExtractor(run_id=RUN, event_log=event_log).extract(live)
+        await SubmissionCoordinator(
+            client=FakeSubmissionClient(accepted=True),
+            run_id=RUN,
+            challenge_id=CHALLENGE,
+            event_log=event_log,
+        ).submit_verified_candidate(live)
+
+    events = _read_events(event_log.path)
+    run_only = [
+        event
+        for event in events
+        if str(event["event_type"])
+        in {FLAGS_CANDIDATE_FOUND, SUBMISSION_ATTEMPTED, SUBMISSION_ACCEPTED, SUBMISSION_REJECTED}
+    ]
+    graph_events = [event for event in events if str(event["event_type"]).startswith("graph.")]
+    assert run_only  # the cycle produced every run-only event
+    assert graph_events
+
+    for event in run_only:
+        assert raw_flag not in json.dumps(event), f"raw flag leaked in {event['event_type']}"
+    # The sweep is sensitive: replay-required graph events still carry
+    # the flag (observation + flag_candidate entity payloads), so this
+    # test would fail if run events were not redacted.
+    assert any(raw_flag in json.dumps(event) for event in graph_events)
 
 
 # ---------------------------------------------------------------------------
@@ -834,7 +878,9 @@ async def test_submission_events_and_replay_identical_hash_rejected(
     payload = rejected["payload"]
     assert isinstance(payload, dict)
     assert payload["candidate_id"] == flag_candidate_id("flag{rejected-flow}")
-    assert payload["flag"] == "flag{rejected-flow}"
+    assert payload["flag_sha256"] == hashlib.sha256(b"flag{rejected-flow}").hexdigest()
+    assert payload["flag_length"] == len("flag{rejected-flow}")
+    assert "flag" not in payload  # FLAGLEAK-001: no raw flag in run-only events
     assert payload["accepted"] is False
 
 

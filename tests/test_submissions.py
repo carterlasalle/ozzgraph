@@ -14,6 +14,7 @@ SubmissionRejectedError, and every mutation is replay-consistent.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -362,7 +363,9 @@ async def test_submission_events_attempted_then_verdict(tmp_path: Path) -> None:
     assert SUBMISSION_REJECTED not in event_types
     attempted = next(event for event in events if event["event_type"] == SUBMISSION_ATTEMPTED)
     assert attempted["payload"]["candidate_id"] == candidate_id
-    assert attempted["payload"]["flag"] == FLAG
+    assert attempted["payload"]["flag_sha256"] == hashlib.sha256(FLAG.encode()).hexdigest()
+    assert attempted["payload"]["flag_length"] == len(FLAG)
+    assert "flag" not in attempted["payload"]  # FLAGLEAK-001: no raw flag in run-only events
     accepted = next(event for event in events if event["event_type"] == SUBMISSION_ACCEPTED)
     assert accepted["payload"]["accepted"] is True
 
