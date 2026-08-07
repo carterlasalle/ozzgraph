@@ -12,7 +12,6 @@ commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
 | ID | Task | Pri | Cpx | Deps | Tags | Model | Reasoning | Fallback |
 |----|------|-----|-----|------|------|-------|-----------|----------|
-| T16 | PR16: context compiler (bounded subgraph view, layers) | Critical | 5±1 | T07,T13 | +++python, ++graph, -vision | GLM-5.2 | High | DS-V4-Pro |
 | T17 | PR17: skill registry + lazy loading + initial skill packs | High | 4±1 | T16 | +++python, ++yaml, -vision | DS-V4-Flash | Medium | GLM-5.2 |
 | T18 | PR18: graph-driven phase router (predicates, not counts) | Critical | 5±1 | T16 | +++python, ++graph, -vision | GLM-5.2 | High | DS-V4-Pro |
 | T19 | PR19: planner + schemas (hypotheses, bounded plan, abandon conditions) | High | 5±1 | T18 | +++python, ++pydantic, ++graph, -vision | GLM-5.2 | High | DS-V4-Pro |
@@ -34,6 +33,7 @@ commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
+| T16 | PR16: context compiler (bounded subgraph view, layers) | Critical | 5±1 | 26b9c8e | DS-V4-Flash |
 | T15 | PR15: JSON adapter + repair strategy | High | 4±1 | 3a07f79 | DS-V4-Flash |
 | T14 | PR14: terminal-native + three-line adapters | High | 4±1 | 706cc7c | DS-V4-Flash |
 | T13 | PR13: model profile + adapter interfaces | High | 4±1 | 282625b | DS-V4-Flash |
