@@ -58,9 +58,11 @@ ozzgraph/
 ├── pyproject.toml
 ├── uv.lock
 ├── Dockerfile
+├── .dockerignore
 ├── README.md
 ├── AGENTS.md
 ├── docs/
+├── scripts/
 ├── src/ozzgraph/
 ├── tests/
 ├── fixtures/
@@ -84,6 +86,22 @@ cd dashboard
 yarn install --immutable
 yarn dev
 ```
+
+## Container Image
+
+```bash
+docker build -t ozzgraph .
+docker run --rm ozzgraph --version
+docker run --rm --read-only --tmpfs /tmp \
+  -e HAL_USER_ID=team-42 \
+  -e OZZGRAPH_MAX_RUNTIME_S=7200 \
+  ozzgraph
+```
+
+State and artifacts are written to `/var/lib/ozzgraph/state`
+(`-v /host/state:/var/lib/ozzgraph/state` to persist). Build recipe, size
+budget, SBOM generation, and startup/memory measurements:
+[docs/IMAGE_HARDENING.md](docs/IMAGE_HARDENING.md).
 
 ## Status
 

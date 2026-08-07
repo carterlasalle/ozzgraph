@@ -53,3 +53,53 @@ jobs:
         run: uv sync --frozen --group dev
       - name: Run pytest
         run: uv run pytest -x -q
+
+  docker:
+    # Competition image gate (T31): build, assert size < 1.5 GB, smoke test.
+    # GitHub-hosted runners ship a Docker daemon. If this job ever runs on a
+    # runner without Docker, make it conditional (e.g.
+    # `if: ${{ vars.RUN_DOCKER_JOB == 'true' }}`) — the job must stay
+    # defined so the image gate remains visible.
+    name: Docker image (build + size + smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build competition image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ozzgraph:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Assert image size < 1.5 GB
+        run: |
+          size_bytes="$(docker image inspect ozzgraph:ci --format '{{.Size}}')"
+          size_mib=$((size_bytes / 1024 / 1024))
+          budget_bytes=$((1500 * 1024 * 1024))
+          echo "image size: ${size_mib} MiB (${size_bytes} bytes)"
+          if [ "$size_bytes" -ge "$budget_bytes" ]; then
+            echo "::error::competition image is ${size_mib} MiB — exceeds the 1.5 GiB budget"
+            exit 1
+          fi
+      - name: Smoke — version (ENTRYPOINT)
+        run: docker run --rm ozzgraph:ci --version
+      - name: Smoke — halctl on PATH
+        run: docker run --rm --entrypoint halctl ozzgraph:ci --help
+      - name: Smoke — short supervised run, read-only rootfs
+        run: |
+          set +e
+          docker run --rm --read-only --tmpfs /tmp \
+            -e HAL_USER_ID=ci-smoke \
+            -e OZZGRAPH_MAX_RUNTIME_S=2 \
+            -e OZZGRAPH_HEARTBEAT_INTERVAL_S=1 \
+            ozzgraph:ci > /tmp/ozzgraph-smoke.log 2>&1
+          code=$?
+          set -e
+          cat /tmp/ozzgraph-smoke.log
+          # A 2-second budget run must terminate with BUDGET_EXHAUSTED (exit 3).
+          test "$code" -eq 3

@@ -1,0 +1,37 @@
+# Build context for the competition image — keep the image and the
+# context as small as possible. README.md / AGENTS.md / pyproject.toml /
+# uv.lock / src/ stay in the context (README.md is required by hatchling).
+
+# Version control
+.git
+.gitignore
+.gitreins/
+
+# Python tooling and caches
+.venv/
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# Runtime state (mounted at runtime, never baked in)
+state/
+*.db
+*.db-shm
+*.db-wal
+
+# Not part of the competition image
+dashboard/
+docs/
+tests/
+fixtures/
+local-lab/
+scripts/
+.github/
+
+# Local tooling / secrets
+.vfs/
+.env
+.pyright/
+pyrightconfig.json

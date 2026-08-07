@@ -252,7 +252,7 @@ Exit:
 28. Golden traces and model matrix
 29. Chaos and adversarial tests
 30. Optional Yarn dashboard
-31. Image hardening
+31. Image hardening (done — PR31)
 32. v1.0 release candidate
 
 ## Definition of Done

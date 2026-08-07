@@ -383,3 +383,26 @@ kernel's `graph_hash` byte-for-byte (`dashboard/test/replay.test.ts`).
 `graph.db` is opened with SQLite's read-only flag; the dashboard never
 writes kernel state and is not part of the Python package or the
 competition image (no dashboard dependency in `pyproject.toml`).
+
+## Container Image Hardening (PR31)
+
+The competition image (Dockerfile at the repository root) is gated in CI by
+the `docker` job in `.github/workflows/ci.yml`:
+
+- build the image with buildx;
+- assert `docker image inspect` size < 1.5 GiB (`1500 * 1024 * 1024` bytes);
+- smoke test 1 — `docker run --rm IMAGE --version` (ENTRYPOINT runs
+  `python -m ozzgraph`);
+- smoke test 2 — `docker run --rm --entrypoint halctl IMAGE --help`
+  (halctl on PATH);
+- smoke test 3 — a 2-second supervised run under `--read-only --tmpfs /tmp`
+  (state on the `/var/lib/ozzgraph/state` volume) must terminate with exit
+  code 3 (BUDGET_EXHAUSTED), proving the immutable
+  (read-only rootfs, volume-mounted state) runtime works end to end.
+
+Non-Docker shape tests live in `tests/test_image_hardening.py` (Dockerfile
+multi-stage/non-root/entrypoint shape, `.dockerignore` coverage, the shared
+size-budget constant, CI wiring, SBOM script syntax) so `uv run pytest`
+stays green on machines without Docker. Build recipe, minimization choices,
+size/startup/memory measurements, SBOM generation, and fallback verification
+are documented in docs/IMAGE_HARDENING.md (ADR-0007).
