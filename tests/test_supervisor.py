@@ -302,3 +302,177 @@ async def test_submit_verified_candidate_missing_challenge_id_raises(tmp_path, m
         await _seed_verified_candidate(graph)
         with pytest.raises(ConfigError, match="challenge id"):
             await supervisor.submit_verified_candidate(graph, client=_PrivilegedSubmitFake())
+
+
+# ---------------------------------------------------------------------------
+# PR23: supervisor-only paid hints (docs/TESTING_AND_QA.md scenario 8)
+# ---------------------------------------------------------------------------
+
+
+class _PrivilegedHintFake:
+    """Minimal privileged hint surface (structurally satisfies the protocol)."""
+
+    def __init__(self, *, privileged: bool = True) -> None:
+        self._privileged = privileged
+        self.calls: list[tuple[str, int]] = []
+
+    @property
+    def privileged(self) -> bool:
+        return self._privileged
+
+    async def request_hint(self, challenge_id: str, index: int):
+        from ozzgraph.hal_client import HintResult
+
+        self.calls.append((challenge_id, index))
+        return HintResult(
+            challenge_id=challenge_id, index=index, hint="try sqlmap --level 2", paid=True
+        )
+
+    async def aclose(self) -> None:
+        """No-op: the fake owns no connection (protocol conformance)."""
+
+
+async def _seed_hint_ready_graph(graph, *, recommendations: int = 2) -> None:
+    """Minimal graph satisfying every paid-hint gate rule (or fewer recs).
+
+    A two-step plan with six bound attempts (both steps attempted,
+    gain = 1.0), two evaluations as the information-gain anchor, and
+    the requested number of distinct evaluator recommendations.
+    """
+    from datetime import UTC, datetime
+
+    from ozzgraph.evaluator import ENTITY_EVALUATION
+    from ozzgraph.executor import ENTITY_ACTION, ENTITY_PLAN, ENTITY_PLAN_STEP
+    from ozzgraph.hints import HintPolicy
+
+    at = datetime(2026, 1, 1, tzinfo=UTC)
+    plan = "plan-exp-1"
+    await graph.create_entity(plan, ENTITY_PLAN, {"phase": "EXPLOITATION", "step_count": 2}, at=at)
+    for n in (1, 2):
+        await graph.create_entity(
+            f"{plan}-step-{n}", ENTITY_PLAN_STEP, {"objective": f"objective {n}"}, at=at
+        )
+        for i in range(3):
+            await graph.create_entity(
+                f"action-{n}-{i}",
+                ENTITY_ACTION,
+                {"plan_id": plan, "plan_step_id": f"{plan}-step-{n}"},
+                at=at,
+            )
+    for seq in (1, 2):
+        await graph.create_entity(
+            f"eval-{plan}-{seq}",
+            ENTITY_EVALUATION,
+            {
+                "plan_id": plan,
+                "step_outcomes": [
+                    {"step_id": f"{plan}-step-1", "outcome": "pending"},
+                    {"step_id": f"{plan}-step-2", "outcome": "pending"},
+                ],
+            },
+            at=at,
+        )
+    policy = HintPolicy()
+    for seq in range(1, recommendations + 1):
+        await policy.record_evaluator_recommendation(graph, f"eval-{plan}-{seq}")
+
+
+@pytest.mark.asyncio
+async def test_request_paid_hint_drives_privileged_coordinator(tmp_path) -> None:
+    """The supervisor buys through the coordinator and persists the purchase."""
+    from ozzgraph.state_graph import StateGraph
+
+    supervisor = Supervisor(_config(tmp_path))
+    supervisor.start()
+    client = _PrivilegedHintFake()
+
+    async with StateGraph(":memory:") as graph:
+        await _seed_hint_ready_graph(graph)
+        result = await supervisor.request_paid_hint(graph, 1, challenge_id="web-01", client=client)
+
+        assert result.paid is True
+        assert client.calls == [("web-01", 1)]
+        purchase = await graph.get_entity("hint-purchase-1")
+        assert purchase is not None
+        assert purchase.data["index"] == 1
+        assert purchase.data["paid"] is True
+
+    records = _read_records(tmp_path)
+    event_types = [record["event_type"] for record in records]
+    assert "hint.policy_approved" in event_types
+    assert "hint.purchase_attempted" in event_types
+    assert "hint.purchase_succeeded" in event_types
+
+
+@pytest.mark.asyncio
+async def test_request_paid_hint_blocked_end_to_end(tmp_path) -> None:
+    """TESTING_AND_QA scenario 8: a paid hint the gate denies never reaches the wire."""
+    from ozzgraph.hints import HintPolicyDeniedError
+    from ozzgraph.state_graph import StateGraph
+
+    supervisor = Supervisor(_config(tmp_path))
+    supervisor.start()
+    client = _PrivilegedHintFake()
+
+    async with StateGraph(":memory:") as graph:
+        # A graph the evaluator never recommended a hint for: the gate
+        # denies (fewer than two recommendations) before any wire call.
+        await _seed_hint_ready_graph(graph, recommendations=1)
+        with pytest.raises(HintPolicyDeniedError, match="recommendations"):
+            await supervisor.request_paid_hint(graph, 1, challenge_id="web-01", client=client)
+
+        assert client.calls == []
+        assert await graph.list_entities("hint_purchase") == []
+
+    records = _read_records(tmp_path)
+    event_types = [record["event_type"] for record in records]
+    assert "hint.policy_denied" in event_types
+    assert "hint.purchase_attempted" not in event_types
+
+
+@pytest.mark.asyncio
+async def test_request_paid_hint_refuses_non_privileged_client(tmp_path) -> None:
+    """Only the supervisor path may buy paid hints: non-privileged is refused."""
+    from ozzgraph.hints import HintPrivilegeError
+    from ozzgraph.state_graph import StateGraph
+
+    supervisor = Supervisor(_config(tmp_path))
+    supervisor.start()
+    client = _PrivilegedHintFake(privileged=False)
+
+    async with StateGraph(":memory:") as graph:
+        await _seed_hint_ready_graph(graph)
+        with pytest.raises(HintPrivilegeError, match="supervisor-only"):
+            await supervisor.request_paid_hint(graph, 1, challenge_id="web-01", client=client)
+        assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_request_paid_hint_requires_index_at_least_one(tmp_path) -> None:
+    """The paid-hint surface never requests hint zero (bootstrap owns it)."""
+    from ozzgraph.state_graph import StateGraph
+
+    supervisor = Supervisor(_config(tmp_path))
+    supervisor.start()
+
+    async with StateGraph(":memory:") as graph:
+        with pytest.raises(ValueError, match=">= 1"):
+            await supervisor.request_paid_hint(
+                graph, 0, challenge_id="web-01", client=_PrivilegedHintFake()
+            )
+
+
+@pytest.mark.asyncio
+async def test_request_paid_hint_missing_challenge_id_raises(tmp_path, monkeypatch) -> None:
+    """Without a challenge id, a hint purchase is refused loudly (ConfigError)."""
+    from ozzgraph.config import ConfigError
+    from ozzgraph.state_graph import StateGraph
+
+    monkeypatch.delenv("OZZGRAPH_CHALLENGE_ID", raising=False)
+    supervisor = Supervisor(_config(tmp_path))
+    supervisor.start()
+
+    async with StateGraph(":memory:") as graph:
+        await _seed_hint_ready_graph(graph)
+        with pytest.raises(ConfigError, match="challenge id"):
+            await supervisor.request_paid_hint(graph, 1, client=_PrivilegedHintFake())

@@ -58,6 +58,20 @@ SUBMISSION_ATTEMPTED = "submission.attempted"
 SUBMISSION_ACCEPTED = "submission.accepted"
 SUBMISSION_REJECTED = "submission.rejected"
 
+# Hint-policy event types (PR23). Run-log events emitted by the
+# supervisor-only hint coordinator (producer ``"hints"``) alongside the
+# ``graph.*`` events that mirror every graph mutation: a policy denial
+# (with the rule breakdown and reasons), a policy approval, the purchase
+# attempt before the wire call, and the purchase verdict. The
+# recommendation-recording event is emitted by the hint policy layer when
+# an evaluator recommendation is persisted.
+HINT_POLICY_DENIED = "hint.policy_denied"
+HINT_POLICY_APPROVED = "hint.policy_approved"
+HINT_PURCHASE_ATTEMPTED = "hint.purchase_attempted"
+HINT_PURCHASE_SUCCEEDED = "hint.purchase_succeeded"
+HINT_PURCHASE_FAILED = "hint.purchase_failed"
+HINT_RECOMMENDATION_RECORDED = "hint.recommendation_recorded"
+
 
 class Event(BaseModel):
     """One structured event in the append-only run log.

@@ -849,6 +849,187 @@ client=None)` is the supervisor-owned entry point (AGENTS.md invariant
 the client it owns. Models and workers never hold a client that could
 submit.
 
+## Hint Policy
+
+Hint handling (PR23) is the Phase 8 slice "free hint, paid-hint
+policy" (docs/IMPLEMENTATION_PLAN.md step 23). Hint zero is free and
+automatic — bootstrap requests it at startup and records
+`bootstrap.hint_requested`; paid hints (`index > 0`) are
+supervisor-only and gated by a deterministic policy. Two small pieces
+implement the paid side: `ozzgraph.hints.HintPolicy` is the pure,
+fail-closed gate over the authoritative graph state, and
+`ozzgraph.hints.HintCoordinator` is the ONLY kernel caller of
+`request_hint` for `index > 0`, mirroring how
+`SubmissionCoordinator` owns `submit_flag`. Neither module touches MCP
+directly: the coordinator drives the privileged `HalClient.request_hint`
+and every model-visible path can only produce action text, never a
+purchase.
+
+### The gate (`ozzgraph.hints.HintPolicy`)
+
+The gate is a pure decision function: `evaluate(graph, request)` reads
+the graph and returns a typed `PaidHintDecision` — it never mutates
+state, never emits events, and never touches the wire. Hint zero
+(`index == 0`) is approved unconditionally (rules
+`{"free_hint": true}`) — hint zero may be automatic
+(docs/TECHNICAL_REQUIREMENTS.md). Every paid hint is evaluated against
+all five rules below; the decision carries one boolean per rule (the
+`rules` map) plus every denial reason. The gate is fail-closed: any
+unrepresentable or unknown state (no plan entity, a corrupt
+`step_count` payload, an inconsistent step set, no
+evaluation/purchase anchor) denies with a documented reason — the gate
+never coerces state.
+
+```python
+class PaidHintRequest(BaseModel):
+    challenge_id: str
+    index: int  # 0 = free hint (never gated); > 0 = paid hint
+
+
+class PaidHintDecision(BaseModel):
+    approved: bool
+    index: int
+    rules: dict[str, bool]  # one boolean per gate rule (RULE_* constants)
+    reasons: tuple[str, ...]  # denial reasons; empty when approved
+    expected_value_gain: float | None  # (1 - progress) * min(1, attempts/6)
+
+
+class HintPolicy:
+    def __init__(
+        self,
+        *,
+        run_id: str = "hints",
+        event_log: EventLog | None = None,
+        max_hints: int = DEFAULT_MAX_HINTS,  # 1 — one paid hint per detonation
+        min_ev_gain: float = 0.5,
+        ev_stall_floor: int = 6,
+        required_recommendations: int = 2,
+        information_gain_types: tuple[str, ...] = ("fact", "evidence", "observation"),
+    ) -> None: ...
+
+    async def evaluate(self, graph: StateGraph, request: PaidHintRequest) -> PaidHintDecision: ...
+
+    async def record_evaluator_recommendation(
+        self, graph: StateGraph, evaluation_id: str, reason: str = ...
+    ) -> str: ...  # idempotent per evaluation; returns the entity id
+```
+
+The gate rules (all deterministic predicates over graph entities and
+their authoritative `created_at` timestamps — replay reconstructs them
+exactly):
+
+| Rule | `rules` key | Deterministic predicate (passes iff ...) |
+|---|---|---|
+| Paid-hint budget | `budget_available` | the persisted `hint_purchase` entity count is below `max_hints` (default 1). The count of `hint_purchase` entities IS the paid-hint ledger, so the count can never exceed the configured maximum (AGENTS.md data invariant). |
+| No recent information gain | `no_recent_information_gain` | no `fact`, `evidence`, or `observation` entity has `created_at` strictly after the anchor, where the anchor is the LATER of the latest `hint_purchase` entity's `created_at` and the latest `evaluation` entity's `created_at`. With neither a purchase nor an evaluation the rule is False (fail-closed: no anchor, no evidence the state was ever assessed). |
+| Exhausted low-cost actions | `low_cost_actions_exhausted` | every `plan_step` entity of the latest `plan` entity (the greatest `(created_at, id)`, the evaluator's PR21 rule) has at least one attempted `action` entity bound via its `plan_step_id` payload. A missing plan, a non-integer `step_count`, or a step set whose size mismatches `step_count` is unrepresentable and denies. |
+| Two evaluator recommendations | `two_evaluator_recommendations` | at least 2 `hint_recommendation` entities exist. Each is idempotent per evaluation (`hint-rec-<sha256(evaluation_id)>`), so 2 records mean 2 DISTINCT evaluations recommended a hint. |
+| Sufficient expected-value improvement | `sufficient_expected_value` | `(1 - progress) * min(1, attempts / EV_STALL_FLOOR) >= min_ev_gain` (0.5), where `progress` is the fraction of the latest plan's steps marked `completed` in the latest evaluation's `step_outcomes` (0.0 when no evaluation exists or its `step_outcomes` is missing/not a list) and `attempts` is the number of `action` entities bound to the latest plan via their `plan_id` payload. Intuition: the value of a hint scales with the remaining unsolved fraction times how much cheap effort already failed to move the run — "at most half progressed AND stalled at least halfway to the exhaustion floor". |
+
+### Recommendation records
+
+The evaluator (PR21) persists `evaluation` entities but emits no
+hint-recommendation signal, so the policy layer owns the minimal
+deterministic recommendation record. `record_evaluator_recommendation`
+persists one `hint_recommendation` entity
+(`hint-rec-<sha256(evaluation_id)>`, idempotent — the same evaluation
+can never recommend twice) that must reference a real `evaluation`
+entity (fail loudly otherwise), mirrored as a `graph.entity_created`
+event plus a `hint.recommendation_recorded` run event.
+
+### Coordinator (`ozzgraph.hints.HintCoordinator`)
+
+`HintCoordinator` is the only caller of `request_hint` for paid hints
+in the kernel. It enforces the supervisor-only boundary (a
+non-privileged client raises `HintPrivilegeError` before the gate
+runs), evaluates the gate, and only then requests, persists, and
+records the purchase.
+
+```python
+class HintCoordinator:
+    def __init__(
+        self,
+        *,
+        client: HintClient,  # must be privileged; HalClient satisfies the protocol
+        run_id: str,
+        challenge_id: str,
+        event_log: EventLog | None = None,
+        max_hints: int = DEFAULT_MAX_HINTS,  # 1
+        policy: HintPolicy | None = None,
+    ) -> None: ...
+
+    async def check_then_request(self, graph: StateGraph, index: int) -> HintResult: ...
+```
+
+`check_then_request` flow: free hint zero passes straight to the client
+(no gate, no privilege requirement, no purchase entity — bootstrap
+owns the automatic request); any paid hint is serialized under the
+coordinator's `asyncio.Lock` (AGENTS.md rule #7 — paid hints are
+always serialized): refuse loudly if the client is not privileged ->
+evaluate the gate -> on denial record `hint.policy_denied` (rule
+breakdown + reasons) and raise `HintPolicyDeniedError` -> on approval
+record `hint.policy_approved`, then `hint.purchase_attempted` BEFORE
+the wire call (the executor's "record the attempt before execution"
+boundary) -> call `client.request_hint` -> validate the platform's
+`paid` verdict (a `paid: false` answer to a paid request raises
+`HintStateError` and persists nothing) -> persist the
+`hint_purchase` entity -> record `hint.purchase_succeeded` (a
+`HalServiceError` records `hint.purchase_failed` and re-raises; no
+purchase is persisted). The lock plus the in-lock budget re-read
+guarantee concurrent gate evaluations never double-purchase — the
+paid-hint count never exceeds `max_hints`.
+
+`hint_purchase` payload contract (entities are entity-only — the count
+of entities IS the paid-hint ledger):
+
+| Field | Type | Meaning |
+|---|---|---|
+| `challenge_id` | `str` | the challenge the hint was bought for |
+| `index` | `int` | the hint index (`> 0`) |
+| `paid` | `bool` | strict `True` — the platform's verdict, validated |
+| `hint` | `str` | the platform's hint text |
+
+Hint-policy errors (all `RuntimeError` subclasses):
+
+| Error | Raised when |
+|---|---|
+| `HintError` | base error for the hint-policy layer |
+| `HintPrivilegeError` | the injected client is not privileged (supervisor-only, AGENTS.md invariant 5) |
+| `HintPolicyDeniedError` | the gate denied the paid hint; carries the full `PaidHintDecision` |
+| `HintStateError` | the platform answered a paid request with `paid: false`, or a recommendation references an unknown evaluation |
+
+### Events and constants
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `HINTS_PRODUCER` | `"hints"` | producer of hint-policy run events |
+| `HINT_POLICY_DENIED` | `"hint.policy_denied"` | gate denial; payload carries `index`, `approved: false`, the `rules` breakdown, `reasons`, `expected_value_gain` |
+| `HINT_POLICY_APPROVED` | `"hint.policy_approved"` | gate passed; payload carries the same rule breakdown |
+| `HINT_PURCHASE_ATTEMPTED` | `"hint.purchase_attempted"` | recorded before the wire call |
+| `HINT_PURCHASE_SUCCEEDED` | `"hint.purchase_succeeded"` | platform returned the paid hint; payload carries `purchase_id` |
+| `HINT_PURCHASE_FAILED` | `"hint.purchase_failed"` | wire failure or a `paid: false` verdict; payload carries the error |
+| `HINT_RECOMMENDATION_RECORDED` | `"hint.recommendation_recorded"` | a recommendation was persisted |
+| `ENTITY_HINT_PURCHASE` | `"hint_purchase"` | persisted paid-hint purchase (`hint-purchase-<seq>`, deterministic) |
+| `ENTITY_HINT_RECOMMENDATION` | `"hint_recommendation"` | evaluator recommendation (`hint-rec-<sha256(evaluation_id)>`) |
+| `RULE_BUDGET` etc. | `"budget_available"` ... | gate rule names on `PaidHintDecision.rules` |
+| `DEFAULT_MAX_HINTS` | `1` | default paid-hint budget (one per detonation) |
+
+Configuration knobs:
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `OZZGRAPH_MAX_HINTS` | `1` | Paid-hint budget — the persisted `hint_purchase` count must stay below it (validated at load time; `ge=1`) |
+
+### Supervisor integration
+
+`Supervisor.request_paid_hint(graph, index, challenge_id=None, *,
+client=None)` is the supervisor-owned entry point (AGENTS.md invariant
+5), mirroring `submit_verified_candidate`: it requires `index >= 1`
+(hint zero is bootstrap's job), resolves the challenge id, constructs a
+supervisor-owned privileged `HalClient` when none is injected, drives
+the coordinator, and closes the client it owns. Models and workers
+never hold a client that could buy a paid hint.
+
 ## State Graph
 
 ```python

@@ -48,7 +48,8 @@ Core entities:
 - Credential
 - FlagCandidate
 - Submission
-- Hint
+- HintPurchase
+- HintRecommendation
 - ModelCall
 - Checkpoint
 
@@ -75,6 +76,12 @@ are semantic contracts rather than SQL enums. Convention: entity types are
 stored in lowercase (`run`, `action`, `hypothesis`, ...), edge types in upper
 snake case (`ACTION PRODUCED OBSERVATION`), both caller-supplied stable
 strings.
+
+`hint_purchase` entities (PR23) are entity-only — no edge — because the
+count of entities IS the paid-hint ledger the hint-policy gate's budget
+rule reads; `hint_recommendation` entities reference `evaluation`
+entities by payload `evaluation_id` and are idempotent per evaluation
+(`hint-rec-<sha256(evaluation_id)>`).
 
 Concrete schema details (see `src/ozzgraph/state_graph.py`):
 

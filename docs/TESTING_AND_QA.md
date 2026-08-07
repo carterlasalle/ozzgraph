@@ -62,6 +62,14 @@ Required scenarios:
 9. Unsupported flag rejected.
 10. Correct flag submitted and graceful exit called.
 
+Scenario 8 ("Paid hint blocked") is covered end-to-end by
+`tests/test_hints.py` (every paid-hint gate rule denies its own
+condition, the gate is fail-closed, and concurrent evaluations never
+double-purchase) and `tests/test_supervisor.py`
+(`test_request_paid_hint_blocked_end_to_end` drives the
+supervisor-owned `request_paid_hint` on a graph the gate denies and
+asserts the wire is never reached).
+
 ## Synthetic Challenge Suite
 
 Include isolated targets for:

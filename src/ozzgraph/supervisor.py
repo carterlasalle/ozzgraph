@@ -14,7 +14,11 @@ loop, constructing the supervisor-owned privileged HalClient for it. PR22
 adds :meth:`Supervisor.submit_verified_candidate` — the supervisor-only
 submission surface that drives
 :class:`~ozzgraph.submissions.SubmissionCoordinator` with a privileged
-client; the idle loop itself is untouched.
+client. PR23 adds :meth:`Supervisor.request_paid_hint` — the
+supervisor-only paid-hint surface that drives
+:class:`~ozzgraph.hints.HintCoordinator` (the deterministic
+paid-hint gate) with a privileged client; the idle loop itself is
+untouched.
 """
 
 from __future__ import annotations
@@ -31,9 +35,10 @@ from ozzgraph.bootstrap import BootstrapRunner
 from ozzgraph.budgets import Budgets
 from ozzgraph.config import ConfigError, OzzGraphConfig
 from ozzgraph.events import BOOTSTRAP, TERMINATION, Event, EventLog
-from ozzgraph.hal_client import HalClient, SubmissionResult
+from ozzgraph.hal_client import HalClient, HintResult, SubmissionResult
 from ozzgraph.halctl import CHALLENGE_ID_ENV
 from ozzgraph.heartbeat import Heartbeat
+from ozzgraph.hints import HintClient, HintCoordinator
 from ozzgraph.state_graph import StateGraph
 from ozzgraph.submissions import SubmissionClient, SubmissionCoordinator
 
@@ -283,6 +288,83 @@ class Supervisor:
                 max_submissions=self._config.max_submissions,
             )
             return await coordinator.submit_verified_candidate(graph)
+        finally:
+            if owned:
+                await resolved_client.aclose()
+
+    async def request_paid_hint(
+        self,
+        graph: StateGraph,
+        index: int,
+        challenge_id: str | None = None,
+        *,
+        client: HintClient | None = None,
+    ) -> HintResult:
+        """Request one paid hint through the deterministic gate (supervisor-only).
+
+        The PR23 integration surface, mirroring :meth:`submit_verified_candidate`:
+        this method exists so a future loop driver can buy a paid hint
+        without ever giving a worker or model a privileged client. The
+        supervisor constructs the supervisor-owned privileged
+        :class:`HalClient` (the ``_run_bootstrap`` pattern, AGENTS.md
+        invariant 5) unless a client is injected (tests), and drives the
+        :class:`~ozzgraph.hints.HintCoordinator`, which evaluates the
+        deterministic paid-hint gate (budget, no recent information
+        gain, exhausted low-cost actions, two evaluator
+        recommendations, sufficient expected-value improvement — every
+        rule fail-closed), then requests, persists, and records the
+        purchase only when ALL conditions hold.
+
+        Args:
+            graph: The authoritative state graph the gate evaluates on
+                and the purchase persists in.
+            index: The paid hint index (>= 1). Hint zero is free and
+                owned by bootstrap — the paid-hint surface never
+                requests it.
+            challenge_id: The challenge to buy the hint for; defaults to
+                the ``OZZGRAPH_CHALLENGE_ID`` environment variable.
+            client: Optional hint client to drive (must be privileged);
+                when ``None`` the supervisor constructs and closes its
+                own privileged HalClient.
+
+        Raises:
+            ValueError: If ``index`` is less than 1.
+            ConfigError: If no challenge id is configured.
+            ozzgraph.hints.HintError: For every refusal the coordinator
+                raises (privilege, policy denial — see
+                :class:`~ozzgraph.hints.HintCoordinator`).
+            ozzgraph.hal_client.HalServiceError: If the platform call
+                fails after bounded retries.
+
+        Returns:
+            The platform's paid :class:`HintResult`.
+        """
+        if index < 1:
+            raise ValueError(
+                f"paid hint index must be >= 1, got {index}; "
+                "hint zero is free and requested by bootstrap"
+            )
+        if challenge_id is None:
+            resolved = os.environ.get(CHALLENGE_ID_ENV, "")
+            if resolved.strip() == "":
+                raise ConfigError(f"missing challenge id for hint purchase: set {CHALLENGE_ID_ENV}")
+            challenge_id = resolved
+        assert self._event_log is not None  # start() sets it before _started
+        owned = client is None
+        resolved_client = (
+            client
+            if client is not None
+            else HalClient(privileged=True, event_log=self._event_log, run_id=self._run_id)
+        )
+        try:
+            coordinator = HintCoordinator(
+                client=resolved_client,
+                run_id=self._run_id,
+                challenge_id=challenge_id,
+                event_log=self._event_log,
+                max_hints=self._config.max_hints,
+            )
+            return await coordinator.check_then_request(graph, index)
         finally:
             if owned:
                 await resolved_client.aclose()
