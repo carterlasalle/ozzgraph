@@ -129,11 +129,11 @@ Deliver:
 - planner (done — PR19)
 - prompts
 - executor loop (done — PR20)
-- deterministic evaluator
-- model evaluator fallback
-- plan budgets
-- replanning
-- loop recovery
+- deterministic evaluator (done — PR21)
+- model evaluator fallback (done — PR21)
+- plan budgets (done — PR21)
+- replanning (done — PR21)
+- loop recovery (done — PR21)
 
 Exit:
 
@@ -242,7 +242,7 @@ Exit:
 18. Graph-driven phase router
 19. Planner and schemas
 20. Executor loop (done — PR20)
-21. Evaluator and replanning
+21. Evaluator and replanning (done — PR21)
 22. Flag provenance and submission
 23. Hint policy
 24. Task DAG and scheduler

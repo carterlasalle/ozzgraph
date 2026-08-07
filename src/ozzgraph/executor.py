@@ -74,6 +74,7 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -93,6 +94,9 @@ from ozzgraph.policy import DuplicateActionError, FingerprintStore, PolicyDecisi
 from ozzgraph.router import PhaseRoute, PhaseRouter
 from ozzgraph.skills import SkillRegistry
 from ozzgraph.state_graph import StateGraph
+
+if TYPE_CHECKING:
+    from ozzgraph.evaluator import Evaluator, PlanEvaluation
 
 #: Hard bound on a single action's text length, in characters. Mirrors
 #: the policy gate's default command-length ceiling so the model
@@ -326,6 +330,9 @@ class Executor:
             3-7); defaults to a fail-closed :class:`ScopePolicy`.
         store: Fingerprint store rejecting duplicate actions (step 8);
             defaults to an in-memory :class:`FingerprintStore`.
+        evaluator: Optional PR21 evaluator the loop can consult between
+            turns via :meth:`consult_evaluator`; the turn loop itself
+            never calls it, so existing executor behavior is unchanged.
     """
 
     def __init__(
@@ -339,6 +346,7 @@ class Executor:
         planner: Planner | None = None,
         policy: ScopePolicy | None = None,
         store: FingerprintStore | None = None,
+        evaluator: Evaluator | None = None,
     ) -> None:
         self._budgets = budgets
         self._run_id = run_id
@@ -348,6 +356,7 @@ class Executor:
         self._planner = planner if planner is not None else Planner(self._registry)
         self._policy = policy if policy is not None else ScopePolicy()
         self._store = store if store is not None else FingerprintStore()
+        self._evaluator = evaluator
 
     async def turn(
         self,
@@ -432,6 +441,34 @@ class Executor:
             action=request,
             budget=self._accounting(),
         )
+
+    async def consult_evaluator(self, graph: StateGraph) -> PlanEvaluation | None:
+        """Consult the configured evaluator for a plan-level decision.
+
+        The minimal PR21 integration surface: the turn loop above never
+        calls the evaluator (its behavior is unchanged); a supervisor
+        calls this between turns to learn the evaluator's typed verdict
+        (continue/complete/abandon/replan), which the evaluator persists
+        as graph entities and ``graph.*`` events.
+
+        Args:
+            graph: The authoritative SQLite state graph to evaluate on.
+
+        Returns:
+            The evaluator's typed :class:`PlanEvaluation`, or ``None``
+            when no evaluator is configured.
+
+        Raises:
+            ozzgraph.evaluator.NoPlanError: If the graph holds no plan
+                entity.
+            ozzgraph.evaluator.InvalidPlanStateError: If the persisted
+                plan entities are invalid.
+            ozzgraph.evaluator.MalformedEvaluatorOutputError: If a model
+                fallback completion violates the verdict contract.
+        """
+        if self._evaluator is None:
+            return None
+        return await self._evaluator.decide_plan(graph)
 
     def _check_budget_exhausted(self) -> None:
         """Raise :class:`BudgetExceeded` for the first exhausted dimension.
