@@ -461,13 +461,19 @@ class Hypothesis(BaseModel):
     exploitation_direction: str | None  # payload `exploitation_direction`, if any
 
 
+class AbandonCondition(BaseModel):
+    condition: str  # deterministic predicate text (evaluated by the evaluator, PR21)
+    scope: Phase | str | None  # hypothesis/service id or plan phase; None = global to its carrier
+    rationale: str | None  # why the predicate triggers abandonment (optional)
+
+
 class PlanStep(BaseModel):
     id: str  # plan-scoped step id (`<plan id>-step-<n>`)
     hypothesis_id: str | None  # tested hypothesis; None for service-characterization steps
     objective: str  # bounded action objective
     skill_id: str  # selected skill (round-robin over the route's phase skills)
     completion_condition: str
-    abandon_condition: str
+    abandon_condition: AbandonCondition
 
 
 class Plan(BaseModel):
@@ -476,7 +482,7 @@ class Plan(BaseModel):
     hypotheses: tuple[Hypothesis, ...]  # ranked: confidence, then evidence weight, then id
     steps: tuple[PlanStep, ...]  # ordered, bounded by MAX_PLAN_STEPS
     completion_conditions: tuple[str, ...]
-    abandonment_conditions: tuple[str, ...]
+    abandonment_conditions: tuple[AbandonCondition, ...]  # plan-level abandon conditions
     skills: tuple[SkillSummary, ...]  # the route's phase skills (registry summaries)
 
 
@@ -525,10 +531,12 @@ lowercase, edge types uppercase, per docs/DATA_STRATEGY.md):
 | `service.characterized` | strict bool (same field the phase router reads) |
 
 Module constants: `MIN_STRATEGIC_PATHS = 2` (branching floor),
-`MAX_PLAN_STEPS = 5` (step cap), `PLAN_COMPLETION_CONDITIONS` and
-`PLAN_ABANDONMENT_CONDITIONS` (plan-level conditions the evaluator,
-PR21, interprets). The executor (PR20) and evaluator (PR21) consume
-`Planner`; nothing is wired into the supervisor yet.
+`MAX_PLAN_STEPS = 5` (step cap), `PLAN_COMPLETION_CONDITIONS` (plain
+plan-level completion strings) and `PLAN_ABANDONMENT_CONDITIONS`
+(plan-level `AbandonCondition` instances, scope `None` — they apply to
+the plan as a whole), which the evaluator, PR21, interprets. The
+executor (PR20) and evaluator (PR21) consume `Planner`; nothing is
+wired into the supervisor yet.
 
 ## State Graph
 

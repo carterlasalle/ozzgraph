@@ -24,6 +24,7 @@ from ozzgraph.planner import (
     MIN_STRATEGIC_PATHS,
     PLAN_ABANDONMENT_CONDITIONS,
     PLAN_COMPLETION_CONDITIONS,
+    AbandonCondition,
     Hypothesis,
     InvalidGraphStateError,
     MissingRequiredStateError,
@@ -488,10 +489,52 @@ def test_schemas_reject_extra_fields() -> None:
             objective="x",
             skill_id="y",
             completion_condition="c",
-            abandon_condition="a",
+            abandon_condition=AbandonCondition(condition="a"),
             bogus=1,
         )  # type: ignore[call-arg]
     with pytest.raises(ValidationError):
         Plan(id="p1", phase=Phase.EXPLOITATION, bogus=1)  # type: ignore[call-arg]
     with pytest.raises(ValidationError):
         NoPlanDecision(phase=Phase.RECON, reason="r", bogus=1)  # type: ignore[call-arg]
+
+
+def test_abandon_conditions_are_typed_schema_instances() -> None:
+    """Abandon conditions are AbandonCondition schemas, not bare strings.
+
+    Step- and plan-level conditions both carry the structured schema
+    (predicate text, scope, rationale), and a plain string is rejected
+    by construction (pydantic ValidationError) instead of being
+    coerced.
+    """
+    step = PlanStep(
+        id="p1-step-1",
+        hypothesis_id="hyp-1",
+        objective="x",
+        skill_id="y",
+        completion_condition="c",
+        abandon_condition=AbandonCondition(
+            condition="hypothesis hyp-1 gains new contradicting evidence",
+            scope="hyp-1",
+        ),
+    )
+    assert isinstance(step.abandon_condition, AbandonCondition)
+    assert step.abandon_condition.scope == "hyp-1"
+    assert step.abandon_condition.condition.startswith("hypothesis hyp-1")
+    phase_scoped = AbandonCondition(condition="x", scope=Phase.EXPLOITATION)
+    assert phase_scoped.scope == Phase.EXPLOITATION
+    plan = Plan(
+        id="p1",
+        phase=Phase.EXPLOITATION,
+        steps=(step,),
+        abandonment_conditions=PLAN_ABANDONMENT_CONDITIONS,
+    )
+    assert plan.abandonment_conditions
+    assert all(isinstance(condition, AbandonCondition) for condition in plan.abandonment_conditions)
+    with pytest.raises(ValidationError):
+        PlanStep(
+            id="p1-step-2",
+            objective="x",
+            skill_id="y",
+            completion_condition="c",
+            abandon_condition="a plain string",  # type: ignore[arg-type]
+        )

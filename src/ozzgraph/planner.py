@@ -115,15 +115,6 @@ PLAN_COMPLETION_CONDITIONS: tuple[str, ...] = (
     "a ranked hypothesis gained new supporting evidence with no contradictions",
 )
 
-#: Deterministic plan-level abandonment conditions, evaluated by the
-#: evaluator (PR21). The plan is abandoned when every ranked hypothesis
-#: is contradicted, or when the graph no longer routes to the plan's
-#: phase.
-PLAN_ABANDONMENT_CONDITIONS: tuple[str, ...] = (
-    "every ranked hypothesis gained contradicting evidence",
-    "the graph no longer routes to the plan's phase",
-)
-
 
 class PlannerError(RuntimeError):
     """Base error for the planner layer (AGENTS.md rule #9)."""
@@ -196,6 +187,46 @@ class Hypothesis(BaseModel):
     exploitation_direction: str | None = None
 
 
+class AbandonCondition(BaseModel):
+    """One deterministic abandon condition, bound to a scope.
+
+    Attributes:
+        condition: Deterministic predicate text evaluated by the
+            evaluator (PR21): the step or plan is abandoned when the
+            predicate holds.
+        scope: The scope the condition applies to — the hypothesis or
+            service id for a step-level condition, the plan's phase
+            for a plan-level condition; ``None`` when the condition is
+            global to its carrier (the plan-level conditions in
+            :data:`PLAN_ABANDONMENT_CONDITIONS`).
+        rationale: Bounded explanation of why the predicate triggers
+            abandonment, for the evaluator's documentation; optional.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    condition: str = Field(min_length=1)
+    scope: Phase | str | None = None
+    rationale: str | None = None
+
+
+#: Deterministic plan-level abandonment conditions, evaluated by the
+#: evaluator (PR21). The plan is abandoned when every ranked hypothesis
+#: is contradicted, or when the graph no longer routes to the plan's
+#: phase. Carried as typed :class:`AbandonCondition` instances with no
+#: scope (they apply to the plan as a whole).
+PLAN_ABANDONMENT_CONDITIONS: tuple[AbandonCondition, ...] = (
+    AbandonCondition(
+        condition="every ranked hypothesis gained contradicting evidence",
+        rationale="every ranked path is refuted, so the plan cannot succeed",
+    ),
+    AbandonCondition(
+        condition="the graph no longer routes to the plan's phase",
+        rationale="the plan's premise, the routed phase, no longer holds",
+    ),
+)
+
+
 class PlanStep(BaseModel):
     """One bounded, ordered step of a plan.
 
@@ -213,7 +244,9 @@ class PlanStep(BaseModel):
         completion_condition: Deterministic condition under which the
             step is complete (evaluated by the evaluator, PR21).
         abandon_condition: Deterministic condition under which the step
-            is abandoned (evaluated by the evaluator, PR21).
+            is abandoned (evaluated by the evaluator, PR21); a typed
+            :class:`AbandonCondition` scoped to the step's hypothesis
+            or service.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -223,7 +256,7 @@ class PlanStep(BaseModel):
     objective: str = Field(min_length=1)
     skill_id: str = Field(min_length=1)
     completion_condition: str = Field(min_length=1)
-    abandon_condition: str = Field(min_length=1)
+    abandon_condition: AbandonCondition
 
 
 class Plan(BaseModel):
@@ -243,7 +276,8 @@ class Plan(BaseModel):
         completion_conditions: Plan-level completion conditions
             (:data:`PLAN_COMPLETION_CONDITIONS`).
         abandonment_conditions: Plan-level abandonment conditions
-            (:data:`PLAN_ABANDONMENT_CONDITIONS`).
+            (:data:`PLAN_ABANDONMENT_CONDITIONS`), typed
+            :class:`AbandonCondition` instances.
         skills: The route's phase skills (registry summaries) the steps
             select from.
     """
@@ -255,7 +289,7 @@ class Plan(BaseModel):
     hypotheses: tuple[Hypothesis, ...] = ()
     steps: tuple[PlanStep, ...] = ()
     completion_conditions: tuple[str, ...] = ()
-    abandonment_conditions: tuple[str, ...] = ()
+    abandonment_conditions: tuple[AbandonCondition, ...] = ()
     skills: tuple[SkillSummary, ...] = ()
 
 
@@ -496,7 +530,11 @@ async def _plan_steps(
             objective=objective,
             skill_id=skills[(index - 1) % len(skills)].skill_id,
             completion_condition=completion,
-            abandon_condition=abandon,
+            abandon_condition=AbandonCondition(
+                condition=abandon,
+                scope=hypothesis_id,
+                rationale="the step's objective is unreachable or refuted",
+            ),
         )
         for index, (objective, hypothesis_id, completion, abandon) in enumerate(
             raw[:MAX_PLAN_STEPS], start=1
