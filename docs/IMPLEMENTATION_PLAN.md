@@ -128,7 +128,7 @@ Deliver:
 - schemas (done — PR19)
 - planner (done — PR19)
 - prompts
-- executor loop
+- executor loop (done — PR20)
 - deterministic evaluator
 - model evaluator fallback
 - plan budgets
@@ -241,7 +241,7 @@ Exit:
 17. Skill registry and initial skills
 18. Graph-driven phase router
 19. Planner and schemas
-20. Executor loop
+20. Executor loop (done — PR20)
 21. Evaluator and replanning
 22. Flag provenance and submission
 23. Hint policy

@@ -538,6 +538,139 @@ the plan as a whole), which the evaluator, PR21, interprets. The
 executor (PR20) and evaluator (PR21) consume `Planner`; nothing is
 wired into the supervisor yet.
 
+## Executor
+
+The executor (PR20) is the bounded one-action-per-turn loop
+(docs/ARCHITECTURE.md, "Executor"; PR step 20): it consumes the
+graph-driven `PhaseRouter` (PR18) and the deterministic `Planner`
+(PR19), validates the model's untrusted action proposal against a
+strict output contract, bounds the approved action (skill default
+timeout, output limit, policy-gate fingerprint), records the attempted
+action before execution (AGENTS.md Security Boundaries step 10; Data
+Invariant "Every Observation references an Action"), and returns
+exactly ONE typed `ActionRequest` — never a list. Nothing is wired
+into the supervisor yet.
+
+```python
+class Executor:
+    def __init__(
+        self,
+        *,
+        budgets: Budgets,
+        run_id: str,
+        event_log: EventLog | None = None,
+        registry: SkillRegistry | None = None,
+        router: PhaseRouter | None = None,
+        planner: Planner | None = None,
+        policy: ScopePolicy | None = None,
+        store: FingerprintStore | None = None,
+    ) -> None: ...
+
+    async def turn(
+        self,
+        graph: StateGraph,
+        model_output: object,
+        *,
+        failed_actions: Sequence[FailedAction] = (),
+    ) -> ExecutorTurn: ...
+```
+
+One `Executor.turn` checks every bounded budget dimension (runtime,
+tokens, model calls, tool calls) and raises
+`~ozzgraph.budgets.BudgetExceeded` before anything else (AGENTS.md rule
+#9); routes the graph and plans under the routed phase (graph-state
+predicates, never action counts — rule #8); selects the next plan step
+that has no failed attempt (a plan whose every step has failed raises
+`PlanExhaustedError`); validates the model output against the strict
+`ModelAction` contract; runs the scope policy gate
+(`~ozzgraph.policy.ScopePolicy`, Security Boundaries steps 3-7) to
+obtain the action's normalized fingerprint; rejects any fingerprint
+that was already attempted (failed history) or already recorded
+(`~ozzgraph.policy.FingerprintStore`, step 8); attaches the skill's
+default timeout and the module output limit (step 9); persists the
+plan as graph entities the first time a plan id is seen; and records
+the attempted action as an `action` graph entity keyed by its
+fingerprint plus an `executor.action_attempted` run event (step 10).
+An approved turn consumes exactly one model call (the call that
+produced the proposal) and one tool call (the action this turn will
+execute) through the injected `~ozzgraph.budgets.Budgets`.
+
+Schema fields (all pydantic v2 models with `extra="forbid"`):
+
+| Model | Field | Meaning |
+|---|---|---|
+| `ModelAction` | `action` | The model's proposed action text — a bounded command line or `halctl` invocation (1..`MAX_ACTION_LENGTH` chars) |
+| `ModelAction` | `skill_id` | The skill the model selected from the advertised summaries (1..64 chars) |
+| `FailedAction` | `fingerprint` | sha256 hex digest of a failed action's canonical form (never retried) |
+| `FailedAction` | `reason` | Why it failed (e.g. `timeout`, `output_limit`, `error`) |
+| `FailedAction` | `plan_step_id` | The plan step the failed action belonged to, when planned |
+| `ActionRequest` | `action` | The bounded action text for the tool plane |
+| `ActionRequest` | `skill_id` | The skill that bounds and guides the action |
+| `ActionRequest` | `timeout_seconds` | The skill's default action timeout (>= 1) |
+| `ActionRequest` | `output_limit` | Per-stream output cap in characters (>= 1) |
+| `ActionRequest` | `fingerprint` | sha256 hex digest of the action's canonical form, from the policy gate |
+| `ActionRequest` | `phase` | The routed phase the action serves |
+| `ActionRequest` | `plan_id` | The plan the action serves, when one was produced |
+| `ActionRequest` | `plan_step_id` | The plan step the action implements, when planned |
+| `ActionRequest` | `hypothesis_id` | The hypothesis the step tests, when planned |
+| `ExecutorTurn` | `phase` | The routed phase this turn served |
+| `ExecutorTurn` | `predicate` | The transition predicate that matched the graph state |
+| `ExecutorTurn` | `action` | The single bounded action (never a list) |
+| `ExecutorTurn` | `budget` | `BudgetAccounting` snapshot after this turn's consumption |
+| `BudgetAccounting` | `tokens_used` / `model_calls_used` / `tool_calls_used` | Cumulative usage so far |
+| `BudgetAccounting` | `remaining_tokens` / `remaining_model_calls` / `remaining_tool_calls` | Remaining allowance; `None` when unbounded |
+
+`turn` fails loudly through the typed `ExecutorError` hierarchy (a
+`RuntimeError` subclass):
+
+| Error | Raised when |
+|---|---|
+| `MalformedOutputError` | the model output is not a JSON object string or a mapping, or violates the `ModelAction` contract (missing/extra/wrong-typed/over-long fields) |
+| `InvalidSkillError` | the model selected a skill that is unknown, does not cover the routed phase, or is not the plan step's assigned skill |
+| `DuplicateFingerprintError` | the action's fingerprint was already attempted (failed history) or already recorded (the duplicate store) |
+| `PlanExhaustedError` | a plan exists and every one of its steps has a failed attempt |
+
+The scope gate's own typed rejections (allowlist, platform/public-
+internet blocks, family/phase permissions) propagate unchanged as
+`~ozzgraph.policy.ScopeViolationError` subclasses; budget exhaustion
+propagates as `~ozzgraph.budgets.BudgetExceeded`.
+
+Module constants:
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `MAX_ACTION_LENGTH` | `4096` | Hard bound on one action's text length (mirrors the policy gate's command-length ceiling) |
+| `DEFAULT_OUTPUT_LIMIT` | `65536` | Default per-stream output cap (characters) attached to every action |
+| `EXECUTOR_ACTION_ATTEMPTED` | `"executor.action_attempted"` | Run event for every approved, recorded attempt |
+| `EXECUTOR_PLAN_PERSISTED` | `"executor.plan_persisted"` | Run event when a plan is first persisted as entities |
+| `ENTITY_ACTION` / `ENTITY_PLAN` / `ENTITY_PLAN_STEP` | `"action"` / `"plan"` / `"plan_step"` | Entity types the executor writes (lowercase, per docs/DATA_STRATEGY.md) |
+| `EDGE_PLANSTEP_TESTS_HYPOTHESIS` | `"PLANSTEP TESTS HYPOTHESIS"` | Edge type linking a plan step to the hypothesis it tests (uppercase) |
+
+Plans are persisted as graph entities the first time a plan id is seen
+(a plan id already in the graph is never rewritten): one `plan`
+entity (payload: `phase`, `step_count`, ranked `hypotheses`,
+`completion_conditions`, `abandonment_conditions`), one `plan_step`
+entity per step (payload: `hypothesis_id`, `objective`, `skill_id`,
+`completion_condition`, `abandon_condition`), and a `PLANSTEP TESTS
+HYPOTHESIS` edge from each step to the hypothesis it tests
+(service-characterization steps have no hypothesis and no edge). Every
+mutation is mirrored to the append-only event log as a
+`graph.entity_created` / `graph.edge_created` event carrying the same
+timestamp, so replaying the log reconstructs the identical graph hash.
+Plan ids derive from the graph hash (PR19), and the executor's own
+persistence is part of that state, so as the graph evolves across
+turns the persisted plan entities form the run's plan timeline; the
+evaluator (PR21) interprets them. Attempted actions are recorded as
+`action` entities keyed by fingerprint (`action-<fingerprint>`) with
+the full bounded action payload before the turn returns; the tool
+plane attaches observations to them later.
+
+Models never call raw MCP (AGENTS.md rule #5): the executor only ever
+produces action TEXT — a command line or a `halctl` invocation that
+the tool plane runs through the policy gate and the bounded shell
+runner. The executor constructs no MCP client and imports no MCP
+surface.
+
 ## State Graph
 
 ```python
