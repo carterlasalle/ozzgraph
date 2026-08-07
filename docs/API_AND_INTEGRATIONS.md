@@ -163,12 +163,13 @@ class BootstrapRunner:
         config: OzzGraphConfig,
         run_id: str,
         event_log: EventLog,
-        client: HalClient,          # supervisor-owned, privileged
+        client: HalClient,  # supervisor-owned, privileged
         environ: Mapping[str, str] | None = None,
         probe_runner: ProbeRunner | None = None,
     ) -> None: ...
 
     async def run(self) -> None: ...
+
 
 def load_targets(environ: Mapping[str, str]) -> Targets: ...
 ```
