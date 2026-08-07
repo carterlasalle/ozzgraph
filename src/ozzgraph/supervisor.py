@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from uuid import uuid4
 
+from ozzgraph.artifacts import ArtifactStore
 from ozzgraph.budgets import Budgets
 from ozzgraph.config import OzzGraphConfig
 from ozzgraph.events import BOOTSTRAP, TERMINATION, Event, EventLog
@@ -48,6 +49,7 @@ class Supervisor:
         self._started = False
         self._budgets: Budgets | None = None
         self._event_log: EventLog | None = None
+        self._artifact_store: ArtifactStore | None = None
 
     @property
     def config(self) -> OzzGraphConfig:
@@ -65,18 +67,27 @@ class Supervisor:
             raise RuntimeError("budgets not initialized; run() not started")
         return self._budgets
 
+    @property
+    def artifact_store(self) -> ArtifactStore:
+        """The run's artifact store, after :meth:`start` has run."""
+        if self._artifact_store is None:
+            raise RuntimeError("artifact store not initialized; start() not called")
+        return self._artifact_store
+
     def start(self) -> None:
         """Print identity immediately, then initialize runtime directories.
 
         The identity line must be the first output of the process so the
         competition platform can attribute the run (TECHNICAL_REQUIREMENTS).
         Directory creation is idempotent. Once the directories exist, a
-        ``bootstrap`` event is appended to ``state_dir/actions.jsonl``.
+        ``bootstrap`` event is appended to ``state_dir/actions.jsonl``
+        and the run's artifact store is created at ``state_dir/artifacts``.
         """
         print(f"USER ID: {self._config.hal_user_id}", flush=True)
         self._config.state_dir.mkdir(parents=True, exist_ok=True)
         self._config.artifact_dir.mkdir(parents=True, exist_ok=True)
         self._event_log = EventLog.for_run(self._config.state_dir)
+        self._artifact_store = ArtifactStore.for_run(self._config.state_dir)
         self._event_log.append(
             Event(
                 run_id=self._run_id,

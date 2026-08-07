@@ -34,6 +34,7 @@ path.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from collections.abc import AsyncIterator
@@ -278,6 +279,42 @@ def _now(at: datetime | None) -> datetime:
 def _fmt_ts(value: datetime) -> str:
     """Serialize a datetime as ISO-8601 for storage."""
     return value.isoformat()
+
+
+def _canonical_entity_line(record: EntityRecord) -> str:
+    """One canonical JSON line for an entity, for graph hashing.
+
+    Keys are emitted with ``sort_keys`` and compact separators, so the
+    same record always serializes to the same bytes regardless of dict
+    insertion order. Timestamps use the same ISO-8601 format as storage.
+    """
+    return json.dumps(
+        {
+            "id": record.id,
+            "type": record.type,
+            "data": record.data,
+            "created_at": _fmt_ts(record.created_at),
+            "updated_at": _fmt_ts(record.updated_at),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _canonical_edge_line(record: EdgeRecord) -> str:
+    """One canonical JSON line for an edge, for graph hashing."""
+    return json.dumps(
+        {
+            "id": record.id,
+            "type": record.type,
+            "src_id": record.src_id,
+            "dst_id": record.dst_id,
+            "data": record.data,
+            "created_at": _fmt_ts(record.created_at),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def _entity_record(row: aiosqlite.Row) -> EntityRecord:
@@ -735,6 +772,48 @@ class StateGraph:
         except sqlite3.Error as exc:
             raise StateGraphError(f"failed to list entities: {exc}") from exc
         return [_entity_record(row) for row in rows]
+
+    async def graph_hash(self) -> str:
+        """Deterministic sha256 hex digest over the graph's canonical content.
+
+        The digest input is UTF-8 text made of:
+
+        - one header line ``schema_version=<n>`` (from
+          ``PRAGMA user_version``),
+        - one canonical JSON line per entity, ordered by entity ID,
+        - one canonical JSON line per edge, ordered by edge ID.
+
+        Canonical lines use :func:`json.dumps` with ``sort_keys=True``
+        and compact separators, and timestamps are formatted with
+        :func:`_fmt_ts` (UTC ISO-8601), so the hash depends only on the
+        final state — never on insertion order, row ids, or file
+        internals. Two fresh databases that end in the same state
+        produce the same hash; an empty graph always yields
+        ``sha256("schema_version=<current>\\n")``.
+
+        The hash is computed on demand and never stored in the database.
+
+        Raises:
+            StateGraphError: If the graph is closed or a read fails.
+        """
+        conn = self._connection()
+        digest = hashlib.sha256()
+        try:
+            version = await _read_user_version(conn)
+            digest.update(f"schema_version={version}\n".encode())
+            entity_cursor = await conn.execute(
+                f"SELECT {_ENTITY_COLUMNS} FROM entities ORDER BY id"
+            )
+            for row in await entity_cursor.fetchall():
+                line = _canonical_entity_line(_entity_record(row))
+                digest.update(line.encode("utf-8") + b"\n")
+            edge_cursor = await conn.execute(f"SELECT {_EDGE_COLUMNS} FROM edges ORDER BY id")
+            for row in await edge_cursor.fetchall():
+                line = _canonical_edge_line(_edge_record(row))
+                digest.update(line.encode("utf-8") + b"\n")
+        except sqlite3.Error as exc:
+            raise StateGraphError(f"failed to compute graph hash: {exc}") from exc
+        return digest.hexdigest()
 
 
 def _map_edge_integrity_error(

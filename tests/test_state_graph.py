@@ -459,3 +459,92 @@ async def test_closed_graph_raises_loudly(tmp_path: Path) -> None:
     with pytest.raises(StateGraphError):
         await graph.create_entity("e1", "node")
     await graph.close()  # idempotent
+
+
+# Stable digest of the canonical empty graph: sha256("schema_version=2\n"),
+# i.e. the current schema version header and no entity or edge lines.
+EMPTY_GRAPH_HASH = "fc0b406e171ac834601bceea6d3edd8e0ecfedefbe465ad289f3d7b1c184fea9"
+
+
+@pytest.mark.asyncio
+async def test_graph_hash_empty_graph_stable(tmp_path: Path) -> None:
+    """An empty graph always yields the documented stable hash."""
+    async with StateGraph(tmp_path / "a.db") as first, StateGraph(tmp_path / "b.db") as second:
+        assert await first.graph_hash() == EMPTY_GRAPH_HASH
+        assert await second.graph_hash() == EMPTY_GRAPH_HASH
+
+
+@pytest.mark.asyncio
+async def test_graph_hash_deterministic_across_fresh_dbs(tmp_path: Path) -> None:
+    """Two fresh databases with identical mutations hash identically."""
+
+    async def build(path: Path) -> str:
+        async with StateGraph(path) as graph:
+            await graph.create_entity(
+                "svc-1", "service", {"port": 80, "nested": {"z": 1, "a": 2}}, at=T1
+            )
+            await graph.create_entity("tgt-1", "target", {}, at=T1)
+            await graph.update_entity("svc-1", {"port": 8080, "state": "open"}, at=T2)
+            await graph.create_edge(
+                "edge-1", "OBSERVED_ON", "svc-1", "tgt-1", {"probe": "nmap"}, at=T2
+            )
+            return await graph.graph_hash()
+
+    assert await build(tmp_path / "one.db") == await build(tmp_path / "two.db")
+
+
+@pytest.mark.asyncio
+async def test_graph_hash_order_independent(tmp_path: Path) -> None:
+    """The same final state hashes identically regardless of insertion
+    order."""
+
+    async def build(path: Path, order: list[str]) -> str:
+        async with StateGraph(path) as graph:
+            for entity_id in order:
+                await graph.create_entity(entity_id, "node", {"tag": entity_id}, at=T1)
+            await graph.create_edge("e1", "links", "a", "b", at=T2)
+            await graph.create_edge("e2", "links", "b", "c", at=T2)
+            return await graph.graph_hash()
+
+    first = await build(tmp_path / "ordered.db", ["a", "b", "c"])
+    second = await build(tmp_path / "shuffled.db", ["c", "a", "b"])
+    assert first == second
+    assert first != EMPTY_GRAPH_HASH
+
+
+@pytest.mark.asyncio
+async def test_graph_hash_changes_on_every_mutation(tmp_path: Path) -> None:
+    """update_entity, delete_edge, and delete_entity each change the hash."""
+    async with StateGraph(tmp_path / "graph.db") as graph:
+        await graph.create_entity("a", "node", {"v": 1}, at=T1)
+        await graph.create_entity("b", "node", {}, at=T1)
+        await graph.create_edge("e1", "links", "a", "b", at=T2)
+        base = await graph.graph_hash()
+
+        await graph.update_entity("a", {"v": 2}, at=T2)
+        updated = await graph.graph_hash()
+        assert updated != base
+
+        await graph.delete_edge("e1")
+        edge_deleted = await graph.graph_hash()
+        assert edge_deleted != updated
+
+        await graph.delete_entity("a")
+        entity_deleted = await graph.graph_hash()
+        assert entity_deleted != edge_deleted
+
+        # Everything gone: back to the documented empty-graph hash.
+        await graph.delete_entity("b")
+        assert await graph.graph_hash() == EMPTY_GRAPH_HASH
+
+
+@pytest.mark.asyncio
+async def test_graph_hash_includes_data_payloads(tmp_path: Path) -> None:
+    """Two graphs differing only in entity payload data hash differently."""
+    async with StateGraph(tmp_path / "a.db") as first:
+        await first.create_entity("e", "node", {"v": 1}, at=T1)
+        hash_a = await first.graph_hash()
+    async with StateGraph(tmp_path / "b.db") as second:
+        await second.create_entity("e", "node", {"v": 2}, at=T1)
+        hash_b = await second.graph_hash()
+    assert hash_a != hash_b

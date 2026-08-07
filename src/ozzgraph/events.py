@@ -26,6 +26,15 @@ SCHEMA_VERSION = 1
 BOOTSTRAP = "bootstrap"
 TERMINATION = "termination"
 
+# Graph-mutation event types (PR8). Every graph mutation must be
+# representable as an append-only event (AGENTS.md data invariant), and
+# replay reconstructs the graph from exactly these five event types.
+GRAPH_ENTITY_CREATED = "graph.entity_created"
+GRAPH_ENTITY_UPDATED = "graph.entity_updated"
+GRAPH_ENTITY_DELETED = "graph.entity_deleted"
+GRAPH_EDGE_CREATED = "graph.edge_created"
+GRAPH_EDGE_DELETED = "graph.edge_deleted"
+
 
 class Event(BaseModel):
     """One structured event in the append-only run log.
@@ -99,3 +108,111 @@ class EventLog:
         with self._path.open("a", encoding="utf-8") as handle:
             handle.write(event.model_dump_json() + "\n")
             handle.flush()
+
+
+class _GraphTimedPayload(BaseModel):
+    """Shared UTC timestamp validation for graph mutation payloads.
+
+    Mutation payloads carry the mutation's ``at`` timestamp so replay can
+    reproduce ``created_at``/``updated_at`` exactly. Deletion payloads
+    have no timestamp: deleting an entity or edge records no time.
+    """
+
+    at: datetime
+
+    @field_validator("at")
+    @classmethod
+    def _at_must_be_utc(cls, value: datetime) -> datetime:
+        """Reject naive timestamps and normalize any offset to UTC.
+
+        Raises:
+            ValueError: If the timestamp has no timezone information.
+        """
+        if value.tzinfo is None:
+            raise ValueError("at must be timezone-aware (UTC)")
+        return value.astimezone(UTC)
+
+
+class GraphEntityCreated(_GraphTimedPayload):
+    """Payload for :data:`GRAPH_ENTITY_CREATED`."""
+
+    entity_id: str
+    entity_type: str
+    data: dict[str, object] = Field(default_factory=dict)
+
+
+class GraphEntityUpdated(_GraphTimedPayload):
+    """Payload for :data:`GRAPH_ENTITY_UPDATED`."""
+
+    entity_id: str
+    data: dict[str, object]
+
+
+class GraphEntityDeleted(BaseModel):
+    """Payload for :data:`GRAPH_ENTITY_DELETED`."""
+
+    entity_id: str
+
+
+class GraphEdgeCreated(_GraphTimedPayload):
+    """Payload for :data:`GRAPH_EDGE_CREATED`."""
+
+    edge_id: str
+    edge_type: str
+    src_id: str
+    dst_id: str
+    data: dict[str, object] = Field(default_factory=dict)
+
+
+class GraphEdgeDeleted(BaseModel):
+    """Payload for :data:`GRAPH_EDGE_DELETED`."""
+
+    edge_id: str
+
+
+#: Any graph-mutation payload model.
+GraphPayload = (
+    GraphEntityCreated
+    | GraphEntityUpdated
+    | GraphEntityDeleted
+    | GraphEdgeCreated
+    | GraphEdgeDeleted
+)
+
+
+def graph_event(
+    event_type: str,
+    run_id: str,
+    producer: str,
+    payload: GraphPayload,
+    task_id: str | None = None,
+    worker_id: str | None = None,
+) -> Event:
+    """Build the :class:`Event` carrying a graph-mutation payload.
+
+    The event's timestamp is taken from the payload's ``at`` field so the
+    log line and the graph mutation share one timestamp; deletion
+    payloads carry no timestamp, so the event is stamped with UTC now.
+
+    Args:
+        event_type: One of the ``GRAPH_*`` constants.
+        run_id: Identifier of the run that produced the event.
+        producer: Component that emitted the event (e.g. ``supervisor``).
+        payload: The typed graph-mutation payload model.
+        task_id: Owning task, when the event belongs to a worker task.
+        worker_id: Owning worker, when the event was emitted by a worker.
+    """
+    at = (
+        payload.at
+        if isinstance(payload, (GraphEntityCreated, GraphEntityUpdated, GraphEdgeCreated))
+        else None
+    )
+    return Event(
+        run_id=run_id,
+        timestamp=at if at is not None else datetime.now(UTC),
+        event_type=event_type,
+        producer=producer,
+        task_id=task_id,
+        worker_id=worker_id,
+        payload=payload.model_dump(mode="json"),
+    )
