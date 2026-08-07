@@ -12,9 +12,6 @@ commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
 | ID | Task | Pri | Cpx | Deps | Tags | Model | Reasoning | Fallback |
 |----|------|-----|-----|------|------|-------|-----------|----------|
-| T24 | PR24: task DAG + scheduler (conflict keys, bounded parallel) | High | 5±1 | T18 | +++python, ++graph, ++async, -vision | GLM-5.2 | High | DS-V4-Pro |
-| T25 | PR25: specialist workers (scope-limited) | High | 5±1 | T24 | +++python, ++async, -vision | GLM-5.2 | High | DS-V4-Pro |
-| T26 | PR26: reducer + conflict handling (validated findings merge) | Critical | 5±1 | T25 | +++python, ++graph, -vision | GLM-5.2 | High | DS-V4-Pro |
 | T27 | PR27: synthetic test lab (isolated targets) | High | 5±1 | T09 | +++python, ++testing, ++containers, -vision | GLM-5.2 | High | DS-V4-Pro |
 | T28 | PR28: golden traces + model–harness matrix | High | 5±1 | T27 | +++python, ++testing, ++replay, -vision | GLM-5.2 | High | DS-V4-Pro |
 | T29 | PR29: chaos + adversarial tests (loops, timeouts, malformed, injection) | High | 5±1 | T27 | +++python, ++testing, ++security, -vision | GLM-5.2 | High | DS-V4-Pro |
@@ -26,6 +23,9 @@ commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
+| T26 | PR26: reducer + conflict handling (validated findings merge) | Critical | 5±1 | e22b37b | DS-V4-Flash |
+| T25 | PR25: specialist workers (scope-limited) | High | 5±1 | b4fd7da | DS-V4-Flash |
+| T24 | PR24: task DAG + scheduler (conflict keys, bounded parallel) | High | 5±1 | 393a2ba | DS-V4-Flash |
 | T23 | PR23: hint policy (free auto, paid gated, supervisor-only) | High | 4±1 | 72b0276 | DS-V4-Flash |
 | T22 | PR22: flag provenance + supervisor-only submission | Critical | 4±1 | 40a62eb | DS-V4-Flash |
 | T21 | PR21: evaluator (deterministic + model fallback) + replanning | High | 5±1 | 7666d01 | DS-V4-Flash |
