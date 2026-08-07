@@ -12,7 +12,6 @@ commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
 | ID | Task | Pri | Cpx | Deps | Tags | Model | Reasoning | Fallback |
 |----|------|-----|-----|------|------|-------|-----------|----------|
-| T07 | PR7: SQLite state graph (entities, edges, schema_version, migrations) | Critical | 5±1 | T02 | +++python, +++aiosqlite, +++sqlite, -vision | GLM-5.2 | High | DS-V4-Pro |
 | T08 | PR8: artifact store + JSONL event log + replay (graph hash) | Critical | 5±1 | T07 | +++python, +++sqlite, ++replay, -vision | GLM-5.2 | High | DS-V4-Pro |
 | T09 | PR9: bounded shell runner (process-group timeout, truncation, ToolResult) | Critical | 5±1 | T04 | +++python, ++subprocess, ++security, -vision | DS-V4-Flash | Medium | GLM-5.2 |
 | T10 | PR10: scope policy + duplicate detection (fingerprints, allowlists) | Critical | 5±1 | T09 | +++python, ++security, -vision | DS-V4-Flash | High | GLM-5.2 |
@@ -43,6 +42,7 @@ commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
+| T07 | PR7: SQLite state graph (entities, edges, schema_version, migrations) | Critical | 5±1 | 32d9185 | DS-V4-Flash |
 | T06 | PR6: MCP client + `halctl` adapter (challenge/status/submit/hint/exit) | High | 5±1 | 2af48d3 | DS-V4-Flash |
 | T05 | PR5: OpenAI-compatible model client (list/complete, retry, timeout, token usage) | High | 4±1 | 60f4be6 | DS-V4-Flash |
 | T04 | PR4: structured event logging | High | 3±1 | 0948763 | DS-V4-Flash |
