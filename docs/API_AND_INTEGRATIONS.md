@@ -147,6 +147,81 @@ class ShellRunner:
 - truncation state
 - artifact IDs
 
+## Observation and Parser
+
+Raw tool output stays outside model context; parsers normalize it into
+compact observations carrying summaries and artifact handles
+(docs/ARCHITECTURE.md, "Artifact Pipeline"). The parser layer implements
+the `ACTION PRODUCED OBSERVATION` and `OBSERVATION STORED_AS ARTIFACT`
+relationships from docs/DATA_STRATEGY.md.
+
+```python
+class Parser(ABC):
+    source: ClassVar[str]  # registry key, e.g. "shell" or "halctl"
+    kind: ClassVar[str]  # parse kind, e.g. "text" or "json"
+
+    def parse(self, raw: ToolResult | str) -> Observation: ...
+
+
+class Observation(BaseModel):
+    action_id: str  # producing Action; "" for raw-str parses
+    source: str  # e.g. "shell", "halctl:status"
+    kind: str  # parse kind ("text", "json")
+    summary: str  # compact summary for model context
+    data: dict[str, object]  # validated structured payload
+    artifact_ids: list[str]  # OBSERVATION STORED_AS ARTIFACT handles
+    truncated: bool  # any stream cut by its output limit
+    truncated_streams: list[str]
+    exit_code: int | None
+    ok: bool | None
+    malformed: bool  # unparseable or schema-violating output
+    parse_error: str | None  # structured parse failure detail
+
+
+PARSERS: dict[tuple[str, str], Parser]
+
+
+def register_parser(parser: Parser) -> None: ...
+def get_parser(source: str, kind: str) -> Parser: ...
+```
+
+`Observation` includes:
+
+- action ID linking to the producing Action (empty only for raw-string
+  parses, which callers must attribute before the graph layer)
+- source and parse kind (e.g. `shell`/`text`, `halctl:status`/`json`)
+- compact human-readable summary for model context (never the raw output)
+- validated structured payload
+- artifact handles (`OBSERVATION STORED_AS ARTIFACT`)
+- truncation carry-through from `ToolResult.truncation_state`
+- exit code and ok flag where applicable
+- `malformed` flag and structured `parse_error` for unparseable output
+
+Built-in parsers:
+
+| Parser | source | kind | Input |
+|---|---|---|---|
+| `ShellTextParser` | `shell` | `text` | generic shell stdout/stderr |
+| `HalctlJsonParser` | `halctl` | `json` | halctl single-JSON-document output |
+
+`ShellTextParser` is line-based: ANSI escapes are stripped, control
+characters are escaped to visible `\xNN` forms in summaries, and the
+structured payload carries line/character counts plus first/last lines.
+Target output is untrusted (AGENTS.md Security Boundaries): fake system
+instructions, shell control noise, and huge output become labeled data
+(summaries carry an "untrusted" prefix) and never crash the parser.
+
+`HalctlJsonParser` classifies halctl's document shapes (challenge /
+status / submission / hint / scoreboard / exit / error) into
+`source="halctl:<document>"` observations with validated structured
+data. Malformed JSON, non-object documents, trailing garbage, and shape
+violations produce `malformed=True` with a structured `parse_error` and
+a bounded diagnostic excerpt — never a raised exception. The registry is
+a plain deterministic dict keyed by `(source, kind)`, populated at
+import with the two built-in parsers; it is explicitly not a plugin
+system. `parse()` raises only `ParserArgumentError` for caller mistakes
+(e.g. non-ToolResult/non-str input); target output never raises.
+
 ## Skill Registry
 
 ```python
