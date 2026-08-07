@@ -1,33 +1,47 @@
-"""Model adapter interfaces for OzzGraph (PR13).
+"""Model adapters for OzzGraph (PR13 interface, PR14 concrete adapters).
 
-Defines the ADAPTER INTERFACE layer (docs/ARCHITECTURE.md, "Model
-Adapters"; docs/TECHNICAL_REQUIREMENTS.md, "Model Adapter
-Requirements"; PRD goal 2): the normalized, protocol-independent
-:class:`ParsedAction` parsed out of a model completion, the typed
-:class:`AdapterParseError`, and the :class:`ModelAdapter` abstract base
-class that every concrete adapter (PR14/15) must implement — protocol,
-prompt compiler, parser, repair strategy, and the protocol-specific
-limits carried from a :class:`~ozzgraph.profiles.ModelProfile`.
+Defines the ADAPTER layer (docs/ARCHITECTURE.md, "Model Adapters";
+docs/TECHNICAL_REQUIREMENTS.md, "Model Adapter Requirements"; PRD goal
+2): the normalized, protocol-independent :class:`ParsedAction` parsed
+out of a model completion, the typed :class:`AdapterParseError`, and
+the :class:`ModelAdapter` abstract base class that every concrete
+adapter implements — protocol, prompt compiler, parser, repair
+strategy, and the protocol-specific limits carried from a
+:class:`~ozzgraph.profiles.ModelProfile`.
+
+PR14 lands the two concrete adapters in this module, registered at
+import time so :func:`adapter_for` resolves them immediately:
+
+- :class:`TerminalAdapter` — the permissive plain-text fallback
+  protocol (``PROTOCOL_TERMINAL``): free text with an optional
+  ``ACTION: <kind>`` directive line and an optional ``PAYLOAD:
+  <value>`` line, degrading to a ``think`` action when no directive is
+  present. Never raises on plain text.
+- :class:`ThreeLineAdapter` — the strict bounded-output protocol
+  (``PROTOCOL_THREE_LINE``): exactly three non-empty lines in order
+  (``THOUGHT:``, ``ACTION:``, ``PAYLOAD:``); every deviation raises
+  :class:`AdapterParseError`. The JSON adapter lands in PR15.
 
 The registry (:data:`ADAPTERS`) is a plain deterministic dict keyed by
 protocol family, populated only by explicit :func:`register_adapter`
-calls (AGENTS.md rule #10 — not a plugin system). This PR declares the
-contract but registers no concrete adapter: the terminal-native and
-three-line adapters land in PR14 and the JSON adapter in PR15.
-
-Concrete parsers beyond the plain-text fallback behavior are NOT part
-of this PR: :class:`ParsedAction` is the shape concrete adapters must
-produce, and parsing itself is each concrete adapter's job.
+calls (AGENTS.md rule #10 — not a plugin system).
 """
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ozzgraph.profiles import FailureBehavior, ModelProfile
+from ozzgraph.profiles import (
+    _THREE_LINE_RE,
+    PROTOCOL_TERMINAL,
+    PROTOCOL_THREE_LINE,
+    FailureBehavior,
+    ModelProfile,
+)
 
 
 class ParsedAction(BaseModel):
@@ -167,9 +181,271 @@ class ModelAdapter(ABC):
         return self.profile.failure_behavior
 
 
-#: Deterministic registry: protocol family -> adapter class. Empty at
-#: import: concrete adapters register themselves explicitly (PR14/15)
-#: via :func:`register_adapter` — no discovery, AGENTS.md rule #10.
+#: Terminal protocol output-format instructions: free text with an
+#: optional action directive line. Compiled into every terminal prompt.
+_TERMINAL_FORMAT_INSTRUCTIONS = """\
+OUTPUT FORMAT
+Respond in plain text. If you want to act, end your response with a single
+action directive line:
+
+  ACTION: <kind>
+
+Optionally followed by one payload line:
+
+  PAYLOAD: <value>
+
+The payload may contain spaces. Everything else you write is your rationale.
+If you only want to think, write plain text and no directive.
+"""
+
+#: Three-line protocol output-format instructions: the strict bounded
+#: template. Compiled into every three-line prompt.
+_THREE_LINE_FORMAT_INSTRUCTIONS = """\
+OUTPUT FORMAT
+Respond with exactly three non-empty lines, in this order:
+
+  THOUGHT: <your reasoning>
+  ACTION: <kind>
+  PAYLOAD: <value>
+
+Each line is a label, a colon, and a non-empty value. No extra lines, no
+missing lines, no reordered labels.
+"""
+
+
+def _compile_prompt(
+    *,
+    mission: str,
+    graph_summary: str,
+    transcript_tail: str,
+    skills: Sequence[str],
+    format_instructions: str,
+    output_contract: str,
+) -> str:
+    """Compose the shared prompt skeleton for a concrete adapter.
+
+    Both PR14 adapters render the same context sections — mission,
+    graph summary, transcript tail, advertised skills, the protocol's
+    output-format instructions, and the passed-through output contract
+    — so the skeleton lives here and each adapter supplies its own
+    format block. Higher-level composition is the context compiler's
+    job (PR16); this guarantees the protocol instructions and the
+    contract are always present (docs/ARCHITECTURE.md, "Model
+    Adapters").
+    """
+    if skills:
+        skills_block = "\n".join(f"- {skill}" for skill in skills)
+    else:
+        skills_block = "(none)"
+    return "\n\n".join(
+        (
+            f"MISSION\n{mission}",
+            f"GRAPH SUMMARY\n{graph_summary}",
+            f"TRANSCRIPT TAIL\n{transcript_tail}",
+            f"AVAILABLE SKILLS\n{skills_block}",
+            format_instructions,
+            f"OUTPUT CONTRACT\n{output_contract}",
+        )
+    )
+
+
+#: A terminal action directive line: ``ACTION: <kind>``. Case-sensitive
+#: (matching the three-line labels); requires a non-empty value, so a
+#: bare ``ACTION:`` line is prose, not a directive.
+_ACTION_DIRECTIVE_RE = re.compile(r"^ACTION:\s*(.+)$")
+
+#: A terminal payload line: ``PAYLOAD: <value>`` (may contain spaces).
+_PAYLOAD_DIRECTIVE_RE = re.compile(r"^PAYLOAD:\s*(.+)$")
+
+
+class TerminalAdapter(ModelAdapter):
+    """Permissive plain-text adapter (protocol ``"terminal"``).
+
+    The fallback protocol for unknown models
+    (:data:`~ozzgraph.profiles.FALLBACK_PROFILE` declares terminal
+    only): free text that may contain an action directive line
+    ``ACTION: <kind>``, optionally followed by a ``PAYLOAD: <value>``
+    line. Everything before/around the directive becomes the rationale.
+    A completion with no directive degrades to a ``think`` action —
+    parsing never raises on plain text, only on empty input.
+
+    Consistent with the probe: :func:`probe_protocol` classifies any
+    non-JSON, non-three-line text as terminal, and this parser accepts
+    any text, so the two never disagree on what is terminal.
+    """
+
+    @property
+    def protocol(self) -> str:
+        return PROTOCOL_TERMINAL
+
+    def compile_prompt(
+        self,
+        *,
+        mission: str,
+        graph_summary: str,
+        transcript_tail: str,
+        skills: Sequence[str],
+        output_contract: str,
+    ) -> str:
+        """Compile the terminal prompt (free text + optional directive)."""
+        return _compile_prompt(
+            mission=mission,
+            graph_summary=graph_summary,
+            transcript_tail=transcript_tail,
+            skills=skills,
+            format_instructions=_TERMINAL_FORMAT_INSTRUCTIONS,
+            output_contract=output_contract,
+        )
+
+    def parse(self, completion: str) -> ParsedAction:
+        """Parse free text into a think or directed action.
+
+        The first ``ACTION: <kind>`` line is the directive; a
+        ``PAYLOAD: <value>`` line immediately after it is the payload;
+        all other lines (before and after) are the rationale. Without a
+        directive the whole completion degrades to a ``think`` action.
+
+        Raises:
+            AdapterParseError: Only when the completion is empty or
+                whitespace-only — plain text never raises.
+        """
+        if not completion.strip():
+            raise AdapterParseError(
+                protocol=self.protocol,
+                detail="completion is empty or whitespace-only",
+            )
+        lines = completion.splitlines()
+        action_index: int | None = None
+        kind = ""
+        payload: str | None = None
+        for index, line in enumerate(lines):
+            match = _ACTION_DIRECTIVE_RE.match(line)
+            if match is None:
+                continue
+            action_index = index
+            kind = match.group(1).strip()
+            if index + 1 < len(lines):
+                payload_match = _PAYLOAD_DIRECTIVE_RE.match(lines[index + 1])
+                if payload_match is not None:
+                    payload = payload_match.group(1).strip()
+            break
+        if action_index is None:
+            return ParsedAction(kind="think", rationale=completion.strip(), raw=completion)
+        kept = [
+            line
+            for index, line in enumerate(lines)
+            if index != action_index and not (payload is not None and index == action_index + 1)
+        ]
+        return ParsedAction(
+            kind=kind,
+            payload=payload,
+            rationale="\n".join(kept).strip(),
+            raw=completion,
+        )
+
+    def repair(self, completion: str, error: AdapterParseError) -> str | None:
+        """No terminal repair strategy in PR14 scope (PR15 owns repair).
+
+        The terminal protocol is permissive by design; its only parse
+        failure is empty input, which repair cannot fix. Never raises.
+        """
+        return None
+
+
+class ThreeLineAdapter(ModelAdapter):
+    """Strict three-line adapter (protocol ``"three_line"``).
+
+    The bounded-output contract: exactly three non-empty lines, in
+    order, each matching ``LABEL: <non-empty value>`` — THOUGHT, then
+    ACTION, then PAYLOAD. The ACTION value is the kind verb (e.g.
+    ``"run"``, ``"think"``, ``"submit"``, ``"hint"``, ``"exit"``); the
+    kind vocabulary is NOT validated here — executor policy (PR20)
+    owns that, so schema-valid kinds pass through.
+
+    Every deviation — wrong line count, wrong label order, missing or
+    empty values, extra lines, empty completion — raises
+    :class:`AdapterParseError` with a human-readable detail. The parser
+    is authoritative but consistent with the conservative probe
+    (:func:`~ozzgraph.profiles.probe_protocol`): non-empty lines are
+    the unit of counting, exactly as in the probe's shape check.
+    """
+
+    @property
+    def protocol(self) -> str:
+        return PROTOCOL_THREE_LINE
+
+    def compile_prompt(
+        self,
+        *,
+        mission: str,
+        graph_summary: str,
+        transcript_tail: str,
+        skills: Sequence[str],
+        output_contract: str,
+    ) -> str:
+        """Compile the strict three-line prompt."""
+        return _compile_prompt(
+            mission=mission,
+            graph_summary=graph_summary,
+            transcript_tail=transcript_tail,
+            skills=skills,
+            format_instructions=_THREE_LINE_FORMAT_INSTRUCTIONS,
+            output_contract=output_contract,
+        )
+
+    def parse(self, completion: str) -> ParsedAction:
+        """Parse a strict three-line completion into an action.
+
+        Raises:
+            AdapterParseError: On any deviation from the strict format.
+        """
+        if not completion.strip():
+            raise AdapterParseError(
+                protocol=self.protocol,
+                detail="completion is empty or whitespace-only",
+            )
+        lines = [line.strip() for line in completion.splitlines() if line.strip()]
+        if len(lines) != 3:
+            raise AdapterParseError(
+                protocol=self.protocol,
+                detail=f"expected exactly 3 non-empty lines, got {len(lines)}",
+            )
+        values: dict[str, str] = {}
+        for number, (line, label) in enumerate(
+            zip(lines, ("THOUGHT", "ACTION", "PAYLOAD"), strict=True), start=1
+        ):
+            match = _THREE_LINE_RE.match(line)
+            if match is None or match.group(1) != label:
+                raise AdapterParseError(
+                    protocol=self.protocol,
+                    detail=f"line {number}: expected {label}: <value>, got {line!r}",
+                )
+            values[label] = match.group(2).strip()
+        return ParsedAction(
+            kind=values["ACTION"],
+            payload=values["PAYLOAD"],
+            rationale=values["THOUGHT"],
+            raw=completion,
+        )
+
+    def repair(self, completion: str, error: AdapterParseError) -> str | None:
+        """Minimal PR14 repair: trim surrounding whitespace, else None.
+
+        Full repair strategies land in PR15. Trimming never changes a
+        successful parse (the parser already strips lines), but
+        retrying the trimmed text is the safe, never-raising
+        placeholder. Never raises.
+        """
+        trimmed = completion.strip()
+        if not trimmed or trimmed == completion:
+            return None
+        return trimmed
+
+
+#: Deterministic registry: protocol family -> adapter class. Populated
+#: at import by the concrete adapters below (terminal, three_line);
+#: the JSON adapter registers itself in PR15. Explicit
+#: :func:`register_adapter` only — no discovery, AGENTS.md rule #10.
 ADAPTERS: dict[str, type[ModelAdapter]] = {}
 
 
@@ -204,3 +480,11 @@ def adapter_for(protocol: str) -> type[ModelAdapter]:
         return ADAPTERS[protocol]
     except KeyError:
         raise AdapterRegistryError(f"no adapter registered for protocol {protocol!r}") from None
+
+
+# Register the PR14 concrete adapters at import time so
+# :func:`adapter_for` resolves them as soon as this module is imported
+# (a module nobody imports does not count as registered). The JSON
+# adapter registers itself in PR15.
+register_adapter(PROTOCOL_TERMINAL, TerminalAdapter)
+register_adapter(PROTOCOL_THREE_LINE, ThreeLineAdapter)

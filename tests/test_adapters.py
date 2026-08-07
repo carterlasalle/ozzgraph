@@ -1,4 +1,4 @@
-"""Tests for the model adapter interfaces (PR13).
+"""Tests for the model adapter interfaces (PR13) + PR14 registrations.
 
 Covers the adapter registry contract (:func:`register_adapter` /
 :func:`adapter_for` failure and success paths), the normalized
@@ -7,6 +7,12 @@ Covers the adapter registry contract (:func:`register_adapter` /
 :class:`ModelAdapter` abstract base contract: profile-derived limits
 and the ability of concrete subclasses to override them (AGENTS.md
 testing expectations for adapter changes).
+
+Since PR14 registers the terminal and three-line adapters at import
+time, the registry tests below use throwaway protocol names so they
+never collide with the built-in registrations; the built-ins'
+registration is verified in tests/test_adapters_terminal.py and
+tests/test_adapters_three_line.py.
 """
 
 from __future__ import annotations
@@ -82,26 +88,26 @@ def test_register_adapter_rejects_empty_protocol() -> None:
 def test_register_adapter_rejects_non_subclass() -> None:
     """A class that is not a ModelAdapter subclass is rejected."""
     with pytest.raises(AdapterRegistryError, match="ModelAdapter subclass"):
-        register_adapter("terminal", object)  # type: ignore[arg-type]
+        register_adapter("test_proto", object)  # type: ignore[arg-type]
 
 
 def test_register_adapter_rejects_duplicate() -> None:
     """Registering twice for the same protocol fails loudly."""
-    register_adapter("terminal", _MinimalAdapter)
+    register_adapter("test_dupe_proto", _MinimalAdapter)
     try:
         with pytest.raises(AdapterRegistryError, match="already registered"):
-            register_adapter("terminal", _MinimalAdapter)
+            register_adapter("test_dupe_proto", _MinimalAdapter)
     finally:
-        ADAPTERS.pop("terminal", None)
+        ADAPTERS.pop("test_dupe_proto", None)
 
 
 def test_adapter_for_returns_registered_class() -> None:
     """adapter_for resolves the exact class registered for a protocol."""
-    register_adapter("terminal", _MinimalAdapter)
+    register_adapter("test_resolve_proto", _MinimalAdapter)
     try:
-        assert adapter_for("terminal") is _MinimalAdapter
+        assert adapter_for("test_resolve_proto") is _MinimalAdapter
     finally:
-        ADAPTERS.pop("terminal", None)
+        ADAPTERS.pop("test_resolve_proto", None)
 
 
 def test_adapter_for_raises_on_missing_protocol() -> None:
