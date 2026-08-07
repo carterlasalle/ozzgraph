@@ -12,7 +12,6 @@ commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
 | ID | Task | Pri | Cpx | Deps | Tags | Model | Reasoning | Fallback |
 |----|------|-----|-----|------|------|-------|-----------|----------|
-| T10 | PR10: scope policy + duplicate detection (fingerprints, allowlists) | Critical | 5±1 | T09 | +++python, ++security, -vision | DS-V4-Flash | High | GLM-5.2 |
 | T11 | PR11: observation parsers (normalized results) | High | 4±1 | T09 | +++python, ++parsing, -vision | DS-V4-Flash | Medium | GLM-5.2 |
 | T12 | PR12: deterministic bootstrap (target parse, smoke flag, probe, free hint) | High | 4±1 | T07,T09 | +++python, ++integration, -vision | DS-V4-Flash | Medium | GLM-5.2 |
 | T13 | PR13: model profile + adapter interfaces | High | 4±1 | T05 | +++python, ++pydantic, -vision | DS-V4-Flash | Medium | GLM-5.2 |
@@ -40,6 +39,7 @@ commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
+| T10 | PR10: scope policy + duplicate detection (fingerprints, allowlists) | Critical | 5±1 | 6589721 | DS-V4-Flash |
 | T09 | PR9: bounded shell runner (process-group timeout, truncation, ToolResult) | Critical | 5±1 | 5745d2d | DS-V4-Flash |
 | T08 | PR8: artifact store + JSONL event log + replay (graph hash) | Critical | 5±1 | 59a3cff | DS-V4-Flash |
 | T07 | PR7: SQLite state graph (entities, edges, schema_version, migrations) | Critical | 5±1 | 32d9185 | DS-V4-Flash |
