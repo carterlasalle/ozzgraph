@@ -1,0 +1,76 @@
+[project]
+name = "ozzgraph"
+last_full_test = "2026-08-07T00:00:00Z"
+
+# Coverage counters: one increment per filed report in the matching subdir.
+# All zero — no structured E2E test has been run yet (TEST-INFRA-001 scaffold).
+# crypto = 0: no encryption at rest; leak/provenance verification untested.
+test_coverage = { f2b = 0, b2f = 0, negative = 0, visual = 0, crypto = 0, wiring = 0, structure = 0, audit = 0 }
+
+[[untested_paths]]
+path = "halctl submit flag -> kernel validation -> artifact store"
+reason = "Flag submission write path never exercised end-to-end; 879 unit/integration tests cover components in isolation only"
+dimensions_missing = ["f2b", "wiring", "audit"]
+
+[[untested_paths]]
+path = "challenge bootstrap -> probe -> free hint"
+reason = "Bootstrap/probe/hint flow never verified end-to-end"
+dimensions_missing = ["f2b", "b2f"]
+
+[[untested_paths]]
+path = "model client retry/timeout path"
+reason = "Exponential backoff, request timeouts, and provider error normalization only unit-tested; never verified against a simulated provider"
+dimensions_missing = ["f2b", "negative", "wiring"]
+
+[[untested_paths]]
+path = "executor one-action-per-turn loop"
+reason = "Turn loop (route -> plan -> validate ModelAction -> bound -> persist action entity -> single ActionRequest) not verified end-to-end"
+dimensions_missing = ["f2b", "structure", "wiring"]
+
+[[known_gaps]]
+dimension = "f2b"
+finding = "No structured E2E write-path harness exists; only 879 component-level pytest tests"
+severity = "critical"
+task_ref = "TEST-INFRA-001"
+
+[[known_gaps]]
+dimension = "b2f"
+finding = "No read-path verification: state-graph replay hash and halctl read subcommands (status, scoreboard, challenge show) never E2E-tested"
+severity = "high"
+task_ref = "TEST-INFRA-001"
+
+[[known_gaps]]
+dimension = "negative"
+finding = "No boundary testing of halctl inputs: flag length, hint --index types, unicode, injection-adjacent payloads, CLI contract violations"
+severity = "high"
+task_ref = "TEST-INFRA-001"
+
+[[known_gaps]]
+dimension = "visual"
+finding = "No terminal-render verification: scoreboard table alignment, unicode/emoji rendering, error-message visibility, ANSI handling"
+severity = "medium"
+task_ref = "TEST-INFRA-001"
+
+[[known_gaps]]
+dimension = "crypto"
+finding = "No verification that flag material is never leaked into logs, artifacts, or event log (no encryption at rest; provenance unenforced-by-test)"
+severity = "high"
+task_ref = "TEST-INFRA-001"
+
+[[known_gaps]]
+dimension = "wiring"
+finding = "halctl -> hal_client -> HalCTF MCP and executor -> tool plane -> observation wiring never verified cross-module"
+severity = "high"
+task_ref = "TEST-INFRA-001"
+
+[[known_gaps]]
+dimension = "structure"
+finding = "Graph entity/edge shape (plan, plan_step, action-<fingerprint>) and artifact index record shape never validated end-to-end"
+severity = "medium"
+task_ref = "TEST-INFRA-001"
+
+[[known_gaps]]
+dimension = "audit"
+finding = "Event-log completeness (graph.* events, executor.action_attempted, artifact provenance) never E2E-verified; no flag-leak sweep of logs"
+severity = "medium"
+task_ref = "TEST-INFRA-001"
