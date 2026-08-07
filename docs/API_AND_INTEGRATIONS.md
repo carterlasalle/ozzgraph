@@ -361,6 +361,84 @@ consistent with the policy gate's command families, and an explicit
 parsers (`shell`/`text`, `halctl`/`json`). Nothing is wired into the
 supervisor yet — graph-driven phase routing owns that (PR18).
 
+## Phase Router
+
+Phases are derived from graph state, not action counts (AGENTS.md rule
+#8): the router evaluates a fixed, documented table of graph-state
+predicates — presence or absence of typed entities, typed edges, and
+payload fields in the SQLite graph — and returns the first match. It
+holds no counters, reads no timestamps, and never consults a stored
+`phase` payload field, so the same graph state always routes to the
+same phase (PR18).
+
+```python
+class PhaseRoute(BaseModel):
+    phase: Phase  # the next phase to execute
+    predicate: str  # name of the transition predicate that matched
+    skills: tuple[SkillSummary, ...]  # registry summaries covering the phase
+
+
+class PhaseRouter:
+    def __init__(self, registry: SkillRegistry | None = None) -> None: ...
+    def skills_for(self, phase: Phase) -> tuple[SkillSummary, ...]: ...
+    async def route(self, graph: StateGraph) -> PhaseRoute: ...
+```
+
+`route` evaluates `TRANSITIONS` top to bottom (first match wins) and
+always terminates: the leading emptiness predicate routes the empty
+graph to `BOOTSTRAP`, and the trailing default routes any other
+unmatched non-empty graph to `REPLAN`. Terminal states outrank working
+phases: an accepted submission wins (`DONE`) over any pending work, and
+a verified flag candidate wins (`VERIFY_AND_SUBMIT`) over recon.
+`skills_for` is the SkillRegistry interop surface (AGENTS.md rule #6):
+it returns `registry.list_summaries(phase)`, and `route` attaches those
+summaries to the returned `PhaseRoute` so a downstream planner selects
+skills without a second lookup.
+
+`route` fails loudly (AGENTS.md rule #9) through the typed
+`PhaseRouterError` hierarchy (a `RuntimeError` subclass):
+
+| Error | Raised when |
+|---|---|
+| `InvalidGraphStateError` | a payload field the router reads is present but not a bool (e.g. `confirmed: "yes"`) |
+| `MissingRequiredStateError` | an accepted submission has no `SUBMISSION SUBMITS FLAG_CANDIDATE` edge, or a verified flag candidate has no `FLAG_CANDIDATE OBSERVED_IN EVIDENCE` edge (AGENTS.md data invariants) |
+
+Payload conventions (entity types lowercase, edge types uppercase, per
+docs/DATA_STRATEGY.md):
+
+| Field | Meaning |
+|---|---|
+| `target.confirmed` | recon complete for the target |
+| `target.pivot` | target discovered from the foothold (PIVOT routing) |
+| `target.reachable` | reachability confirmed (PIVOT routing) |
+| `service.characterized` | enumeration complete for the service |
+| `hypothesis.exploitable` | hypothesis has an exploitation direction |
+| `credential.valid` | credential grants usable access |
+| `credential.explored` | post-exploitation already consumed the access |
+| `flag_candidate.verified` | flag candidate has observed provenance |
+| `submission.accepted` | submission was accepted (terminal signal) |
+
+Transition predicates, in evaluation order:
+
+| # | Predicate | Graph state it matches | Phase |
+|---|---|---|---|
+| 1 | `graph_is_empty` | no entities at all | `BOOTSTRAP` |
+| 2 | `has_accepted_submission` | a `submission` with `accepted: true` and its `SUBMISSION SUBMITS FLAG_CANDIDATE` edge | `DONE` |
+| 3 | `has_verified_flag` | a `flag_candidate` with `verified: true` and its `FLAG_CANDIDATE OBSERVED_IN EVIDENCE` edge | `VERIFY_AND_SUBMIT` |
+| 4 | `targets_unconfirmed` | no `target`, or a non-pivot `target` without `confirmed: true` | `RECON` |
+| 5 | `has_uncharacterized_services` | a `service` without `characterized: true` | `ENUMERATION` |
+| 6 | `has_supported_exploitable_hypothesis` | a `hypothesis` with `exploitable: true` and an incoming `EVIDENCE SUPPORTS HYPOTHESIS` edge | `EXPLOITATION` |
+| 7 | `has_new_access` | a `credential` with `valid: true` and `explored` not true | `POST_EXPLOITATION` |
+| 8 | `has_new_reachable_targets` | a `target` with `pivot: true` and `reachable: true` | `PIVOT` |
+| 9 | `has_access_but_no_flag` | a `credential` with `valid: true` and no verified `flag_candidate` | `FLAG_HUNT` |
+| 10 | `default_replan` | any other non-empty graph | `REPLAN` |
+
+The predicate list mirrors docs/ARCHITECTURE.md ("Phase Transition
+Examples") with two additions: `DONE`/`VERIFY_AND_SUBMIT` are terminal
+states evaluated first, and `BOOTSTRAP` is the empty-graph default.
+The executor (PR20) consumes `PhaseRouter`; nothing is wired into the
+supervisor yet.
+
 ## State Graph
 
 ```python

@@ -115,7 +115,7 @@ Deliver:
 - skill schema
 - lazy registry
 - initial phase skill packs
-- graph-driven phase router
+- graph-driven phase router (done — PR18)
 
 Exit:
 
