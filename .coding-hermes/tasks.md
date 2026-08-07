@@ -10,7 +10,9 @@ commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
 ## Active
 
-_No pending tasks (board empty — only NEVER-DONE + E2E-001 fixtures remain)._
+| ID | Task | Pri | Cpx | Deps | Tags | Model | Reasoning | Fallback |
+|----|------|-----|-----|------|------|-------|-----------|----------|
+| DOC-001 | Full documentation pass — polish README + docs/, add a complete usage + customization suite | High | 3±1 | — | +++documentation, ++markdown, +readme | DS-V4-Flash | Medium | Kimi-K3 |
 
 ## Completed
 
