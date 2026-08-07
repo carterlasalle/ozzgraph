@@ -10,14 +10,13 @@ commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
 ## Active
 
-| ID | Task | Pri | Cpx | Deps | Tags | Model | Reasoning | Fallback |
-|----|------|-----|-----|------|------|-------|-----------|----------|
-| DOC-001 | Full documentation pass — polish README + docs/, add a complete usage + customization suite | High | 3±1 | — | +++documentation, ++markdown, +readme | DS-V4-Flash | Medium | Kimi-K3 |
+_Board is empty — only the permanent fixtures (E2E-001, NEVER-DONE) remain._
 
 ## Completed
 
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
+| DOC-001 | Full documentation pass — polished README + docs/USAGE.md + docs/CUSTOMIZATION.md (judge PASS 8cee566d) | High | 3±1 | 2a0daa3 | DS-V4-Flash |
 | DEPS-001 | ruff 0.16.1→0.16.2 (direct dev dep patch bump; pydantic-core 2.48.0 BLOCKED by pydantic==2.46.4 pin) | Low | 1±0 | a70f3f7 | DS-V4-Flash |
 
 | ID | Task | Pri | Cpx | Commit | Model |
