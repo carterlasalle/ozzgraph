@@ -117,6 +117,14 @@ Include isolated targets for:
 - simple network pivot
 - multi-stage flag discovery
 
+The suite is implemented as the synthetic test lab (PR27) in
+`src/ozzgraph/lab/`: deterministic, loopback-only, stdlib targets the
+harness can be pointed at via `OZZGRAPH_TARGET`, with lifecycle,
+registry-determinism, per-category discovery, and integration-solve
+tests in `tests/test_lab.py` / `tests/test_lab_solve.py`. See
+`docs/SYNTHETIC_LAB.md` for the catalogue, the flag format
+(`OZ{...}` + `OZZGRAPH_FLAG_PATTERN`), and how to run the suite.
+
 ## Golden Traces
 
 A golden trace contains:
