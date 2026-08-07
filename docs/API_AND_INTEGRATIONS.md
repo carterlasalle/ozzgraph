@@ -280,13 +280,86 @@ system. `parse()` raises only `ParserArgumentError` for caller mistakes
 
 ## Skill Registry
 
+Skills load lazily (AGENTS.md rule #6): the context compiler advertises
+compact per-phase summaries, and the full skill card is fetched only after
+the model selects a skill. The registry is a plain deterministic dict
+(`SKILLS`, keyed by `skill_id`) populated at import — explicitly not a
+plugin system, no discovery, no dynamic imports (PR17).
+
 ```python
+class Phase(str, Enum):
+    BOOTSTRAP = "BOOTSTRAP"
+    RECON = "RECON"
+    ENUMERATION = "ENUMERATION"
+    EXPLOITATION = "EXPLOITATION"
+    POST_EXPLOITATION = "POST_EXPLOITATION"
+    PIVOT = "PIVOT"
+    FLAG_HUNT = "FLAG_HUNT"
+    VERIFY_AND_SUBMIT = "VERIFY_AND_SUBMIT"
+    REPLAN = "REPLAN"
+    DONE = "DONE"
+
+
+class SkillSummary(BaseModel):
+    skill_id: str  # bounded identifier (<= 64 chars)
+    name: str  # short human name (<= 80 chars)
+    phases: tuple[Phase, ...]  # phases this skill covers, canonical order
+    description: str  # one-line advertisement, bounded (<= 200 chars)
+
+
+class Skill(BaseModel):
+    skill_id: str
+    name: str
+    phases: tuple[Phase, ...]  # deduplicated, ordered by the Phase enum
+    description: str  # same one-liner the summary advertises
+    card: str  # full skill card, loaded lazily on selection
+    timeout_seconds: int  # default action timeout (>= 1)
+    parsers: tuple[tuple[str, str], ...]  # (source, kind) keys into PARSERS
+
+
 class SkillRegistry:
     def list_summaries(self, phase: Phase) -> list[SkillSummary]: ...
     def load(self, skill_id: str) -> Skill: ...
     def parsers_for(self, skill_id: str) -> list[Parser]: ...
     def timeout_for(self, skill_id: str) -> int: ...
 ```
+
+`Phase` values are the uppercase phase names the policy gate already uses
+(`ozzgraph.policy.PHASES`), so phase router (PR18), policy, and skills
+share one vocabulary. `list_summaries` returns only the skills covering
+the given phase, sorted by `skill_id` (deterministic). `load` returns the
+full skill card for a selected skill and raises `SkillRegistryError` for
+an unknown `skill_id`. `parsers_for` resolves the skill's `(source, kind)`
+parser mappings to live `Parser` instances from `PARSERS`; a skill mapping
+an unregistered parser key is a broken registry entry and also raises
+`SkillRegistryError` (never silently skipped, never an empty list).
+`timeout_for` returns the skill's default timeout in seconds. All three
+lookup errors are the typed `SkillRegistryError` (fail loudly, AGENTS.md
+rule #9).
+
+Initial skill packs (PR17) — 12 skills across RECON, ENUMERATION,
+EXPLOITATION, FLAG_HUNT, and VERIFY_AND_SUBMIT:
+
+| skill_id | phases | timeout (s) | parsers |
+|---|---|---|---|
+| `recon_dns_enum` | RECON | 60 | shell/text |
+| `recon_http_fingerprint` | RECON | 60 | shell/text |
+| `recon_port_probe` | RECON | 90 | shell/text |
+| `enum_web_content` | ENUMERATION | 90 | shell/text |
+| `enum_service_version` | ENUMERATION | 60 | shell/text |
+| `enum_http_application` | ENUMERATION | 90 | shell/text |
+| `exploit_parameter_injection` | EXPLOITATION | 90 | shell/text |
+| `exploit_command_injection` | EXPLOITATION | 90 | shell/text |
+| `exploit_auth_bypass` | EXPLOITATION | 60 | shell/text |
+| `flag_hunt_filesystem` | FLAG_HUNT | 60 | shell/text |
+| `flag_hunt_web_artifacts` | FLAG_HUNT | 60 | shell/text |
+| `flag_hunt_submit` | FLAG_HUNT, VERIFY_AND_SUBMIT | 30 | halctl/json |
+
+Each skill card is bounded prompt text: purpose, bounded command guidance
+consistent with the policy gate's command families, and an explicit
+"Do NOT" list. Parser mappings are consistent with the two built-in
+parsers (`shell`/`text`, `halctl`/`json`). Nothing is wired into the
+supervisor yet — graph-driven phase routing owns that (PR18).
 
 ## State Graph
 
