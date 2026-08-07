@@ -10,16 +10,13 @@ commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
 ## Active
 
-| ID | Task | Pri | Cpx | Deps | Tags | Model | Reasoning | Fallback |
-|----|------|-----|-----|------|------|-------|-----------|----------|
-| FLAGLEAK-001 | Redact/hash flag material in run-only event-log events + state DBs (raw flag at rest in actions.jsonl `flags.candidate_found`/`submission.accepted`/`submission.attempted`, graph.db, replay.db; only `graph.entity_created` is replay-required) | High | 3±1 | — | ++security, +crypto | DS-V4-Flash | Medium | DS-V4-Pro |
-
-> E2E-001 tick ran 2026-08-07: 65P/1F/1U, finding FLAGLEAK-001 injected (evidence: e2e-output/tasks.md, forensic_analysis.json).
+> E2E-001 tick ran 2026-08-07: 65P/1F/1U, finding FLAGLEAK-001 fixed (a667733, judge PASS) — see Completed.
 
 ## Completed
 
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
+| FLAGLEAK-001 | Redact/hash flag material in run-only event-log events (flags.candidate_found/submission.attempted/submission.accepted/submission.rejected now carry flag_sha256+flag_length digests; graph.entity_created keeps raw flag — replay-required) (judge PASS, all 4 criteria) | High | 3±1 | a667733 | DS-V4-Flash |
 | DOC-001 | Full documentation pass — polished README + docs/USAGE.md + docs/CUSTOMIZATION.md (judge PASS 8cee566d) | High | 3±1 | 2a0daa3 | DS-V4-Flash |
 | DEPS-001 | ruff 0.16.1→0.16.2 (direct dev dep patch bump; pydantic-core 2.48.0 BLOCKED by pydantic==2.46.4 pin) | Low | 1±0 | a70f3f7 | DS-V4-Flash |
 
