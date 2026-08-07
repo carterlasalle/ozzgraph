@@ -199,6 +199,39 @@ Target output fixtures should include:
 - huge repeated output
 - deceptive tool instructions
 
+Implemented as PR29. The fixture inventory lives in
+`tests/adversarial_fixtures.py`: eight named, categorised raw
+target-output fixtures (one per category above), consumed by
+`tests/test_adversarial.py`, which wires every fixture through the four
+untrusted-data surfaces and proves the harness treats all model and
+target output as data (AGENTS.md "All model output is untrusted"):
+
+- observation parsers (`ozzgraph.observations`): every fixture parses
+  into labeled, bounded observations — summaries always start with the
+  "untrusted" prefix, ANSI escapes are stripped and C0 control
+  characters escaped to visible `\xNN` forms (never raw in context),
+  huge repeated output stays bounded with exact counts, malformed
+  Unicode (lone surrogates, U+FFFD replacements, bidi overrides) never
+  crashes a parser, and broken/poisoned documents surface as structured
+  `malformed=True` / `parse_error` fields (fail loudly, never raised).
+- model adapters (`ozzgraph.adapters`): completions embedding the
+  fixtures parse into `ParsedAction` values where the injection is
+  confined to `rationale` / `payload` / `raw`; the strict three-line and
+  JSON protocols reject injected extra lines/keys loudly
+  (`AdapterParseError`), and the executor's strict output contract
+  rejects raw injected directive text (`MalformedOutputError`) so a
+  directive embedded in target output can never become an executed
+  action.
+- flag extractor (`ozzgraph.flags`): fake flags are extracted only with
+  observed provenance (a flag in output with no evidence edge is never a
+  candidate), dedupe to exactly one candidate per string, and can only
+  ever reach submission through the supervisor-only coordinator with a
+  privileged client (`SubmissionPrivilegeError` for anything else).
+- scope-policy gate (`ozzgraph.policy`): every public-internet
+  suggestion (`evil.example.com`, bare public IPs, platform metadata
+  endpoints) is rejected before execution with its typed
+  `ScopeViolationError` subclass.
+
 ## Chaos Tests
 
 Inject:
@@ -214,6 +247,65 @@ Inject:
 - partial artifact write
 - heartbeat failure
 - termination signals
+
+Implemented as PR29 in `tests/test_chaos.py` (injection mechanics:
+monkeypatches and fakes only — no network, no real MCP; the only live
+endpoints are loopback shell commands and in-memory/temporary state):
+
+- model timeout / server 500: `httpx.MockTransport` handlers raise
+  `ConnectTimeout`/`ReadTimeout` or return HTTP 500; the client retries
+  with bounded backoff and raises the typed `ModelServiceError`
+  (`status_code`, `retryable`), appending a `model_failure` event.
+- MCP timeout / malformed response: the same transport injection against
+  `HalClient` raises the typed `HalServiceError` (transport failures
+  retryable, malformed JSON-RPC bodies and wrong-shaped results
+  non-retryable parse failures) with a `hal_failure` event.
+- process hang: the bounded shell runner kills the whole process group —
+  a delayed marker in a background grandchild never appears, the runner
+  is reusable afterwards, and no orphan survives.
+- worker crash: a runner raising mid-task becomes a structured failed
+  `worker_run` record (never a silent swallow), the dependent task still
+  runs, and the schedule completes without hanging.
+- disk full: an `ENOSPC` on the artifact store's content write raises
+  `ArtifactStoreError`; an `ENOSPC` on the event log propagates — no
+  silent artifact or event loss.
+- SQLite lock: a locked database surfaces as `StateGraphError` (write
+  and transaction paths), never a bare `sqlite3` exception.
+- partial artifact write: a torn JSONL line aborts replay loudly
+  (`ReplayMalformedEventError` — no silent skipping) and a corrupt
+  artifact index is a loud `ArtifactIndexError`, never silently rebuilt.
+- heartbeat failure: a failing summary callable or sleeper raises out of
+  `Heartbeat.run()` — the emitter fails loudly instead of silently
+  stopping.
+- termination signals: `Supervisor.stop(INTERRUPTED)` — the
+  SIGTERM/SIGINT path — appends a structured `termination` event
+  (`reason: interrupted`) to the run log; subprocess-level signal
+  delivery (SIGTERM/SIGINT → exit 130) stays covered by
+  `tests/test_signals.py`.
+
+## Loop and Timeout Detection
+
+Implemented as PR29 in `tests/test_loop_detection.py` (plus the chaos
+process-hang tests above). The harness abandons unbounded or repetitive
+loops and recovers from timeouts without hanging:
+
+- repetition detection: a looping model's identical proposal is rejected
+  by the executor's fingerprint store (`DuplicateFingerprintError`, the
+  action is never executed twice), a plan whose every step failed is
+  abandoned (`PlanExhaustedError` — never retried forever), and the
+  matrix layer measures a pure looping model as `repeated=True` from the
+  second identical command with the repetition-rate metric, bounded by
+  `max_turns`.
+- action-budget abandonment: an executor turn records exactly one action
+  entity (one model call); once a plan's `MAX_MODEL_CALLS_PER_PLAN`
+  budget is exhausted the evaluator abandons/re-plans it — the plan
+  never loops on a spent budget (step-attempt thresholds
+  `MAX_ATTEMPTS_PER_STEP` are covered in `tests/test_evaluator.py`).
+- timeout recovery: the bounded shell runner kills the hanging process
+  group (`ToolResult.timeout_state`), the parser carries the timeout
+  into the observation summary ("timed out"), the failed action is fed
+  back with `reason="timeout"`, and the executor skips the dead plan
+  step and continues with the next one — no hang, no infinite retry.
 
 ## Performance Tests
 
