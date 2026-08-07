@@ -42,13 +42,13 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "tests"))  # tests/mcp_fake.py
 sys.path.insert(0, str(REPO))
 
-import mcp_fake  # noqa: E402
+import mcp_fake
 
-from ozzgraph.artifacts import ArtifactStore  # noqa: E402
-from ozzgraph.bootstrap import BootstrapRunner  # noqa: E402
-from ozzgraph.budgets import Budgets  # noqa: E402
-from ozzgraph.config import OzzGraphConfig  # noqa: E402
-from ozzgraph.events import (  # noqa: E402
+from ozzgraph.artifacts import ArtifactStore
+from ozzgraph.bootstrap import BootstrapRunner
+from ozzgraph.budgets import Budgets
+from ozzgraph.config import OzzGraphConfig
+from ozzgraph.events import (
     BOOTSTRAP_CHALLENGE_STATUS,
     BOOTSTRAP_HINT_REQUESTED,
     BOOTSTRAP_REACHABILITY,
@@ -64,12 +64,12 @@ from ozzgraph.events import (  # noqa: E402
     GraphEntityCreated,
     graph_event,
 )
-from ozzgraph.executor import EXECUTOR_ACTION_ATTEMPTED, Executor  # noqa: E402
-from ozzgraph.flags import (  # noqa: E402
+from ozzgraph.executor import EXECUTOR_ACTION_ATTEMPTED, Executor
+from ozzgraph.flags import (
     EDGE_EVIDENCE_EXTRACTED_FROM_OBSERVATION,
     FlagCandidateExtractor,
 )
-from ozzgraph.hal_client import (  # noqa: E402
+from ozzgraph.hal_client import (
     HAL_PRIVILEGED_ENV,
     MCP_BASE_URL_ENV,
     MCP_MAX_RETRIES_ENV,
@@ -77,16 +77,16 @@ from ozzgraph.hal_client import (  # noqa: E402
     HalClient,
     HalPrivilegeError,
 )
-from ozzgraph.halctl import CHALLENGE_ID_ENV  # noqa: E402
-from ozzgraph.lab import get_target  # noqa: E402
-from ozzgraph.observations import ShellTextParser  # noqa: E402
-from ozzgraph.phases import Phase  # noqa: E402
-from ozzgraph.policy import ScopePolicy  # noqa: E402
-from ozzgraph.replay import replay_graph  # noqa: E402
-from ozzgraph.router import PhaseRouter  # noqa: E402
-from ozzgraph.shell import ShellRunner  # noqa: E402
-from ozzgraph.state_graph import StateGraph  # noqa: E402
-from ozzgraph.supervisor import Supervisor, TerminationReason  # noqa: E402
+from ozzgraph.halctl import CHALLENGE_ID_ENV
+from ozzgraph.lab import get_target
+from ozzgraph.observations import ShellTextParser
+from ozzgraph.phases import Phase
+from ozzgraph.policy import ScopePolicy
+from ozzgraph.replay import replay_graph
+from ozzgraph.router import PhaseRouter
+from ozzgraph.shell import ShellRunner
+from ozzgraph.state_graph import StateGraph
+from ozzgraph.supervisor import Supervisor, TerminationReason
 
 LAB_FLAG_PATTERN = r"OZ\{[^{}\s]+\}"
 
@@ -152,6 +152,7 @@ def run_halctl(args: list[str], env: dict[str, str], timeout: int = 30) -> CliRe
         text=True,
         env=env,
         timeout=timeout,
+        check=False,
     )
     return CliResult(proc.returncode, proc.stdout, proc.stderr, args)
 
@@ -248,7 +249,12 @@ def build_handler(target_flag: str) -> mcp_fake.McpHandler:
                 return mcp_fake.rpc_error(request, -32602, "index out of range")
             return mcp_fake.rpc_result(
                 request,
-                {"challenge_id": "web-01", "index": index, "hint": "Inspect the HTML", "paid": False},
+                {
+                    "challenge_id": "web-01",
+                    "index": index,
+                    "hint": "Inspect the HTML",
+                    "paid": False,
+                },
             )
         if method == "flag.submit":
             submitted = str(params.get("flag", ""))
@@ -744,9 +750,7 @@ async def wiring_cycle(server: mcp_fake.FakeMcpServer) -> None:
     )
 
     hint_reqs = [r for r in server.requests if r.get("method") == "hint.request"]
-    hint_params_ok = all(
-        isinstance(r.get("params", {}).get("index"), int) for r in hint_reqs
-    )
+    hint_params_ok = all(isinstance(r.get("params", {}).get("index"), int) for r in hint_reqs)
     check(
         "wiring",
         "mcp_params_types_preserved",
@@ -835,7 +839,8 @@ async def audit_cycle(state_dir: Path, event_types: list[str]) -> None:
     obs_created = next(
         i
         for i, line in enumerate(lines)
-        if line["event_type"] == GRAPH_ENTITY_CREATED and line["payload"].get("entity_id") == "obs-1"
+        if line["event_type"] == GRAPH_ENTITY_CREATED
+        and line["payload"].get("entity_id") == "obs-1"
     )
     check(
         "audit",
@@ -882,7 +887,9 @@ async def crypto_cycle(server: mcp_fake.FakeMcpServer, state_dir: Path, target_f
         ("scoreboard_doc", ["scoreboard", "--json"]),
         ("priv_error_doc", ["submit", "--flag", target_flag, "--json"]),
     ):
-        got = run_halctl(args, env_for(server, privileged=False) if label == "priv_error_doc" else env)
+        got = run_halctl(
+            args, env_for(server, privileged=False) if label == "priv_error_doc" else env
+        )
         leaked = target_flag in got.stdout or target_flag in got.stderr
         check(
             "crypto",
@@ -897,7 +904,12 @@ async def crypto_cycle(server: mcp_fake.FakeMcpServer, state_dir: Path, target_f
     hal_failures = [line for line in lines if line["event_type"] == "hal_failure"]
     if hal_failures:
         leak = any(target_flag in json.dumps(line["payload"]) for line in hal_failures)
-        check("crypto", "hal_failure_no_flag", "PASS" if not leak else "FAIL", f"failures={len(hal_failures)}")
+        check(
+            "crypto",
+            "hal_failure_no_flag",
+            "PASS" if not leak else "FAIL",
+            f"failures={len(hal_failures)}",
+        )
     else:
         check(
             "crypto",
@@ -908,7 +920,6 @@ async def crypto_cycle(server: mcp_fake.FakeMcpServer, state_dir: Path, target_f
         )
 
     # provenance enforcement (data invariant: observations reference actions)
-    graph_entities = [line for line in lines if line["event_type"] == GRAPH_ENTITY_CREATED]
     check(
         "crypto",
         "provenance_edges_enforced",

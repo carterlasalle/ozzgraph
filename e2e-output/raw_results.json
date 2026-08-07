@@ -93,7 +93,7 @@
       "status": "PASS"
     },
     {
-      "detail": "live=32403510b68f68851ff1b61a49a7f98883c214a6ae384947b763ea536a34011a, replay=32403510b68f68851ff1b61a49a7f98883c214a6ae384947b763ea536a34011a, equal=True",
+      "detail": "live=f532ddb4db9ec85f786d9254de5aac2e467b6a693ae565a3cfd9412b64ce15b3, replay=f532ddb4db9ec85f786d9254de5aac2e467b6a693ae565a3cfd9412b64ce15b3, equal=True",
       "dim": "b2f",
       "name": "replay_hash_byte_for_byte",
       "status": "PASS"

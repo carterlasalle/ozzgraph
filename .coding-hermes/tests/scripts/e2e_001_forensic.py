@@ -28,10 +28,10 @@ sys.path.insert(0, str(REPO / "tests"))
 sys.path.insert(0, str(REPO / ".coding-hermes" / "tests" / "scripts"))
 sys.path.insert(0, str(REPO))
 
-import mcp_fake  # noqa: E402
-import e2e_001_driver as driver  # noqa: E402
+import e2e_001_driver as driver
+import mcp_fake
 
-from ozzgraph.lab import get_target  # noqa: E402
+from ozzgraph.lab import get_target
 
 
 def classify(path: Path, flag: str) -> list[str]:
@@ -65,17 +65,14 @@ async def main() -> None:
             os.environ[driver.CHALLENGE_ID_ENV] = "web-01"
             os.environ[driver.HAL_PRIVILEGED_ENV] = "1"
             try:
-                live_hash, event_types = await driver.f2b_cycle(server, flag, state_dir)
+                _, _ = await driver.f2b_cycle(server, flag, state_dir)
             finally:
                 server.stop_threaded()
 
         # 1. event log: per-event_type flag presence
         with (state_dir / "actions.jsonl").open() as handle:
             events = [json.loads(line) for line in handle]
-        flagged_events = {
-            ev["event_type"]: flag in json.dumps(ev)
-            for ev in events
-        }
+        flagged_events = {ev["event_type"]: flag in json.dumps(ev) for ev in events}
         out["event_log"] = {
             "total_events": len(events),
             "event_types_containing_raw_flag": sorted(
@@ -99,11 +96,7 @@ async def main() -> None:
         out["event_log"]["run_events_with_flag_not_replay_required"] = run_flagged
 
         # 2. state graph: which entity types hold the flag (via event payloads)
-        entity_created = [
-            ev
-            for ev in events
-            if ev["event_type"] == "graph.entity_created"
-        ]
+        entity_created = [ev for ev in events if ev["event_type"] == "graph.entity_created"]
         flagged_entities = [
             {"entity_id": ev["payload"]["entity_id"], "entity_type": ev["payload"]["entity_type"]}
             for ev in entity_created
@@ -132,8 +125,7 @@ async def main() -> None:
         all_hits = []
         for p in sorted(state_dir.rglob("*")):
             if p.is_file():
-                for cls in classify(p, flag):
-                    all_hits.append(cls)
+                all_hits += [cls for cls in classify(p, flag)]
         out["state_dir_file_sweep"] = all_hits
 
     results = REPO / "e2e-output" / "forensic_analysis.json"
