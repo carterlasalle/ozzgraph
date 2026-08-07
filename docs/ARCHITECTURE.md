@@ -168,6 +168,20 @@ Owns:
 - normalized results
 - fingerprints
 
+The policy gate (`src/ozzgraph/policy.py`) runs before every command and
+enforces AGENTS.md Security Boundaries steps 3-8 in order: command-length
+limits; target allowlists (hostnames, IPs, and CIDRs — platform metadata
+endpoints, loopback, link-local, and public-internet destinations are blocked
+unless explicitly allowlisted); worker-scope and phase command families
+(recon / exploit / shell); normalized fingerprints; and duplicate rejection.
+The gate is deterministic and fail-closed: unknown phases, unknown families,
+and unallowlisted destinations are rejected loudly. Approved commands yield a
+`PolicyDecision` whose fingerprint the executor carries into events and
+actions; every approved fingerprint is mirrored to
+`state_dir/duplicates.jsonl` (append-only JSONL, same style as the event
+log). `check_then_run()` composes the gate, the duplicate store, and the
+bounded shell runner for the common path.
+
 ### Artifact Pipeline
 
 Raw output and downloaded files live outside model context. Parsers return compact summaries and artifact handles.

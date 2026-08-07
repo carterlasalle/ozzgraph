@@ -111,3 +111,53 @@ def test_config_model_validates_budget_ranges() -> None:
         OzzGraphConfig(hal_user_id="u", max_workers=0)
     with pytest.raises(ValueError):
         OzzGraphConfig(hal_user_id="u", max_hints=0)
+
+
+def test_load_config_applies_scope_defaults() -> None:
+    """Scope-policy knobs default to fail-closed-but-permissive values."""
+    config = load_config(environ={"HAL_USER_ID": "user-42"})
+    assert config.max_command_length == 4096
+    assert config.target_allowlist == ()
+    assert config.allowed_command_families == ("shell", "recon", "exploit")
+
+
+def test_load_config_respects_scope_overrides() -> None:
+    """Explicit scope env vars override the defaults."""
+    config = load_config(
+        environ={
+            "HAL_USER_ID": "user-42",
+            "OZZGRAPH_MAX_COMMAND_LENGTH": "8192",
+            "OZZGRAPH_TARGET_ALLOWLIST": "10.0.0.5, challenge.local, 10.0.0.0/8",
+            "OZZGRAPH_ALLOWED_COMMAND_FAMILIES": "recon,shell",
+        }
+    )
+    assert config.max_command_length == 8192
+    assert config.target_allowlist == ("10.0.0.5", "challenge.local", "10.0.0.0/8")
+    assert config.allowed_command_families == ("recon", "shell")
+
+
+def test_load_config_rejects_non_integer_command_length() -> None:
+    """A non-integer command-length env var fails loudly."""
+    with pytest.raises(ConfigError, match="OZZGRAPH_MAX_COMMAND_LENGTH"):
+        load_config(environ={"HAL_USER_ID": "user-42", "OZZGRAPH_MAX_COMMAND_LENGTH": "long"})
+
+
+def test_load_config_blank_scope_vars_use_defaults() -> None:
+    """Blank scope env vars fall back to the defaults."""
+    config = load_config(
+        environ={
+            "HAL_USER_ID": "user-42",
+            "OZZGRAPH_MAX_COMMAND_LENGTH": "   ",
+            "OZZGRAPH_TARGET_ALLOWLIST": "   ",
+            "OZZGRAPH_ALLOWED_COMMAND_FAMILIES": "",
+        }
+    )
+    assert config.max_command_length == 4096
+    assert config.target_allowlist == ()
+    assert config.allowed_command_families == ("shell", "recon", "exploit")
+
+
+def test_config_model_validates_command_length_range() -> None:
+    """max_command_length enforces its gt constraint via pydantic."""
+    with pytest.raises(ValueError):
+        OzzGraphConfig(hal_user_id="u", max_command_length=0)

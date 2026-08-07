@@ -64,9 +64,11 @@ Every adapter defines:
 Every command shall have:
 
 - validated schema
+- length limit
 - scope check
 - permission check
 - normalized fingerprint
+- duplicate rejection
 - timeout
 - stdout and stderr limits
 - process-group cleanup

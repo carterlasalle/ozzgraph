@@ -2,8 +2,9 @@
 
 Configuration is parsed from environment variables into a validated Pydantic
 v2 model. No secrets or model-specific settings live here — this module owns
-identity, runtime-directory layout, and the heartbeat/budget knobs. Structured
-logging level arrives with PR4.
+identity, runtime-directory layout, the heartbeat/budget knobs, and the scope
+policy knobs (command-length limit, target allowlist, permitted command
+families). Structured logging level arrives with PR4.
 """
 
 from __future__ import annotations
@@ -13,6 +14,12 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from pydantic import BaseModel, Field, ValidationError
+
+from ozzgraph.policy import (
+    DEFAULT_ALLOWED_COMMAND_FAMILIES,
+    DEFAULT_MAX_COMMAND_LENGTH,
+    DEFAULT_TARGET_ALLOWLIST,
+)
 
 HAL_USER_ID_ENV = "HAL_USER_ID"
 STATE_DIR_ENV = "OZZGRAPH_STATE_DIR"
@@ -25,6 +32,13 @@ MAX_MODEL_CALLS_ENV = "OZZGRAPH_MAX_MODEL_CALLS"
 MAX_TOOL_CALLS_ENV = "OZZGRAPH_MAX_TOOL_CALLS"
 MAX_WORKERS_ENV = "OZZGRAPH_MAX_WORKERS"
 MAX_HINTS_ENV = "OZZGRAPH_MAX_HINTS"
+
+# Scope-policy knobs (PR10): command-length limit, target allowlist,
+# and permitted command families. Defaults come from ozzgraph.policy so
+# config and the runtime gate share one source of truth.
+MAX_COMMAND_LENGTH_ENV = "OZZGRAPH_MAX_COMMAND_LENGTH"
+TARGET_ALLOWLIST_ENV = "OZZGRAPH_TARGET_ALLOWLIST"
+ALLOWED_COMMAND_FAMILIES_ENV = "OZZGRAPH_ALLOWED_COMMAND_FAMILIES"
 
 DEFAULT_STATE_DIR = "state"
 DEFAULT_ARTIFACT_DIR = "state/artifacts"
@@ -64,6 +78,15 @@ class OzzGraphConfig(BaseModel):
         max_tool_calls: Cumulative tool-call budget; ``0`` = no cap.
         max_workers: Maximum concurrent workers.
         max_hints: Maximum paid hints the supervisor may purchase.
+        max_command_length: Ceiling for a single command line, in
+            characters; longer commands are rejected by the scope
+            policy before execution.
+        target_allowlist: Hosts, IPs, and CIDR networks that commands
+            may address (comma-separated); empty means no external
+            destination is permitted (fail closed).
+        allowed_command_families: Command families permitted at the
+            policy level (comma-separated); phases and worker scopes
+            narrow this per call.
     """
 
     hal_user_id: str = Field(min_length=1, pattern=r"^\S+$")
@@ -77,6 +100,10 @@ class OzzGraphConfig(BaseModel):
     max_tool_calls: int = Field(default=DEFAULT_MAX_TOOL_CALLS, ge=0)
     max_workers: int = Field(default=DEFAULT_MAX_WORKERS, ge=1)
     max_hints: int = Field(default=DEFAULT_MAX_HINTS, ge=1)
+
+    max_command_length: int = Field(default=DEFAULT_MAX_COMMAND_LENGTH, ge=1)
+    target_allowlist: tuple[str, ...] = Field(default=DEFAULT_TARGET_ALLOWLIST)
+    allowed_command_families: tuple[str, ...] = Field(default=DEFAULT_ALLOWED_COMMAND_FAMILIES)
 
 
 def _first_nonempty(mapping: Mapping[str, str], *keys: str) -> str | None:
@@ -100,6 +127,17 @@ def _env_int(environ: Mapping[str, str], key: str, default: int) -> int:
         return int(raw)
     except ValueError:
         raise ConfigError(f"environment variable {key} must be an integer, got {raw!r}") from None
+
+
+def _env_csv(environ: Mapping[str, str], key: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    """Parse a comma-separated environment variable, falling back to a default.
+
+    Blank variables fall back to the default; blank entries are dropped.
+    """
+    raw = _first_nonempty(environ, key)
+    if raw is None:
+        return default
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
 
 
 def load_config(environ: Mapping[str, str] | None = None) -> OzzGraphConfig:
@@ -138,6 +176,11 @@ def load_config(environ: Mapping[str, str] | None = None) -> OzzGraphConfig:
             max_tool_calls=_env_int(env, MAX_TOOL_CALLS_ENV, DEFAULT_MAX_TOOL_CALLS),
             max_workers=_env_int(env, MAX_WORKERS_ENV, DEFAULT_MAX_WORKERS),
             max_hints=_env_int(env, MAX_HINTS_ENV, DEFAULT_MAX_HINTS),
+            max_command_length=_env_int(env, MAX_COMMAND_LENGTH_ENV, DEFAULT_MAX_COMMAND_LENGTH),
+            target_allowlist=_env_csv(env, TARGET_ALLOWLIST_ENV, DEFAULT_TARGET_ALLOWLIST),
+            allowed_command_families=_env_csv(
+                env, ALLOWED_COMMAND_FAMILIES_ENV, DEFAULT_ALLOWED_COMMAND_FAMILIES
+            ),
         )
     except ValidationError as exc:  # pragma: no cover - defensive
         raise ConfigError(f"invalid configuration: {exc}") from exc
