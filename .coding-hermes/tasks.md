@@ -10,7 +10,11 @@ commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
 ## Active
 
-_Board is empty — only the permanent fixtures (E2E-001, NEVER-DONE) remain._
+| ID | Task | Pri | Cpx | Deps | Tags | Model | Reasoning | Fallback |
+|----|------|-----|-----|------|------|-------|-----------|----------|
+| FLAGLEAK-001 | Redact/hash flag material in run-only event-log events + state DBs (raw flag at rest in actions.jsonl `flags.candidate_found`/`submission.accepted`/`submission.attempted`, graph.db, replay.db; only `graph.entity_created` is replay-required) | High | 3±1 | — | ++security, +crypto | DS-V4-Flash | Medium | DS-V4-Pro |
+
+> E2E-001 tick ran 2026-08-07: 65P/1F/1U, finding FLAGLEAK-001 injected (evidence: e2e-output/tasks.md, forensic_analysis.json).
 
 ## Completed
 
