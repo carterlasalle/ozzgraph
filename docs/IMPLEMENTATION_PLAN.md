@@ -247,7 +247,7 @@ Exit:
 23. Hint policy
 24. Task DAG and scheduler
 25. Specialist workers
-26. Reducer and conflict handling
+26. Reducer and conflict handling (done — PR26)
 27. Synthetic lab
 28. Golden traces and model matrix
 29. Chaos and adversarial tests

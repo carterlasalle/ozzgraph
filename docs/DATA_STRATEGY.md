@@ -69,6 +69,7 @@ CREDENTIAL OBSERVED_IN ARTIFACT
 FLAG_CANDIDATE OBSERVED_IN EVIDENCE
 SUBMISSION SUBMITS FLAG_CANDIDATE
 WORKER_RUN EXPLORED HYPOTHESIS
+FACT DERIVED_FROM EVIDENCE
 ```
 
 The graph stores entity and edge types as plain strings, so the lists above
@@ -92,6 +93,22 @@ id, source, evidence/artifact ids, confidence) but stay embedded in
 their `worker_run` payload until the reducer (PR step 26) promotes them
 into `evidence`/`fact` entities — the scheduler itself never merges a
 finding into the graph as authoritative state (AGENTS.md rule #3).
+
+`fact` entities (PR26) are the authoritative merge of a validated
+finding: `fact-<sha256(task_id:source:sorted(evidence_ids):summary)>` —
+deterministic and replay-stable — carrying `task_id`, `source`,
+`evidence_ids`, the bounded `summary` (never authoritative by itself),
+and `confidence`. Each fact links to every evidence it derives from via
+`FACT DERIVED_FROM EVIDENCE` (fact -> evidence). The reducer merges a
+finding only when every evidence reference resolves (a graph `evidence`
+entity or an artifact known to the artifact store's index); a finding
+with an unresolvable reference is rejected loudly
+(`UnresolvedEvidenceError` with the exact unresolved ids, counted in
+`ReducerResult.rejected` and surfaced as a `reducer.*` run event) and is
+never represented in the graph. The merge is idempotent and
+conflict-safe: identical findings dedupe to one fact, and contradictory
+findings (same evidence, different summary) merge as separate facts with
+provenance — conflict resolution is downstream.
 
 Concrete schema details (see `src/ozzgraph/state_graph.py`):
 

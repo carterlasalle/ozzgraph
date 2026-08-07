@@ -131,6 +131,30 @@ Maintains a task DAG and permits parallel work only when tasks are independent a
 
 Validates worker findings and merges structured evidence into the graph. It never merges free-form model prose as authoritative state.
 
+Implementation contract (PR26):
+
+- Validation before merge: every finding must resolve each evidence
+  reference — to an existing `evidence` graph entity or to an artifact
+  known to the artifact store's index — before it becomes state. A finding
+  with an unresolvable reference is rejected loudly (typed
+  `UnresolvedEvidenceError` carrying the exact unresolved ids), never
+  written to the graph, and never allowed to block the rest of the merge.
+- Fact entity shape: each validated finding becomes one `fact` entity
+  (`fact-<sha256(task_id:source:sorted(evidence_ids):summary)>` —
+  deterministic and replay-stable) carrying the bounded summary (never
+  authoritative by itself), provenance (task id, source), resolved
+  evidence ids, and confidence, plus one `FACT DERIVED_FROM EVIDENCE`
+  edge per evidence id (fact -> evidence).
+- Deterministic, conflict-safe merge: reducing the same findings twice
+  writes nothing new (facts are idempotent by id), identical findings
+  dedupe to one fact, and contradictory findings (same evidence,
+  different summary) merge as separate facts — facts are additive with
+  provenance; conflict resolution is downstream.
+- Rejections are counted (`ReducerResult.rejected`) and surfaced as
+  `reducer.*` run events; every graph mutation is mirrored as a
+  same-timestamp `graph.*` event, so replay reconstructs the identical
+  graph hash. A rejected finding is never represented in the graph.
+
 ### Context Compiler
 
 Builds a bounded, model-specific view from the graph.
