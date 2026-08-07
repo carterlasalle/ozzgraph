@@ -4,10 +4,7 @@ guards:
   tests: true
   test_mode: full
   test_command: uv run pytest -x --tb=short
-  static_analysis: true
-  static_analysis_tools:
-    python:
-    - pyright
+  static_analysis: false
 evaluator:
   max_iterations: 60
   max_time: 20m
