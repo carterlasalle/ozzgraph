@@ -1262,17 +1262,155 @@ class StateGraph:
 
 ## Optional Dashboard API
 
-The dashboard is separate from the competition image.
+The dashboard is separate from the competition image: it lives in
+`dashboard/` (Yarn + strict TypeScript, zero runtime dependencies) and is
+never part of the Python package or image. It reads the kernel's real run
+state — `actions.jsonl`, `graph.db`, and the artifact store — strictly
+read-only, over a small JSON HTTP API.
+
+### Setup and run
+
+```bash
+# One-time toolchain setup (Yarn 4 via corepack; node >= 22.5 for node:sqlite)
+corepack prepare yarn@stable --activate
+
+cd dashboard
+yarn install          # dev deps only: typescript, eslint, vitest
+yarn lint && yarn typecheck && yarn test && yarn build
+yarn start --runs-dir ../state --host 127.0.0.1 --port 8787
+# or: OZZGRAPH_DASHBOARD_RUNS_DIR=../state yarn start
+```
+
+Configuration precedence is CLI flag > environment > default:
+
+| Flag | Env var | Default | Meaning |
+|---|---|---|---|
+| `--runs-dir <path>` | `OZZGRAPH_DASHBOARD_RUNS_DIR` | `state` | Runs root directory (resolved against the working directory) |
+| `--host <host>` | `OZZGRAPH_DASHBOARD_HOST` | `127.0.0.1` | Bind host |
+| `--port <port>` | `OZZGRAPH_DASHBOARD_PORT` | `8787` | Bind port (1-65535) |
+
+### Run discovery model
+
+The runs root holds one directory per run; a directory is a run when it
+directly contains `actions.jsonl` and/or `graph.db` (the kernel's per-run
+state files), and its run id is the directory name. The root itself is
+also tolerated as a single run when it directly contains either file (the
+common single-run layout where the kernel's `state` dir is the runs
+root); its run id is the root directory's basename. Hidden and symlinked
+directories are never treated as runs. `GET /api/runs` lists runs sorted
+by run id; run ids and artifact ids are validated as single path
+segments — `..`, absolute paths, separators, and control characters are
+rejected with `400` before any filesystem access.
+
+### Endpoints
 
 ```http
-GET /api/runs
-GET /api/runs/{run_id}
-GET /api/runs/{run_id}/graph
-GET /api/runs/{run_id}/events
-GET /api/runs/{run_id}/artifacts/{artifact_id}
-GET /api/runs/{run_id}/metrics
+GET  /api/runs
+GET  /api/runs/{run_id}
+GET  /api/runs/{run_id}/graph
+GET  /api/runs/{run_id}/events
+GET  /api/runs/{run_id}/artifacts/{artifact_id}
+GET  /api/runs/{run_id}/metrics
 POST /api/runs/{run_id}/replay
+GET  /healthz
 ```
+
+`GET /api/runs` — `200` with every discovered run:
+
+```json
+{"runs": [{"run_id": "state", "event_count": 12, "artifact_count": 2,
+           "last_modified": "2026-08-07T17:08:09.320Z",
+           "has_graph": true, "has_events": true}]}
+```
+
+`event_count` counts parseable `actions.jsonl` events; `artifact_count`
+uses the kernel's `artifacts.json` index when present (array or dict),
+else the artifact directory listing (excluding the index and `.tmp`
+scratch files); `last_modified` is the newest of the run's state files.
+
+`GET /api/runs/{run_id}` — `200` with the same summary object for one
+run, or `404 run_not_found`.
+
+`GET /api/runs/{run_id}/graph` — `200` with the full graph read from
+`graph.db` (opened strictly read-only; parameterized queries only):
+
+```json
+{"run_id": "state", "schema_version": 2,
+ "entities": [{"id": "run-abc", "type": "run", "data": {"status": "active"},
+               "created_at": "2026-08-06T15:15:00.123456+00:00",
+               "updated_at": "2026-08-06T15:15:00.123456+00:00"}],
+ "edges": [{"id": "edge-1", "type": "ACTION PRODUCED OBSERVATION",
+            "src_id": "action-1", "dst_id": "run-abc", "data": {},
+            "created_at": "2026-08-06T15:15:00.123456+00:00"}],
+ "entity_count": 1, "edge_count": 1,
+ "graph_hash": "4d3ec0bc241bd4756eb46ef330a79aad9a627069210313331a2e13fe2271d315"}
+```
+
+`graph_hash` is computed with the kernel's exact canonicalization (see
+`src/ozzgraph/state_graph.py` `graph_hash`), so it matches the hash a
+kernel replay of the same run produces. `404 graph_not_found` when the
+run has no `graph.db`; `500 graph_read_failed` when the database exists
+but cannot be read (details logged server-side only).
+
+`GET /api/runs/{run_id}/events` — `200` with every parseable
+`actions.jsonl` line in file order; malformed lines are skipped
+gracefully and counted in `skipped`:
+
+```json
+{"run_id": "state", "event_count": 12, "skipped": 0, "events": [...]}
+```
+
+`GET /api/runs/{run_id}/artifacts/{artifact_id}` — `200` with the raw
+artifact bytes from the run's `artifacts/` directory, `Content-Type`
+from the file extension (default `application/octet-stream`),
+`X-Content-Type-Options: nosniff`, `Cache-Control: no-store`; `404
+artifact_not_found` when missing.
+
+`GET /api/runs/{run_id}/metrics` — `200` with metrics derived
+deterministically from the event log: `total_events`, `skipped`,
+`event_type_counts`, `producer_counts`, `action_count` (created `action`
+entities), `model_call_count` (created `model_call` entities),
+`first_event_at` / `last_event_at`, and `duration_ms` (span between the
+first and last valid event timestamps).
+
+`POST /api/runs/{run_id}/replay` — `200` after applying every
+`actions.jsonl` line in order to an in-memory entity/edge map using the
+TypeScript port of the kernel's replay (`src/ozzgraph/replay.py`
+semantics): only the five `graph.*` mutation event types are applied,
+non-graph events are ignored, and any malformed line or invalid
+graph-event payload aborts the replay with `400 replay_malformed_event`
+(never silently skipped — the dashboard mirrors the kernel's fail-loudly
+behavior). The response carries the final counts and the canonical graph
+hash, which is byte-identical to the kernel's for kernel-produced logs:
+
+```json
+{"event_count": 12, "entity_count": 6, "edge_count": 3,
+ "graph_hash": "e4905ca79b445c001e606b8e943bfec8e91cc55db0219ce572f653b91a034e53"}
+```
+
+A request body, when present, must be valid JSON (`400
+invalid_json_body` otherwise). Entity/edge deletion cascade-deletes
+touching edges, exactly like the kernel's `ON DELETE CASCADE`.
+
+`GET /healthz` — `200 {"ok": true}`.
+
+### Error shape and security
+
+Every error response is structured JSON with no stack traces (details go
+to the server's stderr):
+
+```json
+{"error": {"code": "run_not_found", "message": "unknown run 'nope'"}}
+```
+
+Status codes: `400` (`invalid_run_id`, `invalid_artifact_id`,
+`invalid_json_body`, `replay_malformed_event`), `404` (`run_not_found`,
+`graph_not_found`, `artifact_not_found`, `route_not_found`), `405`
+(`method_not_allowed`), `413` (`payload_too_large`), `500`
+(`internal_error`, `graph_read_failed`). The dashboard never writes to
+the kernel's database or artifact store — `graph.db` is opened with
+SQLite's read-only flag and `PRAGMA query_only`; the replay runs purely
+in memory.
 
 ## Integration Failure Policy
 

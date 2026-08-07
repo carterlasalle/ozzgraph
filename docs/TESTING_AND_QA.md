@@ -346,7 +346,7 @@ uv run mypy src
 uv run pytest
 ```
 
-Optional dashboard:
+Optional dashboard (PR30):
 
 ```bash
 cd dashboard
@@ -355,3 +355,31 @@ yarn typecheck
 yarn test
 yarn build
 ```
+
+The dashboard is a self-contained Yarn + strict TypeScript project under
+`dashboard/` (zero runtime dependencies; `node:http`, `node:sqlite`,
+`node:crypto` only) that serves the Optional Dashboard API
+(docs/API_AND_INTEGRATIONS.md) from real kernel run state, strictly
+read-only. Setup: `corepack prepare yarn@stable --activate`, then
+`yarn install`. Quality gates and coverage:
+
+- `yarn lint` — ESLint (typescript-eslint recommended) over `src/` and
+  `test/`.
+- `yarn typecheck` — `tsc --noEmit` with `strict: true`,
+  `noImplicitAny`, `noUncheckedIndexedAccess`, and friends.
+- `yarn test` — vitest unit + end-to-end tests (86 tests): run
+  discovery (subdirectory runs, root-as-run, artifact counting from the
+  kernel's `artifacts.json` index or the directory), path-traversal
+  rejection, events/metrics derivation (malformed lines skipped
+  gracefully), graph reads (read-only enforcement verified against the
+  live database), replay determinism, and the full HTTP API over a real
+  listening server.
+- `yarn build` — `tsc` emits `dist/` for `yarn start`.
+
+Replay fidelity is cross-checked against the real kernel: the committed
+fixture `dashboard/test/fixtures/kernel_events.jsonl` was produced with
+`src/ozzgraph/replay.py`, and the TypeScript replay must reproduce the
+kernel's `graph_hash` byte-for-byte (`dashboard/test/replay.test.ts`).
+`graph.db` is opened with SQLite's read-only flag; the dashboard never
+writes kernel state and is not part of the Python package or the
+competition image (no dashboard dependency in `pyproject.toml`).

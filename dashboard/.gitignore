@@ -1,0 +1,15 @@
+# dependencies
+node_modules/
+
+# yarn install state (machine-local; zero-install cache is not used)
+.yarn/
+
+# build output
+dist/
+*.tsbuildinfo
+
+# coverage
+coverage/
+
+# local state (never run the dashboard against a real state dir from the repo)
+state/
