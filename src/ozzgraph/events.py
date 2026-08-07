@@ -35,6 +35,20 @@ GRAPH_ENTITY_DELETED = "graph.entity_deleted"
 GRAPH_EDGE_CREATED = "graph.edge_created"
 GRAPH_EDGE_DELETED = "graph.edge_deleted"
 
+# Bootstrap event types (PR12). Every bootstrap step records exactly one
+# event with producer ``"bootstrap"`` (see docs/adr/0002). Hal service
+# failures during a step are recorded inside that step's payload (an
+# ``error`` field) and are not fatal; configuration errors record
+# ``bootstrap.failed`` and abort the run with a structured termination.
+BOOTSTRAP_TARGETS_PARSED = "bootstrap.targets_parsed"
+BOOTSTRAP_CHALLENGE_STATUS = "bootstrap.challenge_status"
+BOOTSTRAP_SMOKE_SUBMITTED = "bootstrap.smoke_submitted"
+BOOTSTRAP_HINT_REQUESTED = "bootstrap.hint_requested"
+BOOTSTRAP_HINT_UNAVAILABLE = "bootstrap.hint_unavailable"
+BOOTSTRAP_REACHABILITY = "bootstrap.reachability"
+BOOTSTRAP_PROBE_RUN = "bootstrap.probe_run"
+BOOTSTRAP_FAILED = "bootstrap.failed"
+
 
 class Event(BaseModel):
     """One structured event in the append-only run log.

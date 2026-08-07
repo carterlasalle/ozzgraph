@@ -147,6 +147,61 @@ class ShellRunner:
 - truncation state
 - artifact IDs
 
+## Deterministic Bootstrap
+
+Bootstrap reconnaissance runs once at supervisor startup — after `start()`
+and heartbeat setup, before the main idle loop — with no model involvement
+(docs/TECHNICAL_REQUIREMENTS.md, "Bootstrap"; docs/adr/0002). It parses
+targets, retrieves challenge status, processes the smoke-test flag and free
+hint zero, and probes every target.
+
+```python
+class BootstrapRunner:
+    def __init__(
+        self,
+        *,
+        config: OzzGraphConfig,
+        run_id: str,
+        event_log: EventLog,
+        client: HalClient,          # supervisor-owned, privileged
+        environ: Mapping[str, str] | None = None,
+        probe_runner: ProbeRunner | None = None,
+    ) -> None: ...
+
+    async def run(self) -> None: ...
+
+def load_targets(environ: Mapping[str, str]) -> Targets: ...
+```
+
+Configuration is read from the environment:
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `OZZGRAPH_TARGET` | *(unset)* | Single challenge target (a URL, hostname, or IP) |
+| `OZZGRAPH_TARGET_<NS>` | *(unset)* | Namespaced targets; `NS` is `HTTP`, `HTTPS`, or `DNS` (e.g. `OZZGRAPH_TARGET_HTTP`) |
+| `OZZGRAPH_SMOKE_FLAG` | *(unset)* | When set, submitted once at startup through the privileged `HalClient` as a pipeline smoke test |
+| `OZZGRAPH_CHALLENGE_ID` | *(unset)* | Challenge id used for status retrieval, the free hint, and smoke submission (see HalCTF Integration) |
+| `OZZGRAPH_TARGET_ALLOWLIST` | *(empty — fail closed)* | Hosts/IPs/CIDRs probes may address (see `OzzGraphConfig.target_allowlist`) |
+
+Every bootstrap step appends exactly one structured event (producer
+`bootstrap`): `bootstrap.targets_parsed`, `bootstrap.challenge_status`,
+`bootstrap.smoke_submitted`, `bootstrap.hint_requested`,
+`bootstrap.hint_unavailable`, `bootstrap.reachability`, `bootstrap.probe_run`,
+and `bootstrap.failed`. Hal service failures during a step are recorded in
+that step's payload and are not fatal; configuration errors (malformed
+target variables, unknown namespace, smoke flag without a challenge id)
+record `bootstrap.failed` and terminate the run with a structured `FAILED`
+reason.
+
+Probes are deterministic and policy-gated. Each target maps to one fixed
+command — `curl -sS --max-time 5 -I <url>` for HTTP/HTTPS targets,
+`dig +short +time=2 +tries=1 <host> A` for DNS targets — executed through
+`ShellRunner` with explicit timeouts and output limits. Every probe passes
+the scope policy (target allowlist — empty means fail closed — plus
+platform/public-internet blocks and fingerprints) before execution, and
+probe outcomes are recorded as `bootstrap.reachability` /
+`bootstrap.probe_run` events, never exceptions.
+
 ## Observation and Parser
 
 Raw tool output stays outside model context; parsers normalize it into

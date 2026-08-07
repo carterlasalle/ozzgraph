@@ -7,7 +7,10 @@ challenge-category logic (AGENTS.md architecture rule 10).
 
 PR3 turns :meth:`Supervisor.run` into an asyncio loop that emits heartbeats,
 enforces budgets, and terminates gracefully on ``SIGTERM``/``SIGINT``. PR4 adds
-append-only structured event logging (bootstrap and termination events).
+append-only structured event logging (bootstrap and termination events). PR12
+runs the deterministic bootstrap reconnaissance
+(:mod:`ozzgraph.bootstrap`) after heartbeat setup and before the main idle
+loop, constructing the supervisor-owned privileged HalClient for it.
 """
 
 from __future__ import annotations
@@ -19,9 +22,11 @@ from enum import Enum
 from uuid import uuid4
 
 from ozzgraph.artifacts import ArtifactStore
+from ozzgraph.bootstrap import BootstrapRunner
 from ozzgraph.budgets import Budgets
-from ozzgraph.config import OzzGraphConfig
+from ozzgraph.config import ConfigError, OzzGraphConfig
 from ozzgraph.events import BOOTSTRAP, TERMINATION, Event, EventLog
+from ozzgraph.hal_client import HalClient
 from ozzgraph.heartbeat import Heartbeat
 
 _POLL_SECONDS = 0.25
@@ -159,6 +164,9 @@ class Supervisor:
 
         heartbeat_task = asyncio.create_task(heartbeat.run())
         try:
+            bootstrap_reason = await self._run_bootstrap()
+            if bootstrap_reason is not None:
+                return bootstrap_reason
             while not stop_event.is_set():
                 if budgets.is_exhausted():
                     return self.stop(reason=TerminationReason.BUDGET_EXHAUSTED)
@@ -170,6 +178,39 @@ class Supervisor:
             await asyncio.gather(heartbeat_task, return_exceptions=True)
             for sig in installed_signals:
                 loop.remove_signal_handler(sig)
+
+    async def _run_bootstrap(self) -> TerminationReason | None:
+        """Run deterministic bootstrap reconnaissance before the main loop.
+
+        The privileged HalClient is constructed here — the supervisor is
+        the only component that may own one (AGENTS.md invariant 5) — and
+        handed to the bootstrap runner for status retrieval, smoke-flag
+        submission, and the free hint. A bootstrap configuration error
+        (malformed target variables, unknown namespace, smoke flag
+        without a challenge id) terminates the run with ``FAILED`` so the
+        failure is structured and loud; Hal service failures are recorded
+        as events by the runner and are not fatal.
+
+        Returns:
+            The termination reason when bootstrap aborted the run, or
+            None when it completed and the main loop may start.
+        """
+        assert self._event_log is not None  # start() sets it before _started
+        client = HalClient(privileged=True, event_log=self._event_log, run_id=self._run_id)
+        try:
+            runner = BootstrapRunner(
+                config=self._config,
+                run_id=self._run_id,
+                event_log=self._event_log,
+                client=client,
+            )
+            try:
+                await runner.run()
+            except ConfigError:
+                return self.stop(reason=TerminationReason.FAILED)
+        finally:
+            await client.aclose()
+        return None
 
     def stop(self, reason: TerminationReason = TerminationReason.INTERRUPTED) -> TerminationReason:
         """Terminate cleanly with a structured reason.

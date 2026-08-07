@@ -26,6 +26,8 @@ The supervisor shall:
 
 ## Bootstrap
 
+Status: implemented (PR12 — deterministic bootstrap, no model involvement).
+
 The system shall:
 
 - parse single and namespaced target variables
