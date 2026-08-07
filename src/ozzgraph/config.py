@@ -10,10 +10,11 @@ families). Structured logging level arrives with PR4.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from pathlib import Path
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from ozzgraph.policy import (
     DEFAULT_ALLOWED_COMMAND_FAMILIES,
@@ -40,6 +41,13 @@ MAX_COMMAND_LENGTH_ENV = "OZZGRAPH_MAX_COMMAND_LENGTH"
 TARGET_ALLOWLIST_ENV = "OZZGRAPH_TARGET_ALLOWLIST"
 ALLOWED_COMMAND_FAMILIES_ENV = "OZZGRAPH_ALLOWED_COMMAND_FAMILIES"
 
+# Flag provenance and submission knobs (PR22): the deterministic flag
+# pattern the candidate extractor scans observation/artifact text with,
+# and the submission attempt cap (per candidate and in total) the
+# supervisor-only coordinator enforces.
+FLAG_PATTERN_ENV = "OZZGRAPH_FLAG_PATTERN"
+MAX_SUBMISSIONS_ENV = "OZZGRAPH_MAX_SUBMISSIONS"
+
 DEFAULT_STATE_DIR = "state"
 DEFAULT_ARTIFACT_DIR = "state/artifacts"
 
@@ -55,6 +63,16 @@ DEFAULT_MAX_TOOL_CALLS = 0
 DEFAULT_MAX_WORKERS = 4
 # Paid hints are supervisor-only and bounded (max one per detonation).
 DEFAULT_MAX_HINTS = 1
+
+# Safe default flag pattern: `flag{...}` with no braces or whitespace
+# inside (docs/TECHNICAL_REQUIREMENTS.md, "Flag Submission": a candidate
+# must match known format). Overridable via OZZGRAPH_FLAG_PATTERN for
+# challenge-specific formats.
+DEFAULT_FLAG_PATTERN = r"flag\{[^{}\s]+\}"
+# Submission attempt cap: a candidate is submitted at most this many
+# times, and the run performs at most this many total submissions
+# (docs/TECHNICAL_REQUIREMENTS.md, "Flag Submission": attempt limits).
+DEFAULT_MAX_SUBMISSIONS = 3
 
 
 class ConfigError(RuntimeError):
@@ -87,6 +105,10 @@ class OzzGraphConfig(BaseModel):
         allowed_command_families: Command families permitted at the
             policy level (comma-separated); phases and worker scopes
             narrow this per call.
+        flag_pattern: Regular expression the flag candidate extractor
+            matches observation/artifact text against (PR22).
+        max_submissions: Attempt cap for flag submission — per
+            candidate and in total (PR22).
     """
 
     hal_user_id: str = Field(min_length=1, pattern=r"^\S+$")
@@ -105,6 +127,24 @@ class OzzGraphConfig(BaseModel):
     target_allowlist: tuple[str, ...] = Field(default=DEFAULT_TARGET_ALLOWLIST)
     allowed_command_families: tuple[str, ...] = Field(default=DEFAULT_ALLOWED_COMMAND_FAMILIES)
 
+    flag_pattern: str = Field(default=DEFAULT_FLAG_PATTERN, min_length=1)
+    max_submissions: int = Field(default=DEFAULT_MAX_SUBMISSIONS, ge=1)
+
+    @field_validator("flag_pattern")
+    @classmethod
+    def _flag_pattern_must_compile(cls, value: str) -> str:
+        """Reject an invalid flag pattern regex loudly (PR22).
+
+        The extractor compiles this pattern at construction; validating
+        it here surfaces a bad ``OZZGRAPH_FLAG_PATTERN`` at load time as
+        a configuration error instead of a mid-run crash.
+        """
+        try:
+            re.compile(value)
+        except re.error as exc:
+            raise ValueError(f"flag_pattern must be a valid regular expression: {exc}") from exc
+        return value
+
 
 def _first_nonempty(mapping: Mapping[str, str], *keys: str) -> str | None:
     for key in keys:
@@ -112,6 +152,15 @@ def _first_nonempty(mapping: Mapping[str, str], *keys: str) -> str | None:
         if value is not None and value.strip() != "":
             return value
     return None
+
+
+def _env_str(environ: Mapping[str, str], key: str, default: str) -> str:
+    """Read a string environment variable, falling back to a default.
+
+    Blank variables fall back to the default (matching ``_env_int``).
+    """
+    raw = _first_nonempty(environ, key)
+    return default if raw is None else raw
 
 
 def _env_int(environ: Mapping[str, str], key: str, default: int) -> int:
@@ -181,6 +230,8 @@ def load_config(environ: Mapping[str, str] | None = None) -> OzzGraphConfig:
             allowed_command_families=_env_csv(
                 env, ALLOWED_COMMAND_FAMILIES_ENV, DEFAULT_ALLOWED_COMMAND_FAMILIES
             ),
+            flag_pattern=_env_str(env, FLAG_PATTERN_ENV, DEFAULT_FLAG_PATTERN),
+            max_submissions=_env_int(env, MAX_SUBMISSIONS_ENV, DEFAULT_MAX_SUBMISSIONS),
         )
     except ValidationError as exc:  # pragma: no cover - defensive
         raise ConfigError(f"invalid configuration: {exc}") from exc

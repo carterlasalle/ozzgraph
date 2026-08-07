@@ -32,6 +32,8 @@ from ozzgraph.events import (
     GraphEntityUpdated,
     graph_event,
 )
+from ozzgraph.flags import FlagCandidateExtractor
+from ozzgraph.hal_client import SubmissionResult
 from ozzgraph.replay import (
     GRAPH_EVENT_TYPES,
     ReplayMalformedEventError,
@@ -39,6 +41,7 @@ from ozzgraph.replay import (
     replay_into,
 )
 from ozzgraph.state_graph import StateGraph
+from ozzgraph.submissions import SubmissionCoordinator
 
 # Stable digest of the canonical empty graph (sha256 of the
 # "schema_version=2" header with no entity or edge lines), matching
@@ -370,6 +373,102 @@ async def test_replay_graph_free_log_returns_empty_hash(tmp_path: Path) -> None:
         )
     )
     assert await replay_graph(log.path, tmp_path / "replay.db") == EMPTY_GRAPH_HASH
+
+
+@pytest.mark.asyncio
+async def test_replay_after_flag_candidate_and_submission(tmp_path: Path) -> None:
+    """PR22 invariant: extractor + coordinator mutations replay identically.
+
+    The flag candidate extractor (PR22) persists the candidate entity
+    and its OBSERVED_IN edges, and the submission coordinator persists
+    the submission entity, its SUBMITS edge, and the rejected marker —
+    every mutation mirrored as a graph.* event sharing one timestamp, so
+    replaying the log reconstructs the identical graph hash.
+    """
+    log = EventLog.for_run(tmp_path)
+
+    class _AcceptedClient:
+        """Minimal privileged submit surface for the coordinator."""
+
+        privileged = True
+
+        async def submit_flag(self, challenge_id: str, flag: str) -> SubmissionResult:
+            return SubmissionResult(
+                challenge_id=challenge_id, accepted=True, message="ok", points=50
+            )
+
+    async with StateGraph(tmp_path / "live.db") as live:
+        # Seed the observation + evidence (mirrored as graph events).
+        await live.create_entity(
+            "obs-1", "observation", {"summary": "found flag{replay-42}"}, at=T1
+        )
+        log.append(
+            graph_event(
+                GRAPH_ENTITY_CREATED,
+                RUN,
+                "supervisor",
+                GraphEntityCreated(
+                    entity_id="obs-1",
+                    entity_type="observation",
+                    data={"summary": "found flag{replay-42}"},
+                    at=T1,
+                ),
+            )
+        )
+        await live.create_entity("evidence-1", "evidence", {}, at=T1)
+        log.append(
+            graph_event(
+                GRAPH_ENTITY_CREATED,
+                RUN,
+                "supervisor",
+                GraphEntityCreated(entity_id="evidence-1", entity_type="evidence", at=T1),
+            )
+        )
+        await live.create_edge(
+            "evidence-1-extracted-obs-1",
+            "EVIDENCE EXTRACTED_FROM OBSERVATION",
+            "evidence-1",
+            "obs-1",
+            at=T2,
+        )
+        log.append(
+            graph_event(
+                GRAPH_EDGE_CREATED,
+                RUN,
+                "supervisor",
+                GraphEdgeCreated(
+                    edge_id="evidence-1-extracted-obs-1",
+                    edge_type="EVIDENCE EXTRACTED_FROM OBSERVATION",
+                    src_id="evidence-1",
+                    dst_id="obs-1",
+                    at=T2,
+                ),
+            )
+        )
+        # Extract the candidate (appends candidate entity + edge + run event).
+        await FlagCandidateExtractor(run_id=RUN, event_log=log).extract(live)
+        # Submit it (appends submission entity + edge + run events).
+        coordinator = SubmissionCoordinator(
+            client=_AcceptedClient(),
+            run_id=RUN,
+            challenge_id="web-01",
+            event_log=log,
+        )
+        await coordinator.submit_verified_candidate(live)
+        live_hash = await live.graph_hash()
+
+    assert await replay_graph(log.path, tmp_path / "replay.db") == live_hash
+
+    replayed = await replay_into(log.path, tmp_path / "replay2.db")
+    try:
+        candidates = await replayed.list_entities("flag_candidate")
+        assert len(candidates) == 1
+        assert candidates[0].data["flag"] == "flag{replay-42}"
+        submissions = await replayed.list_entities("submission")
+        assert len(submissions) == 1
+        assert submissions[0].data["accepted"] is True
+    finally:
+        await replayed.close()
 
 
 @pytest.mark.asyncio

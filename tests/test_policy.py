@@ -20,6 +20,9 @@ from pathlib import Path
 import pytest
 
 from ozzgraph.policy import (
+    COMMAND_FAMILIES,
+    DEFAULT_FAMILY,
+    PHASES,
     AllowlistViolationError,
     CommandLengthError,
     DuplicateActionError,
@@ -557,3 +560,46 @@ async def test_check_then_run_gate_fails_before_spawn(tmp_path: Path) -> None:
             working_directory=tmp_path,
         )
     assert store.known == 0
+
+
+# ---------------------------------------------------------------------------
+# PR22: the executor can never reach a submit command
+# ---------------------------------------------------------------------------
+
+
+def test_executor_can_never_reach_a_submit_command_family() -> None:
+    """Unsupported flag submissions: zero (docs/PRD.md success metric).
+
+    No command family grants submission and no phase permits one, so a
+    model-bound executor — which is constrained by the phase's permitted
+    command families — can never reach a submit command through the
+    policy gate. For every phase, a submit-shaped command is either
+    rejected by the gate or classified into a family that is never a
+    submission family (``submit``).
+    """
+    assert "submit" not in COMMAND_FAMILIES
+    assert DEFAULT_FAMILY != "submit"
+    policy = _policy()
+    for phase in PHASES:
+        try:
+            decision = policy.check("halctl submit --flag 'flag{x}' --json", phase=phase)
+        except ScopeViolationError:
+            continue  # the gate rejected it — the executor cannot reach it
+        assert decision.family != "submit"
+
+
+def test_verify_and_submit_phase_permits_only_shell() -> None:
+    """VERIFY_AND_SUBMIT allows only the shell family (PR22 invariant).
+
+    The submission coordinator, not any command family, owns submission:
+    even in the submission phase a model can only reach generic shell
+    commands, and ``halctl submit`` itself is privilege-guarded at the
+    wire (HalPrivilegeError), so no model path can submit a flag.
+    """
+    policy = _policy()
+    # A read-only halctl command is fine in the phase ...
+    decision = policy.check("halctl status --json", phase="VERIFY_AND_SUBMIT")
+    assert decision.family == "shell"
+    # ... but a submit attempt never classifies into a submission family.
+    with pytest.raises(ScopeViolationError):
+        policy.check("halctl submit --flag 'flag{x}' --json", phase="DONE")

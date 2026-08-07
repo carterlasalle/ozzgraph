@@ -146,3 +146,159 @@ def test_stop_before_start_writes_no_event(tmp_path) -> None:
     supervisor = Supervisor(_config(tmp_path))
     supervisor.stop(reason=TerminationReason.INTERRUPTED)
     assert not (tmp_path / "state" / "actions.jsonl").exists()
+
+
+# ---------------------------------------------------------------------------
+# PR22: supervisor-only flag submission
+# ---------------------------------------------------------------------------
+
+
+class _PrivilegedSubmitFake:
+    """Minimal privileged submit surface (structurally satisfies the protocol)."""
+
+    def __init__(self, *, accepted: bool = True) -> None:
+        self._accepted = accepted
+        self.calls: list[tuple[str, str]] = []
+
+    @property
+    def privileged(self) -> bool:
+        return True
+
+    async def submit_flag(self, challenge_id: str, flag: str):
+        self.calls.append((challenge_id, flag))
+        from ozzgraph.hal_client import SubmissionResult
+
+        return SubmissionResult(
+            challenge_id=challenge_id,
+            accepted=self._accepted,
+            message="ok" if self._accepted else "wrong",
+            points=100 if self._accepted else 0,
+        )
+
+
+async def _seed_verified_candidate(graph) -> str:
+    """Seed observation + evidence + verified candidate (flag-<hash>)."""
+    from ozzgraph.flags import (
+        EDGE_EVIDENCE_EXTRACTED_FROM_OBSERVATION,
+        FIELD_FLAG,
+        FIELD_REJECTED,
+        FIELD_VERIFIED,
+        flag_candidate_id,
+    )
+
+    await graph.create_entity("obs-1", "observation", {"summary": "saw flag{supervisor-1}"})
+    await graph.create_entity("ev-1", "evidence", {"note": "parsed"})
+    await graph.create_edge(
+        "ev-1-from-obs-1",
+        EDGE_EVIDENCE_EXTRACTED_FROM_OBSERVATION,
+        "ev-1",
+        "obs-1",
+    )
+    candidate_id = flag_candidate_id("flag{supervisor-1}")
+    await graph.create_entity(
+        candidate_id,
+        "flag_candidate",
+        {
+            FIELD_FLAG: "flag{supervisor-1}",
+            FIELD_VERIFIED: True,
+            "source_observation_id": "obs-1",
+            "evidence_ids": ["ev-1"],
+            FIELD_REJECTED: False,
+            "attempts": 0,
+        },
+    )
+    await graph.create_edge(
+        f"{candidate_id}-observed-in-ev-1",
+        "FLAG_CANDIDATE OBSERVED_IN EVIDENCE",
+        candidate_id,
+        "ev-1",
+    )
+    return candidate_id
+
+
+@pytest.mark.asyncio
+async def test_submit_verified_candidate_drives_privileged_coordinator(tmp_path) -> None:
+    """The supervisor submits through the coordinator and persists the outcome."""
+    from ozzgraph.state_graph import StateGraph
+
+    supervisor = Supervisor(_config(tmp_path))
+    supervisor.start()
+    client = _PrivilegedSubmitFake(accepted=True)
+
+    async with StateGraph(":memory:") as graph:
+        candidate_id = await _seed_verified_candidate(graph)
+        result = await supervisor.submit_verified_candidate(
+            graph, challenge_id="web-01", client=client
+        )
+
+        assert result.accepted is True
+        assert client.calls == [("web-01", "flag{supervisor-1}")]
+        submission = await graph.get_entity("submission-1")
+        assert submission is not None
+        assert submission.data["accepted"] is True
+        assert submission.data["candidate_id"] == candidate_id
+
+    records = _read_records(tmp_path)
+    event_types = [record["event_type"] for record in records]
+    assert "submission.attempted" in event_types
+    assert "submission.accepted" in event_types
+
+
+@pytest.mark.asyncio
+async def test_submit_verified_candidate_routes_done(tmp_path) -> None:
+    """After a supervisor submission, the phase router routes DONE."""
+    from ozzgraph.phases import Phase
+    from ozzgraph.router import PhaseRouter
+    from ozzgraph.state_graph import StateGraph
+
+    supervisor = Supervisor(_config(tmp_path))
+    supervisor.start()
+
+    async with StateGraph(":memory:") as graph:
+        await _seed_verified_candidate(graph)
+        await supervisor.submit_verified_candidate(
+            graph, challenge_id="web-01", client=_PrivilegedSubmitFake(accepted=True)
+        )
+        route = await PhaseRouter().route(graph)
+        assert route.phase == Phase.DONE
+        assert route.predicate == "has_accepted_submission"
+
+
+@pytest.mark.asyncio
+async def test_submit_verified_candidate_refuses_non_privileged_client(
+    tmp_path,
+) -> None:
+    """Only the supervisor path may submit: a non-privileged client is refused."""
+    from ozzgraph.state_graph import StateGraph
+    from ozzgraph.submissions import SubmissionPrivilegeError
+
+    supervisor = Supervisor(_config(tmp_path))
+    supervisor.start()
+
+    class _NonPrivilegedSubmitFake(_PrivilegedSubmitFake):
+        @property
+        def privileged(self) -> bool:
+            return False
+
+    client = _NonPrivilegedSubmitFake()
+    async with StateGraph(":memory:") as graph:
+        await _seed_verified_candidate(graph)
+        with pytest.raises(SubmissionPrivilegeError, match="supervisor-only"):
+            await supervisor.submit_verified_candidate(graph, challenge_id="web-01", client=client)
+        assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_submit_verified_candidate_missing_challenge_id_raises(tmp_path, monkeypatch) -> None:
+    """Without a challenge id, submission is refused loudly (ConfigError)."""
+    from ozzgraph.config import ConfigError
+    from ozzgraph.state_graph import StateGraph
+
+    monkeypatch.delenv("OZZGRAPH_CHALLENGE_ID", raising=False)
+    supervisor = Supervisor(_config(tmp_path))
+    supervisor.start()
+
+    async with StateGraph(":memory:") as graph:
+        await _seed_verified_candidate(graph)
+        with pytest.raises(ConfigError, match="challenge id"):
+            await supervisor.submit_verified_candidate(graph, client=_PrivilegedSubmitFake())

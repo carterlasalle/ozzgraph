@@ -10,12 +10,17 @@ enforces budgets, and terminates gracefully on ``SIGTERM``/``SIGINT``. PR4 adds
 append-only structured event logging (bootstrap and termination events). PR12
 runs the deterministic bootstrap reconnaissance
 (:mod:`ozzgraph.bootstrap`) after heartbeat setup and before the main idle
-loop, constructing the supervisor-owned privileged HalClient for it.
+loop, constructing the supervisor-owned privileged HalClient for it. PR22
+adds :meth:`Supervisor.submit_verified_candidate` — the supervisor-only
+submission surface that drives
+:class:`~ozzgraph.submissions.SubmissionCoordinator` with a privileged
+client; the idle loop itself is untouched.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import signal
 from datetime import UTC, datetime
 from enum import Enum
@@ -26,8 +31,11 @@ from ozzgraph.bootstrap import BootstrapRunner
 from ozzgraph.budgets import Budgets
 from ozzgraph.config import ConfigError, OzzGraphConfig
 from ozzgraph.events import BOOTSTRAP, TERMINATION, Event, EventLog
-from ozzgraph.hal_client import HalClient
+from ozzgraph.hal_client import HalClient, SubmissionResult
+from ozzgraph.halctl import CHALLENGE_ID_ENV
 from ozzgraph.heartbeat import Heartbeat
+from ozzgraph.state_graph import StateGraph
+from ozzgraph.submissions import SubmissionClient, SubmissionCoordinator
 
 _POLL_SECONDS = 0.25
 
@@ -211,6 +219,73 @@ class Supervisor:
         finally:
             await client.aclose()
         return None
+
+    async def submit_verified_candidate(
+        self,
+        graph: StateGraph,
+        challenge_id: str | None = None,
+        *,
+        client: SubmissionClient | None = None,
+    ) -> SubmissionResult:
+        """Submit the graph's verified flag candidate (supervisor-only).
+
+        The minimal PR22 integration surface, following the repo
+        convention that the executor/evaluator are NOT yet wired into
+        the supervisor idle loop: this method exists so a future loop
+        driver can submit without ever giving a worker or model a
+        privileged client. The supervisor constructs the supervisor-owned
+        privileged :class:`HalClient` (the ``_run_bootstrap`` pattern,
+        AGENTS.md invariant 5) unless a client is injected (tests), and
+        drives the :class:`~ozzgraph.submissions.SubmissionCoordinator`,
+        which enforces the provenance, privilege, and attempt-budget
+        invariants.
+
+        Args:
+            graph: The authoritative state graph holding the verified
+                flag candidate.
+            challenge_id: The challenge to submit to; defaults to the
+                ``OZZGRAPH_CHALLENGE_ID`` environment variable.
+            client: Optional submission client to drive (must be
+                privileged); when ``None`` the supervisor constructs and
+                closes its own privileged HalClient.
+
+        Raises:
+            ConfigError: If no challenge id is configured.
+            ozzgraph.submissions.SubmissionError: For every refusal the
+                coordinator raises (privilege, limits, rejection — see
+                :class:`~ozzgraph.submissions.SubmissionCoordinator`).
+            ozzgraph.router.MissingRequiredStateError: If the graph has
+                no verified, provenance-backed flag candidate.
+
+        Returns:
+            The platform's accepted :class:`SubmissionResult`; the phase
+            router's ``has_accepted_submission`` predicate then routes
+            the graph to DONE.
+        """
+        if challenge_id is None:
+            resolved = os.environ.get(CHALLENGE_ID_ENV, "")
+            if resolved.strip() == "":
+                raise ConfigError(f"missing challenge id for submission: set {CHALLENGE_ID_ENV}")
+            challenge_id = resolved
+        assert self._event_log is not None  # start() sets it before _started
+        owned = client is None
+        resolved_client = (
+            client
+            if client is not None
+            else HalClient(privileged=True, event_log=self._event_log, run_id=self._run_id)
+        )
+        try:
+            coordinator = SubmissionCoordinator(
+                client=resolved_client,
+                run_id=self._run_id,
+                challenge_id=challenge_id,
+                event_log=self._event_log,
+                max_submissions=self._config.max_submissions,
+            )
+            return await coordinator.submit_verified_candidate(graph)
+        finally:
+            if owned:
+                await resolved_client.aclose()
 
     def stop(self, reason: TerminationReason = TerminationReason.INTERRUPTED) -> TerminationReason:
         """Terminate cleanly with a structured reason.

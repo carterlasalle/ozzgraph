@@ -49,6 +49,15 @@ BOOTSTRAP_REACHABILITY = "bootstrap.reachability"
 BOOTSTRAP_PROBE_RUN = "bootstrap.probe_run"
 BOOTSTRAP_FAILED = "bootstrap.failed"
 
+# Flag and submission event types (PR22). Run-log events emitted by the
+# flag candidate extractor (producer ``"flags"``) and the supervisor-only
+# submission coordinator (producer ``"submissions"``) alongside the
+# ``graph.*`` events that mirror every graph mutation.
+FLAGS_CANDIDATE_FOUND = "flags.candidate_found"
+SUBMISSION_ATTEMPTED = "submission.attempted"
+SUBMISSION_ACCEPTED = "submission.accepted"
+SUBMISSION_REJECTED = "submission.rejected"
+
 
 class Event(BaseModel):
     """One structured event in the append-only run log.

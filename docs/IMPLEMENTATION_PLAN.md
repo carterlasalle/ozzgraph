@@ -243,7 +243,7 @@ Exit:
 19. Planner and schemas
 20. Executor loop (done — PR20)
 21. Evaluator and replanning (done — PR21)
-22. Flag provenance and submission
+22. Flag provenance and submission (done — PR22)
 23. Hint policy
 24. Task DAG and scheduler
 25. Specialist workers

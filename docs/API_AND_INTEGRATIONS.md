@@ -401,7 +401,7 @@ skills without a second lookup.
 | Error | Raised when |
 |---|---|
 | `InvalidGraphStateError` | a payload field the router reads is present but not a bool (e.g. `confirmed: "yes"`) |
-| `MissingRequiredStateError` | an accepted submission has no `SUBMISSION SUBMITS FLAG_CANDIDATE` edge, or a verified flag candidate has no `FLAG_CANDIDATE OBSERVED_IN EVIDENCE` edge (AGENTS.md data invariants) |
+| `MissingRequiredStateError` | an accepted submission has no `SUBMISSION SUBMITS FLAG_CANDIDATE` edge, or a verified, non-rejected flag candidate has no `FLAG_CANDIDATE OBSERVED_IN EVIDENCE` edge (AGENTS.md data invariants) |
 
 Payload conventions (entity types lowercase, edge types uppercase, per
 docs/DATA_STRATEGY.md):
@@ -416,6 +416,7 @@ docs/DATA_STRATEGY.md):
 | `credential.valid` | credential grants usable access |
 | `credential.explored` | post-exploitation already consumed the access |
 | `flag_candidate.verified` | flag candidate has observed provenance |
+| `flag_candidate.rejected` | platform rejected the candidate (PR22) — it is never re-submitted and never routes VERIFY_AND_SUBMIT |
 | `submission.accepted` | submission was accepted (terminal signal) |
 
 Transition predicates, in evaluation order:
@@ -424,7 +425,7 @@ Transition predicates, in evaluation order:
 |---|---|---|---|
 | 1 | `graph_is_empty` | no entities at all | `BOOTSTRAP` |
 | 2 | `has_accepted_submission` | a `submission` with `accepted: true` and its `SUBMISSION SUBMITS FLAG_CANDIDATE` edge | `DONE` |
-| 3 | `has_verified_flag` | a `flag_candidate` with `verified: true` and its `FLAG_CANDIDATE OBSERVED_IN EVIDENCE` edge | `VERIFY_AND_SUBMIT` |
+| 3 | `has_verified_flag` | a `flag_candidate` with `verified: true`, not `rejected`, and its `FLAG_CANDIDATE OBSERVED_IN EVIDENCE` edge | `VERIFY_AND_SUBMIT` |
 | 4 | `targets_unconfirmed` | no `target`, or a non-pivot `target` without `confirmed: true` | `RECON` |
 | 5 | `has_uncharacterized_services` | a `service` without `characterized: true` | `ENUMERATION` |
 | 6 | `has_supported_exploitable_hypothesis` | a `hypothesis` with `exploitable: true` and an incoming `EVIDENCE SUPPORTS HYPOTHESIS` edge | `EXPLOITATION` |
@@ -670,6 +671,183 @@ produces action TEXT — a command line or a `halctl` invocation that
 the tool plane runs through the policy gate and the bounded shell
 runner. The executor constructs no MCP client and imports no MCP
 surface.
+
+## Flags and Submission
+
+Flag handling (PR22) is the Phase 8 slice "candidate extraction,
+provenance validation, supervisor submission, rejected candidate
+tracking" (docs/IMPLEMENTATION_PLAN.md step 22; hint policy is PR23).
+Two small modules implement it: `ozzgraph.flags` owns deterministic,
+provenance-gated candidate extraction, and `ozzgraph.submissions`
+owns the supervisor-only submission coordinator. Neither module
+touches MCP directly: the coordinator drives the privileged
+`HalClient.submit_flag` — the only caller of the wire surface in the
+kernel — and every model-visible path (skills, router, executor) can
+only produce action text, never a submission.
+
+### Candidate extraction (`ozzgraph.flags`)
+
+A flag candidate is created only when the flag text appears VERBATIM
+in an observation (or an artifact that observation references) AND
+that observation is backed by at least one evidence entity linked via
+`EVIDENCE EXTRACTED_FROM OBSERVATION` (AGENTS.md rule #3: every
+confirmed fact has provenance; docs/DATA_STRATEGY.md). A bare model
+claim is never a candidate.
+
+```python
+class FlagCandidate(BaseModel):
+    flag: str  # exact flag text, matched verbatim
+    entity_id: str  # "flag-<sha256(flag)>" — deterministic, unique per string
+    source_observation_id: str  # the observation the flag appeared in
+    evidence_ids: tuple[str, ...]  # backing evidence, ordered by edge id
+
+
+def flag_candidate_id(flag: str) -> str: ...  # "flag-" + sha256 hex
+
+
+class FlagCandidateExtractor:
+    def __init__(
+        self,
+        *,
+        run_id: str = "flags",
+        event_log: EventLog | None = None,
+        pattern: str = DEFAULT_FLAG_PATTERN,  # r"flag\{[^{}\s]+\}"
+        max_attempts: int = DEFAULT_MAX_SUBMISSIONS,  # 3
+        artifact_store: ArtifactStore | None = None,
+    ) -> None: ...
+
+    async def extract(self, graph: StateGraph) -> tuple[FlagCandidate, ...]: ...
+```
+
+`extract` scans observation entities in id order, resolves their
+backing evidence (either edge direction), scans every string in the
+observation payload recursively plus the contents of referenced
+artifacts (bounded, missing artifacts skipped), and persists one
+`flag_candidate` entity per NEW flag string, each with a
+`FLAG_CANDIDATE OBSERVED_IN EVIDENCE` edge to every backing evidence
+entity. A candidate that already exists — verified, rejected, or at
+its attempt budget — is never re-created (idempotent by hash; a
+rejected flag is never resurrected). Every mutation is mirrored as a
+`graph.entity_created` / `graph.edge_created` event sharing one
+timestamp, and each found candidate also emits a
+`flags.candidate_found` run event (producer `flags`), so replaying the
+log reconstructs the identical graph hash.
+
+`flag_candidate` payload contract (the router reads `verified` and
+`rejected` as strict booleans):
+
+| Field | Type | Meaning |
+|---|---|---|
+| `flag` | `str` | the exact flag text |
+| `verified` | `bool` | `true` — the candidate has observed provenance |
+| `source_observation_id` | `str` | the observation the flag appeared in |
+| `evidence_ids` | `list[str]` | evidence entities backing that observation |
+| `rejected` | `bool` | `false` at creation; `true` after a platform rejection — never re-submitted |
+| `attempts` | `int` | `0` at creation; counts platform rejections |
+
+Extraction errors (all `RuntimeError` subclasses, AGENTS.md rule #9):
+
+| Error | Raised when |
+|---|---|
+| `FlagsError` | base error for the extraction layer |
+| `InvalidFlagPatternError` | the configured flag pattern is not a valid regular expression (at construction) |
+| `FlagsStateError` | an existing candidate's `rejected` / `attempts` payload field is wrong-typed (never coerced) |
+
+### Submission coordinator (`ozzgraph.submissions`)
+
+`SubmissionCoordinator` is the only caller of `submit_flag` in the
+kernel. It finds the graph's verified, non-rejected flag candidate,
+validates its `FLAG_CANDIDATE OBSERVED_IN EVIDENCE` edge, enforces the
+attempt budgets, and drives the privileged client.
+
+```python
+class SubmissionCoordinator:
+    def __init__(
+        self,
+        *,
+        client: SubmissionClient,  # must be privileged; HalClient satisfies the protocol
+        run_id: str,
+        challenge_id: str,
+        event_log: EventLog | None = None,
+        max_submissions: int = DEFAULT_MAX_SUBMISSIONS,  # 3
+    ) -> None: ...
+
+    async def submit_verified_candidate(self, graph: StateGraph) -> SubmissionResult: ...
+```
+
+`submit_verified_candidate` flow (the executor's "record the attempt
+before execution" pattern): find the candidate (id order) -> refuse
+loudly if the client is not privileged or an attempt budget is
+exhausted -> record `submission.attempted` -> call
+`client.submit_flag` -> persist the `submission` entity
+(`submission-<seq>`) plus its `SUBMISSION SUBMITS FLAG_CANDIDATE`
+edge (same-timestamp `graph.*` events) -> on acceptance return the
+typed `SubmissionResult` (the router's `has_accepted_submission`
+predicate then routes DONE); on rejection mark the candidate
+`rejected: true`, increment its `attempts` (mirrored as a
+`graph.entity_updated` event), and raise `SubmissionRejectedError` —
+the flag is never re-submitted and the router re-routes away from
+VERIFY_AND_SUBMIT.
+
+Submission is always serialized (AGENTS.md rule #7): one candidate per
+coordinator call, one wire call per attempt, and the per-candidate and
+run-total caps (`max_submissions`, default 3) are enforced before any
+wire call.
+
+`submission` payload contract:
+
+| Field | Meaning |
+|---|---|
+| `challenge_id` | the challenge the flag was submitted to (platform echo) |
+| `flag` | the submitted flag text |
+| `accepted` | strict bool — the router's terminal signal (`true` -> DONE) |
+| `message` | the platform's verdict message |
+| `points` | points awarded (0 when rejected) |
+| `candidate_id` | the submitted `flag_candidate` entity id |
+
+Submission errors (all `RuntimeError` subclasses):
+
+| Error | Raised when |
+|---|---|
+| `SubmissionError` | base error for the submission layer |
+| `SubmissionPrivilegeError` | the injected client is not privileged (supervisor-only, AGENTS.md invariant 5) |
+| `SubmissionLimitError` | the candidate's attempt count or the run's total submission count reached `max_submissions` (budget-style, before the wire) |
+| `SubmissionStateError` | a candidate payload field the coordinator reads is wrong-typed |
+| `SubmissionRejectedError` | the platform rejected the flag; carries `candidate_id`, `flag`, `message` |
+| `MissingRequiredStateError` (router) | no verified, non-rejected candidate exists, or a verified candidate lacks its provenance edge |
+
+### Events and constants
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `FLAGS_PRODUCER` | `"flags"` | producer of extractor run events |
+| `FLAGS_CANDIDATE_FOUND` | `"flags.candidate_found"` | run event per new candidate |
+| `SUBMISSIONS_PRODUCER` | `"submissions"` | producer of coordinator run events |
+| `SUBMISSION_ATTEMPTED` | `"submission.attempted"` | recorded before the wire call |
+| `SUBMISSION_ACCEPTED` | `"submission.accepted"` | platform accepted the flag |
+| `SUBMISSION_REJECTED` | `"submission.rejected"` | platform rejected the flag |
+| `EDGE_FLAG_CANDIDATE_OBSERVED_IN_EVIDENCE` | `"FLAG_CANDIDATE OBSERVED_IN EVIDENCE"` | candidate -> evidence provenance edge |
+| `EDGE_SUBMISSION_SUBMITS_FLAG_CANDIDATE` | `"SUBMISSION SUBMITS FLAG_CANDIDATE"` | submission -> candidate edge |
+| `DEFAULT_FLAG_PATTERN` | `r"flag\{[^{}\s]+\}"` | default `flag{...}` format (no braces or whitespace inside) |
+| `DEFAULT_MAX_SUBMISSIONS` | `3` | default per-candidate and run-total attempt cap |
+
+Configuration knobs (validated at load time — an invalid regex or
+non-integer cap is a `ConfigError`):
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `OZZGRAPH_FLAG_PATTERN` | `r"flag\{[^{}\s]+\}"` | Regular expression the extractor matches observation/artifact text against (challenge-specific formats override the safe `flag{...}` default) |
+| `OZZGRAPH_MAX_SUBMISSIONS` | `3` | Attempt cap, per candidate and in total (budget-style: refused before any wire call) |
+
+### Supervisor integration
+
+`Supervisor.submit_verified_candidate(graph, challenge_id=None, *,
+client=None)` is the supervisor-owned entry point (AGENTS.md invariant
+5): it resolves the challenge id (explicit argument or
+`OZZGRAPH_CHALLENGE_ID`), constructs a supervisor-owned privileged
+`HalClient` when none is injected, drives the coordinator, and closes
+the client it owns. Models and workers never hold a client that could
+submit.
 
 ## State Graph
 

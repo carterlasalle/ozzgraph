@@ -364,6 +364,16 @@ class HalClient:
         """Close the underlying httpx client, releasing pooled connections."""
         await self._client.aclose()
 
+    @property
+    def privileged(self) -> bool:
+        """Whether this client may invoke supervisor-only methods.
+
+        The supervisor-only submission coordinator (PR22) checks this
+        flag before calling :meth:`submit_flag`, so the privilege
+        boundary is enforced before anything reaches the wire.
+        """
+        return self._privileged
+
     async def __aenter__(self) -> Self:
         return self
 

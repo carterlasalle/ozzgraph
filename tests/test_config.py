@@ -161,3 +161,47 @@ def test_config_model_validates_command_length_range() -> None:
     """max_command_length enforces its gt constraint via pydantic."""
     with pytest.raises(ValueError):
         OzzGraphConfig(hal_user_id="u", max_command_length=0)
+
+
+def test_load_config_applies_flag_and_submission_defaults() -> None:
+    """Flag pattern and submission cap default safely without env vars."""
+    config = load_config(environ={"HAL_USER_ID": "user-42"})
+    assert config.flag_pattern == r"flag\{[^{}\s]+\}"
+    assert config.max_submissions == 3
+
+
+def test_load_config_respects_flag_and_submission_overrides() -> None:
+    """Explicit flag/submission env vars override the defaults."""
+    config = load_config(
+        environ={
+            "HAL_USER_ID": "user-42",
+            "OZZGRAPH_FLAG_PATTERN": r"CTF\{[^{}\s]+\}",
+            "OZZGRAPH_MAX_SUBMISSIONS": "5",
+        }
+    )
+    assert config.flag_pattern == r"CTF\{[^{}\s]+\}"
+    assert config.max_submissions == 5
+
+
+def test_load_config_rejects_invalid_flag_pattern() -> None:
+    """An uncompileable flag pattern fails loudly at load time."""
+    with pytest.raises(ConfigError, match="flag_pattern"):
+        load_config(environ={"HAL_USER_ID": "user-42", "OZZGRAPH_FLAG_PATTERN": "flag([bad"})
+
+
+def test_load_config_rejects_invalid_max_submissions() -> None:
+    """A non-integer submission cap fails loudly."""
+    with pytest.raises(ConfigError, match="OZZGRAPH_MAX_SUBMISSIONS"):
+        load_config(environ={"HAL_USER_ID": "user-42", "OZZGRAPH_MAX_SUBMISSIONS": "many"})
+
+
+def test_config_model_validates_max_submissions_range() -> None:
+    """max_submissions enforces its ge constraint via pydantic."""
+    with pytest.raises(ValueError):
+        OzzGraphConfig(hal_user_id="u", max_submissions=0)
+
+
+def test_load_config_blank_flag_env_uses_default() -> None:
+    """A blank flag-pattern env var falls back to the safe default."""
+    config = load_config(environ={"HAL_USER_ID": "user-42", "OZZGRAPH_FLAG_PATTERN": "   "})
+    assert config.flag_pattern == r"flag\{[^{}\s]+\}"

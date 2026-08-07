@@ -51,7 +51,8 @@ docs/API_AND_INTEGRATIONS.md, "Phase Router"):
 - ``hypothesis``: ``exploitable`` (has an exploitation direction).
 - ``credential``: ``valid`` (usable access), ``explored`` (post-
   exploitation already consumed it).
-- ``flag_candidate``: ``verified`` (provenance-backed flag).
+- ``flag_candidate``: ``verified`` (provenance-backed flag),
+  ``rejected`` (platform rejected it — never re-submitted, PR22).
 - ``submission``: ``accepted`` (the run's terminal signal).
 """
 
@@ -90,6 +91,7 @@ FIELD_EXPLOITABLE = "exploitable"
 FIELD_EXPLORED = "explored"
 FIELD_PIVOT = "pivot"
 FIELD_REACHABLE = "reachable"
+FIELD_REJECTED = "rejected"
 FIELD_VALID = "valid"
 FIELD_VERIFIED = "verified"
 
@@ -188,14 +190,21 @@ async def _has_accepted_submission(graph: StateGraph) -> bool:
 async def _has_verified_flag(graph: StateGraph) -> bool:
     """True when a flag candidate is verified and ready to submit.
 
+    A candidate marked ``rejected: true`` (PR22: the platform rejected
+    it, so it must never be re-submitted) is not a verified candidate:
+    the submission coordinator flips the marker and the router then
+    re-routes away from VERIFY_AND_SUBMIT.
+
     Raises:
-        MissingRequiredStateError: If a verified flag candidate has no
-            ``FLAG_CANDIDATE OBSERVED_IN EVIDENCE`` edge (AGENTS.md data
-            invariant: submitted flag candidates have observed
-            provenance).
+        MissingRequiredStateError: If a verified, non-rejected flag
+            candidate has no ``FLAG_CANDIDATE OBSERVED_IN EVIDENCE``
+            edge (AGENTS.md data invariant: submitted flag candidates
+            have observed provenance).
     """
     for record in await graph.list_entities(ENTITY_FLAG_CANDIDATE):
         if not _payload_bool(record, FIELD_VERIFIED):
+            continue
+        if _payload_bool(record, FIELD_REJECTED):
             continue
         if not await _has_outgoing_edge(graph, record.id, EDGE_FLAG_CANDIDATE_OBSERVED_IN_EVIDENCE):
             raise MissingRequiredStateError(
@@ -272,7 +281,12 @@ async def _has_new_reachable_targets(graph: StateGraph) -> bool:
 
 
 async def _has_access_but_no_flag(graph: StateGraph) -> bool:
-    """True when access exists but no verified flag candidate does."""
+    """True when access exists but no verified flag candidate does.
+
+    A rejected candidate (PR22) is not a verified candidate: it must
+    never be re-submitted, so it neither routes VERIFY_AND_SUBMIT nor
+    blocks a fresh FLAG_HUNT for a different flag.
+    """
     has_access = any(
         _payload_bool(record, FIELD_VALID)
         for record in await graph.list_entities(ENTITY_CREDENTIAL)
@@ -280,7 +294,7 @@ async def _has_access_but_no_flag(graph: StateGraph) -> bool:
     if not has_access:
         return False
     for record in await graph.list_entities(ENTITY_FLAG_CANDIDATE):
-        if _payload_bool(record, FIELD_VERIFIED):
+        if _payload_bool(record, FIELD_VERIFIED) and not _payload_bool(record, FIELD_REJECTED):
             return False
     return True
 

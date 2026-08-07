@@ -176,6 +176,62 @@ async def test_verified_flag_routes_to_verify_and_submit() -> None:
 
 
 @pytest.mark.asyncio
+async def test_rejected_flag_candidate_does_not_route_verify_and_submit() -> None:
+    """A platform-rejected candidate (PR22) never routes VERIFY_AND_SUBMIT."""
+    async with StateGraph(":memory:") as graph:
+        await _seed_baseline(graph)
+        await _entity(graph, "obs-1", "observation")
+        await _entity(graph, "ev-1", "evidence")
+        await _entity(graph, "flag-1", "flag_candidate", {"verified": True, "rejected": True})
+        await _edge(graph, "ev-1->obs-1", "EVIDENCE EXTRACTED_FROM OBSERVATION", "ev-1", "obs-1")
+        await _edge(
+            graph,
+            "flag-1->ev-1",
+            EDGE_FLAG_CANDIDATE_OBSERVED_IN_EVIDENCE,
+            "flag-1",
+            "ev-1",
+        )
+        route = await PhaseRouter().route(graph)
+    assert route.phase == Phase.REPLAN
+    assert route.predicate == "default_replan"
+
+
+@pytest.mark.asyncio
+async def test_rejected_flag_candidate_does_not_block_flag_hunt() -> None:
+    """A rejected candidate is not verified: FLAG_HUNT may open for a new flag."""
+    async with StateGraph(":memory:") as graph:
+        await _seed_baseline(graph)
+        await _entity(graph, "cred-1", "credential", {"valid": True, "explored": True})
+        await _entity(graph, "flag-1", "flag_candidate", {"verified": True, "rejected": True})
+        await _entity(graph, "ev-1", "evidence")
+        await _edge(
+            graph,
+            "flag-1->ev-1",
+            EDGE_FLAG_CANDIDATE_OBSERVED_IN_EVIDENCE,
+            "flag-1",
+            "ev-1",
+        )
+        route = await PhaseRouter().route(graph)
+    assert route.phase == Phase.FLAG_HUNT
+    assert route.predicate == "has_access_but_no_flag"
+
+
+@pytest.mark.asyncio
+async def test_rejected_candidate_without_edge_is_not_an_invariant_error() -> None:
+    """A rejected candidate lacking its edge is skipped, not raised (PR22).
+
+    The provenance invariant binds candidates the harness will submit;
+    a rejected candidate is excluded from routing entirely, so its
+    missing edge is never an error.
+    """
+    async with StateGraph(":memory:") as graph:
+        await _seed_baseline(graph)
+        await _entity(graph, "flag-1", "flag_candidate", {"verified": True, "rejected": True})
+        route = await PhaseRouter().route(graph)
+    assert route.phase == Phase.REPLAN
+
+
+@pytest.mark.asyncio
 async def test_unconfirmed_target_routes_to_recon() -> None:
     """A target without confirmed=True means RECON."""
     async with StateGraph(":memory:") as graph:
