@@ -70,6 +70,21 @@ double-purchase) and `tests/test_supervisor.py`
 supervisor-owned `request_paid_hint` on a graph the gate denies and
 asserts the wire is never reached).
 
+The "scheduler conflicts" unit-test area (PR24) is covered by
+`tests/test_scheduler.py`: DAG construction failures (duplicate id,
+missing dependency, cycle, self-dependency), conflict-key mutual
+exclusion (an instrumented gate runner records execution intervals and
+asserts conflicting tasks never overlap while independent tasks run
+concurrently), dependency ordering, bounded parallelism (never more
+than `max_workers` concurrent), deterministic scheduling order (two
+schedules of the same DAG produce identical start sequences),
+supervisor-only serialization (the reserved `serialized` key never
+overlaps any other task), the structured-findings contract (mandatory
+evidence references, task attribution), structured failure paths (a
+failed outcome and a crashing runner both become failed `worker_run`
+records), and graph/event persistence with replay consistency
+(replaying the event log reconstructs the identical graph hash).
+
 ## Synthetic Challenge Suite
 
 Include isolated targets for:

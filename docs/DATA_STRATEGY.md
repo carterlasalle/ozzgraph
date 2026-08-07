@@ -83,6 +83,16 @@ rule reads; `hint_recommendation` entities reference `evaluation`
 entities by payload `evaluation_id` and are idempotent per evaluation
 (`hint-rec-<sha256(evaluation_id)>`).
 
+`task` entities (PR24) use the caller-supplied task id directly as the
+entity id and carry the DAG definition (`depends_on`, `conflict_keys`,
+`plan_step_id`, `hypothesis_id`); `worker_run` entities are
+`worker-run-<sha256(run_id:task_id)>` and carry the run's status,
+timestamps, structured findings, and error. Findings are typed (task
+id, source, evidence/artifact ids, confidence) but stay embedded in
+their `worker_run` payload until the reducer (PR step 26) promotes them
+into `evidence`/`fact` entities — the scheduler itself never merges a
+finding into the graph as authoritative state (AGENTS.md rule #3).
+
 Concrete schema details (see `src/ozzgraph/state_graph.py`):
 
 - `entities(id, type, data, created_at, updated_at)`; a `data_version`

@@ -1030,6 +1030,125 @@ supervisor-owned privileged `HalClient` when none is injected, drives
 the coordinator, and closes the client it owns. Models and workers
 never hold a client that could buy a paid hint.
 
+## Scheduler
+
+The scheduler (PR24) is the first slice of Phase 9 "Workers"
+(docs/IMPLEMENTATION_PLAN.md, step 24; docs/ARCHITECTURE.md,
+"Scheduler"): a task DAG with explicit dependencies and conflict keys,
+a bounded-parallel scheduler, and the structured-findings / worker-run
+contracts — the Phase 9 exit "independent tasks run concurrently,
+conflicting tasks serialize". The reducer (step 26) and specialist
+workers (step 25) are separate later PRs and are NOT implemented here:
+findings stay embedded in their `worker_run` records and are never
+merged into the graph as authoritative state by the scheduler.
+
+```python
+class Task(BaseModel):
+    id: str  # caller-supplied stable id; used as the task entity id
+    depends_on: tuple[str, ...]  # explicit dependency task ids
+    conflict_keys: tuple[str, ...]  # overlapping keys => mutually exclusive
+    plan_step_id: str | None  # TASK IMPLEMENTS PLANSTEP edge, when set
+    hypothesis_id: str | None  # WORKER_RUN EXPLORED HYPOTHESIS edge, when set
+
+
+class Finding(BaseModel):
+    task_id: str  # provenance: the task that produced the finding
+    source: str  # provenance: where the finding came from
+    evidence_ids: tuple[str, ...]  # >= 1 evidence/artifact reference (mandatory)
+    summary: str  # bounded prose — never authoritative state by itself
+    confidence: float  # 0.0..1.0, default 0.0
+
+
+class TaskDAG:
+    def __init__(self, tasks: Sequence[Task]) -> None: ...  # validates eagerly
+    def ready_order(self, completed: Collection[str]) -> tuple[str, ...]: ...
+    def topological_order(self) -> tuple[Task, ...]: ...
+
+
+class Scheduler:
+    def __init__(
+        self,
+        dag: TaskDAG,
+        *,
+        runner: TaskRunner,  # async def run_task(task) -> TaskOutcome
+        max_workers: int,  # the existing OZZGRAPH_MAX_WORKERS knob (default 4)
+        run_id: str,
+        event_log: EventLog | None = None,
+    ) -> None: ...
+    async def run(self, graph: StateGraph) -> SchedulerResult: ...
+```
+
+`TaskDAG` construction validates the whole DAG and fails loudly
+(AGENTS.md rule #9): duplicate task ids, dependencies on unknown tasks,
+and cycles (including self-dependencies) are rejected before anything
+runs. `ready_order` returns the dependency-complete tasks sorted by
+stable id, and the scheduler dispatches in exactly that order, so the
+same DAG always yields the same start sequence — schedules are
+deterministic and reproducible.
+
+`Scheduler.run` persists the DAG as `task` entities (idempotently,
+plus `TASK IMPLEMENTS PLANSTEP` edges), then runs a dispatch loop: at
+each step it starts every dependency-complete, non-conflicting task in
+deterministic id order up to `max_workers` concurrent runs. Tasks with
+overlapping conflict keys are mutually exclusive and serialize;
+independent tasks run concurrently. Each task produces a `WorkerRun`
+with a stable id (`worker-run-<sha256(run_id:task_id)>`), recorded
+before the runner executes (the executor's "record the attempt before
+execution" boundary), updated with its status, findings, and error on
+completion, plus the `WORKER_RUN EXPLORED HYPOTHESIS` edge when the
+task explores a hypothesis. A runner crash becomes a structured failed
+worker run — never silent, never retried. Every mutation is mirrored to
+the event log as a same-timestamp `graph.*` event, so replay
+reconstructs the identical graph hash.
+
+Supervisor-only serialization (AGENTS.md rule #7 — flag submission and
+paid hints are ALWAYS serialized): a task carrying the reserved
+`SERIALIZED_CONFLICT_KEY` (`"serialized"`) conflicts with every other
+task, including other serialized tasks. `serialized_task(...)` is the
+dedicated hook the supervisor uses; the gate is deterministic and
+fail-closed — a serialized task starts only when nothing else is
+running.
+
+`TaskOutcome` is the runner's typed contract: a succeeded outcome with
+its findings or a failed outcome with a structured error. Findings must
+be attributed to the task that produced them (a misattributed finding
+is rejected loudly — AGENTS.md data invariant "a worker cannot mutate
+state outside its declared task scope"), and a finding MUST reference
+at least one evidence/artifact id — a finding without evidence is
+free-form model prose (AGENTS.md rule #3).
+
+Scheduler errors (all `RuntimeError` subclasses):
+
+| Error | Raised when |
+|---|---|
+| `SchedulerError` | base error for the scheduler layer (including the defensive no-progress deadlock check in `run`) |
+| `TaskDAGError` | base error for task-DAG construction failures |
+| `DuplicateTaskError` | two tasks in the DAG share one id |
+| `MissingDependencyError` | a task depends on a task that is not in the DAG |
+| `TaskCycleError` | the dependency graph is cyclic (including self-dependencies) |
+| `TaskNotFoundError` | a task id lookup misses the DAG |
+
+### Events and constants
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `SCHEDULER_PRODUCER` | `"scheduler"` | producer of scheduler run events |
+| `SCHEDULER_RUN_STARTED` | `"scheduler.run_started"` | a schedule started; payload carries `task_count` |
+| `SCHEDULER_TASK_STARTED` | `"scheduler.task_started"` | one task dispatched; payload carries `task_id`, `worker_run_id`; event carries `task_id`/`worker_id` |
+| `SCHEDULER_TASK_COMPLETED` | `"scheduler.task_completed"` | a task finished with a succeeded outcome |
+| `SCHEDULER_TASK_FAILED` | `"scheduler.task_failed"` | a task finished with a failed outcome |
+| `SCHEDULER_RUN_COMPLETED` | `"scheduler.run_completed"` | a schedule finished; payload carries `worker_runs`, `succeeded`, `failed` |
+| `ENTITY_TASK` | `"task"` | persisted DAG node; entity id is the caller-supplied task id |
+| `ENTITY_WORKER_RUN` | `"worker_run"` | one scheduled task execution (`worker-run-<sha256>`) |
+| `EDGE_TASK_IMPLEMENTS_PLANSTEP` | `"TASK IMPLEMENTS PLANSTEP"` | task → plan step |
+| `EDGE_WORKER_RUN_EXPLORED_HYPOTHESIS` | `"WORKER_RUN EXPLORED HYPOTHESIS"` | worker run → hypothesis |
+| `SERIALIZED_CONFLICT_KEY` | `"serialized"` | reserved conflict key: always serialized (rule #7) |
+
+Configuration knobs: none new — the scheduler reuses the existing
+`max_workers` config field (`OZZGRAPH_MAX_WORKERS`, default 4). Nothing
+is wired into the supervisor's idle loop or main flow; the scheduler is
+delivered as the component plus its contracts (PR step 24).
+
 ## State Graph
 
 ```python
