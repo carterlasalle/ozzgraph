@@ -12,7 +12,6 @@ commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
 | ID | Task | Pri | Cpx | Deps | Tags | Model | Reasoning | Fallback |
 |----|------|-----|-----|------|------|-------|-----------|----------|
-| T18 | PR18: graph-driven phase router (predicates, not counts) | Critical | 5±1 | T16 | +++python, ++graph, -vision | GLM-5.2 | High | DS-V4-Pro |
 | T19 | PR19: planner + schemas (hypotheses, bounded plan, abandon conditions) | High | 5±1 | T18 | +++python, ++pydantic, ++graph, -vision | GLM-5.2 | High | DS-V4-Pro |
 | T20 | PR20: executor loop (one bounded action/turn, strict output contract) | Critical | 5±1 | T14,T19 | +++python, ++async, -vision | GLM-5.2 | High | DS-V4-Pro |
 | T21 | PR21: evaluator (deterministic + model fallback) + replanning | High | 5±1 | T19,T20 | +++python, ++graph, -vision | GLM-5.2 | High | DS-V4-Pro |
@@ -32,6 +31,7 @@ commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
+| T18 | PR18: graph-driven phase router (predicates, not counts) | Critical | 5±1 | a9cf1cb | DS-V4-Flash |
 | T17 | PR17: skill registry + lazy loading + initial skill packs | High | 4±1 | 2cc240a | DS-V4-Flash |
 | T16 | PR16: context compiler (bounded subgraph view, layers) | Critical | 5±1 | 26b9c8e | DS-V4-Flash |
 | T15 | PR15: JSON adapter + repair strategy | High | 4±1 | 3a07f79 | DS-V4-Flash |
