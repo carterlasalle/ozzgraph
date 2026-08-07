@@ -61,6 +61,18 @@ Every adapter defines:
 - maximum advertised skills
 - known failure behavior
 
+## Context Compiler
+
+Status: implemented (PR16 — bounded subgraph view with context layers).
+
+The context compiler shall:
+
+- build a bounded, model-specific view from the graph for one structured request
+- render the six context layers: immutable mission, active task, relevant graph projection, recent transcript tail, loaded skills, output contract
+- query a relevant subgraph by current task, target, service, hypothesis, phase, artifact references, recency, confidence, and contradiction state
+- never dump the complete graph
+- honor the profile context soft limit with deterministic truncation markers
+
 ## Tool Execution
 
 Every command shall have:
