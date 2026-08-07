@@ -53,6 +53,14 @@ commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 | T01 | PR1: init uv project + CI skeleton (lint, format, type, test gates) | Critical | 2±1 | e4deda1 | DS-V4-Flash |
 | T02 | PR2: runtime configuration + supervisor skeleton | Critical | 4±1 | 02711ad | DS-V4-Flash |
 
+## [ ] E2E-001 — E2E Testing Tick (self-improving loop)
+
+Spawn Luna (browser/screenshots) or Step 3.7 Flash (CLI/API). Deploy/build,
+run the F2B→B2F cycle using .coding-hermes/tests/ scaffold (test-state.toml
+dims: f2b/b2f/negative/visual/crypto/wiring/structure/audit — all currently 0).
+halctl CLI journeys, artifact store, executor loop. → update test-state.toml →
+inject findings into board. Every 5-10 ticks.
+
 ## [ ] NEVER-DONE — Run coding-hermes-never-done 12-point audit
 
 Load coding-hermes-never-done skill. Run ALL 12 checks: spec alignment,
