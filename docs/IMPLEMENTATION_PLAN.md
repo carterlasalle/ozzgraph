@@ -125,7 +125,8 @@ Exit:
 
 Deliver:
 
-- schemas
+- schemas (done — PR19)
+- planner (done — PR19)
 - prompts
 - executor loop
 - deterministic evaluator

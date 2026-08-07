@@ -439,6 +439,97 @@ states evaluated first, and `BOOTSTRAP` is the empty-graph default.
 The executor (PR20) consumes `PhaseRouter`; nothing is wired into the
 supervisor yet.
 
+## Planner
+
+The planner (PR19) is the first slice of Phase 7
+(Planner–Executor–Evaluator). It runs ONLY when the graph is in a
+branching state — multiple strategic paths: at least
+`MIN_STRATEGIC_PATHS` (default 2) evidenced hypotheses, or at least 2
+uncharacterized services — decided by graph predicates (AGENTS.md rule
+#8), never action counts. A non-branching graph yields a typed
+`NoPlanDecision`; the planner never fabricates a plan.
+
+```python
+class Hypothesis(BaseModel):
+    id: str  # hypothesis entity id
+    phase: Phase  # scope: the routed phase the plan serves
+    objective: str  # scope: bounded statement of the hypothesis claim
+    rank: int  # 1-based priority position (1 = highest)
+    confidence: float  # 0.0..1.0 (payload `confidence`, missing defaults to 0.0)
+    supporting_evidence: tuple[str, ...]  # EVIDENCE SUPPORTS HYPOTHESIS source ids
+    contradicting_evidence: tuple[str, ...]  # EVIDENCE CONTRADICTS HYPOTHESIS source ids
+    exploitation_direction: str | None  # payload `exploitation_direction`, if any
+
+
+class PlanStep(BaseModel):
+    id: str  # plan-scoped step id (`<plan id>-step-<n>`)
+    hypothesis_id: str | None  # tested hypothesis; None for service-characterization steps
+    objective: str  # bounded action objective
+    skill_id: str  # selected skill (round-robin over the route's phase skills)
+    completion_condition: str
+    abandon_condition: str
+
+
+class Plan(BaseModel):
+    id: str  # run-scoped, deterministic: plan-<phase>-<graph-hash prefix>
+    phase: Phase
+    hypotheses: tuple[Hypothesis, ...]  # ranked: confidence, then evidence weight, then id
+    steps: tuple[PlanStep, ...]  # ordered, bounded by MAX_PLAN_STEPS
+    completion_conditions: tuple[str, ...]
+    abandonment_conditions: tuple[str, ...]
+    skills: tuple[SkillSummary, ...]  # the route's phase skills (registry summaries)
+
+
+class NoPlanDecision(BaseModel):
+    phase: Phase
+    reason: str  # deterministic explanation of why no plan was produced
+
+
+class Planner:
+    def __init__(self, registry: SkillRegistry | None = None) -> None: ...
+    def skills_for(self, phase: Phase) -> tuple[SkillSummary, ...]: ...
+    async def plan(self, graph: StateGraph, route: PhaseRoute) -> Plan | NoPlanDecision: ...
+```
+
+`plan` first evaluates the branching predicate (evidenced hypotheses
+`>= MIN_STRATEGIC_PATHS` or uncharacterized services `>=
+MIN_STRATEGIC_PATHS`) and returns `NoPlanDecision` for non-branching
+graphs. On a branching graph it ranks every hypothesis entity by
+confidence (descending), then net evidence weight (supporting minus
+contradicting evidence counts, descending), then entity id (ascending)
+as the final tiebreak, builds one bounded step per ranked hypothesis
+(plus one per uncharacterized service, `hypothesis_id=None`), caps the
+step list at `MAX_PLAN_STEPS` (default 5), and assigns skills
+round-robin from `route.skills` in the registry's deterministic sorted
+order. The plan id derives from the graph hash, so the same graph state
+always yields the same plan. No randomness, no model calls, no graph
+writes — the executor (PR20) persists plans as entities.
+
+`plan` fails loudly (AGENTS.md rule #9) through the typed
+`PlannerError` hierarchy (a `RuntimeError` subclass):
+
+| Error | Raised when |
+|---|---|
+| `InvalidGraphStateError` | a payload field the planner reads is present but wrong-typed or out of range (e.g. `confidence: "high"`, `confidence: 5.0`, `exploitation_direction: 42`) |
+| `MissingRequiredStateError` | a hypothesis entity has no evidence refs (no incoming `EVIDENCE SUPPORTS HYPOTHESIS` or `EVIDENCE CONTRADICTS HYPOTHESIS` edge) while a plan is being built |
+| `PlannerSkillUnavailableError` | the routed phase has no skill packs (e.g. `REPLAN`), so no step could receive a skill |
+
+Payload conventions for the planner's graph reads (entity types
+lowercase, edge types uppercase, per docs/DATA_STRATEGY.md):
+
+| Field | Meaning |
+|---|---|
+| `hypothesis.confidence` | float in [0.0, 1.0]; missing defaults to 0.0 (weak) |
+| `hypothesis.objective` | bounded statement of the claim; missing derives from the hypothesis id |
+| `hypothesis.exploitation_direction` | bounded exploitation direction; optional |
+| `service.characterized` | strict bool (same field the phase router reads) |
+
+Module constants: `MIN_STRATEGIC_PATHS = 2` (branching floor),
+`MAX_PLAN_STEPS = 5` (step cap), `PLAN_COMPLETION_CONDITIONS` and
+`PLAN_ABANDONMENT_CONDITIONS` (plan-level conditions the evaluator,
+PR21, interprets). The executor (PR20) and evaluator (PR21) consume
+`Planner`; nothing is wired into the supervisor yet.
+
 ## State Graph
 
 ```python
