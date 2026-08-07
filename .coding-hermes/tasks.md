@@ -12,8 +12,6 @@ commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
 | ID | Task | Pri | Cpx | Deps | Tags | Model | Reasoning | Fallback |
 |----|------|-----|-----|------|------|-------|-----------|----------|
-| T27 | PR27: synthetic test lab (isolated targets) | High | 5±1 | T09 | +++python, ++testing, ++containers, -vision | GLM-5.2 | High | DS-V4-Pro |
-| T28 | PR28: golden traces + model–harness matrix | High | 5±1 | T27 | +++python, ++testing, ++replay, -vision | GLM-5.2 | High | DS-V4-Pro |
 | T29 | PR29: chaos + adversarial tests (loops, timeouts, malformed, injection) | High | 5±1 | T27 | +++python, ++testing, ++security, -vision | GLM-5.2 | High | DS-V4-Pro |
 | T30 | PR30: optional Yarn dashboard (OUTSIDE image) | Medium | 5±1 | T28 | +++typescript, ++yarn, -python, -vision | GLM-5.2 | High | DS-V4-Pro |
 | T31 | PR31: image hardening (minimize, SBOM, immutable, <1.5GB) | High | 5±1 | T28 | +++docker, ++devops, -vision | DS-V4-Flash | Medium | GLM-5.2 |
@@ -23,6 +21,8 @@ commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
+| T28 | PR28: golden traces + model–harness matrix | High | 5±1 | 403e40a | DS-V4-Flash |
+| T27 | PR27: synthetic test lab (isolated targets) | High | 5±1 | 6476a7f | DS-V4-Flash |
 | T26 | PR26: reducer + conflict handling (validated findings merge) | Critical | 5±1 | e22b37b | DS-V4-Flash |
 | T25 | PR25: specialist workers (scope-limited) | High | 5±1 | b4fd7da | DS-V4-Flash |
 | T24 | PR24: task DAG + scheduler (conflict keys, bounded parallel) | High | 5±1 | 393a2ba | DS-V4-Flash |
