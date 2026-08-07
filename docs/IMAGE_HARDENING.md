@@ -191,8 +191,12 @@ story without Docker:
 2. Asserts `docker image inspect` size `< 1500 * 1024 * 1024` bytes.
 3. Smoke: `docker run --rm IMAGE --version` (ENTRYPOINT).
 4. Smoke: `docker run --rm --entrypoint halctl IMAGE --help` (halctl on PATH).
-5. Smoke: short supervised run under `--read-only --tmpfs /tmp`, asserting the
-   BUDGET_EXHAUSTED exit code 3.
+5. Smoke: `docker run --rm --entrypoint id IMAGE` — the runtime user must be
+   `uid=10001(ozzgraph)` / `gid=10001(ozzgraph)`, never root (PR32).
+6. Smoke: short supervised run under `--read-only --tmpfs /tmp`, asserting the
+   BUDGET_EXHAUSTED exit code 3, the `USER ID:` identity line in the log, and
+   a `TERMINATION: budget_exhausted` final line (startup + identity +
+   termination-summary evidence, PR32).
 
 If the workflow ever runs on a runner without Docker, gate the job behind a
 repository variable (`if: ${{ vars.RUN_DOCKER_JOB == 'true' }}`) — the job

@@ -281,6 +281,22 @@ def test_ci_defines_docker_image_gate() -> None:
         assert marker in ci, f"docker CI gate missing: {marker!r}"
 
 
+def test_ci_docker_gate_asserts_non_root_and_startup_evidence() -> None:
+    """The docker gate must prove the image runs as the non-root operator and
+    that a supervised run starts with the identity line and ends with a
+    human-readable termination summary (PR32 v1.0 rehearsal findings)."""
+    ci = _read(CI_WORKFLOW)
+    for marker in (
+        "docker run --rm --entrypoint id ozzgraph:ci",
+        "uid=10001(ozzgraph)",
+        "gid=10001(ozzgraph)",
+        'grep -q "USER ID: ci-smoke"',
+        "tail -n 1 /tmp/ozzgraph-smoke.log",
+        "TERMINATION: budget_exhausted",
+    ):
+        assert marker in ci, f"docker CI gate missing: {marker!r}"
+
+
 # ---------------------------------------------------------------------------
 # SBOM script
 # ---------------------------------------------------------------------------

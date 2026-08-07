@@ -24,6 +24,11 @@ _EXIT_CODES: dict[TerminationReason, int] = {
 def main(argv: list[str] | None = None) -> int:
     """Parse config, run the supervisor, and return the exit code.
 
+    Every terminal path prints a human-readable ``TERMINATION: <reason>``
+    summary as the final stdout line (AGENTS.md rule 9 — fail loudly with
+    a structured termination event AND a human-readable summary); the
+    structured event itself lives in the run's event log.
+
     Args:
         argv: CLI arguments. ``--version`` prints the package version and
             exits 0. All other arguments are ignored by the PR3 kernel.
@@ -46,6 +51,9 @@ def main(argv: list[str] | None = None) -> int:
 
     supervisor = Supervisor(config)
     reason = asyncio.run(supervisor.run())
+    # Human-readable termination summary (AGENTS.md rule 9); the structured
+    # termination event is already appended to the run's event log.
+    print(f"TERMINATION: {reason.value}", flush=True)
     return _EXIT_CODES[reason]
 
 

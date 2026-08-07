@@ -253,7 +253,7 @@ Exit:
 29. Chaos and adversarial tests
 30. Optional Yarn dashboard
 31. Image hardening (done — PR31)
-32. v1.0 release candidate
+32. v1.0 release candidate (done — PR32)
 
 ## Definition of Done
 

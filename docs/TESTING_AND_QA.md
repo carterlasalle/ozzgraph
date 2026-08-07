@@ -395,10 +395,15 @@ the `docker` job in `.github/workflows/ci.yml`:
   `python -m ozzgraph`);
 - smoke test 2 — `docker run --rm --entrypoint halctl IMAGE --help`
   (halctl on PATH);
-- smoke test 3 — a 2-second supervised run under `--read-only --tmpfs /tmp`
+- smoke test 3 — `docker run --rm --entrypoint id IMAGE` must report the
+  non-root operator (`uid=10001(ozzgraph)`, never `uid=0(root)`) — the
+  immutable image's non-root property, asserted at runtime (PR32);
+- smoke test 4 — a 2-second supervised run under `--read-only --tmpfs /tmp`
   (state on the `/var/lib/ozzgraph/state` volume) must terminate with exit
-  code 3 (BUDGET_EXHAUSTED), proving the immutable
-  (read-only rootfs, volume-mounted state) runtime works end to end.
+  code 3 (BUDGET_EXHAUSTED), must print the `USER ID:` identity line, and
+  must end with the `TERMINATION: budget_exhausted` summary line (PR32) —
+  proving the immutable (read-only rootfs, volume-mounted state) runtime
+  starts and terminates cleanly end to end.
 
 Non-Docker shape tests live in `tests/test_image_hardening.py` (Dockerfile
 multi-stage/non-root/entrypoint shape, `.dockerignore` coverage, the shared

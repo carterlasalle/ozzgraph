@@ -90,6 +90,16 @@ jobs:
         run: docker run --rm ozzgraph:ci --version
       - name: Smoke — halctl on PATH
         run: docker run --rm --entrypoint halctl ozzgraph:ci --help
+      - name: Smoke — non-root runtime user
+        run: |
+          id_output="$(docker run --rm --entrypoint id ozzgraph:ci)"
+          echo "$id_output"
+          echo "$id_output" | grep -q 'uid=10001(ozzgraph)'
+          echo "$id_output" | grep -q 'gid=10001(ozzgraph)'
+          if echo "$id_output" | grep -q 'uid=0(root)'; then
+            echo "::error::competition image runs as root — USER directive missing"
+            exit 1
+          fi
       - name: Smoke — short supervised run, read-only rootfs
         run: |
           set +e
@@ -101,5 +111,9 @@ jobs:
           code=$?
           set -e
           cat /tmp/ozzgraph-smoke.log
-          # A 2-second budget run must terminate with BUDGET_EXHAUSTED (exit 3).
+          # A 2-second budget run must terminate with BUDGET_EXHAUSTED (exit 3)
+          # and must have started correctly: identity line first, then a
+          # human-readable termination summary as the final line.
           test "$code" -eq 3
+          grep -q "USER ID: ci-smoke" /tmp/ozzgraph-smoke.log
+          tail -n 1 /tmp/ozzgraph-smoke.log | grep -q "TERMINATION: budget_exhausted"

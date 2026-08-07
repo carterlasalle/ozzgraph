@@ -161,7 +161,7 @@ def _payloads(records: list[dict[str, object]], event_type: str) -> list[dict[st
 
 def test_package_imports() -> None:
     """The package still imports (kept from the placeholder suite)."""
-    assert ozzgraph.__version__ == "0.1.0"
+    assert ozzgraph.__version__ == "1.0.0"
 
 
 def test_load_targets_parses_single_and_namespaced() -> None:

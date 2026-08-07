@@ -8,8 +8,9 @@ from ozzgraph.__main__ import main
 
 
 def test_main_prints_identity_and_exits_budget_exhausted(tmp_path, capsys, monkeypatch) -> None:
-    """A configured run prints USER ID, emits heartbeats, then exits 3 when
-    the (tiny) runtime budget exhausts."""
+    """A configured run prints USER ID, emits heartbeats, ends with a
+    human-readable termination summary, then exits 3 when the (tiny)
+    runtime budget exhausts."""
     monkeypatch.setenv("HAL_USER_ID", "user-42")
     monkeypatch.setenv("OZZGRAPH_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("OZZGRAPH_MAX_RUNTIME_S", "2")
@@ -18,6 +19,8 @@ def test_main_prints_identity_and_exits_budget_exhausted(tmp_path, capsys, monke
     out = capsys.readouterr().out
     assert out.startswith("USER ID: user-42")
     assert "HEARTBEAT" in out
+    # AGENTS.md rule 9: every fatal path ends with a human-readable summary.
+    assert out.splitlines()[-1] == "TERMINATION: budget_exhausted"
 
 
 def test_main_missing_required_env_fails_loudly(capsys, monkeypatch) -> None:
@@ -56,7 +59,7 @@ def test_module_invocation_requires_env(tmp_path: Path) -> None:
 
 def test_module_invocation_with_env_budget_exhausted(tmp_path: Path) -> None:
     """With HAL_USER_ID and a tiny runtime budget, the module prints the
-    identity line and exits 3 (budget_exhausted)."""
+    identity line, a termination summary, and exits 3 (budget_exhausted)."""
     env = {
         "PATH": "/usr/bin:/bin",
         "HAL_USER_ID": "user-42",
@@ -73,6 +76,7 @@ def test_module_invocation_with_env_budget_exhausted(tmp_path: Path) -> None:
     )
     assert result.returncode == 3
     assert result.stdout.startswith("USER ID: user-42")
+    assert result.stdout.splitlines()[-1] == "TERMINATION: budget_exhausted"
 
 
 def test_module_invocation_version_flag(tmp_path: Path) -> None:
