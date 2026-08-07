@@ -167,6 +167,21 @@ async def test_list_entities_by_type_and_all(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_edges_orders_deterministically_by_id(tmp_path: Path) -> None:
+    """list_edges returns every edge in canonical ORDER BY id order."""
+    async with StateGraph(tmp_path / "graph.db") as graph:
+        await graph.create_entity("svc-1", "service")
+        await graph.create_entity("tgt-1", "target")
+        await graph.create_edge("edge-b", "OBSERVED_ON", "svc-1", "tgt-1")
+        await graph.create_edge("edge-a", "NOTED_ON", "tgt-1", "svc-1")
+
+        edges = await graph.list_edges()
+        assert [record.id for record in edges] == ["edge-a", "edge-b"]
+        assert [record.type for record in edges] == ["NOTED_ON", "OBSERVED_ON"]
+        assert edges[0].src_id == "tgt-1" and edges[0].dst_id == "svc-1"
+
+
+@pytest.mark.asyncio
 async def test_create_get_delete_edge(tmp_path: Path) -> None:
     """Full edge CRUD round-trip."""
     async with StateGraph(tmp_path / "graph.db") as graph:

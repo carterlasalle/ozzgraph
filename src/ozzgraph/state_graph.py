@@ -773,6 +773,26 @@ class StateGraph:
             raise StateGraphError(f"failed to list entities: {exc}") from exc
         return [_entity_record(row) for row in rows]
 
+    async def list_edges(self) -> list[EdgeRecord]:
+        """List every edge, ordered by ID.
+
+        The mirror of :meth:`list_entities` for the edges table, with
+        the same canonical ``ORDER BY id`` determinism (the graph hash
+        reads edges in exactly this order). Used by replay-adjacent
+        tooling (e.g. golden-trace snapshots) to read the full edge set
+        once, deterministically.
+
+        Raises:
+            StateGraphError: If the graph is closed or the read fails.
+        """
+        conn = self._connection()
+        try:
+            cursor = await conn.execute(f"SELECT {_EDGE_COLUMNS} FROM edges ORDER BY id")
+            rows = await cursor.fetchall()
+        except sqlite3.Error as exc:
+            raise StateGraphError(f"failed to list edges: {exc}") from exc
+        return [_edge_record(row) for row in rows]
+
     async def graph_hash(self) -> str:
         """Deterministic sha256 hex digest over the graph's canonical content.
 

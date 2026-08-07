@@ -144,6 +144,16 @@ Golden traces ensure:
 - prompt-regression visibility
 - schema migration compatibility
 
+Implemented as PR28 in `src/ozzgraph/traces.py` (`ozzgraph.traces`):
+`capture_trace` snapshots a run's event log, live graph (entity set,
+edge set, graph hash, schema version), and metrics into a single JSON
+document; `verify_trace` replays the events through `ozzgraph.replay`
+into a fresh database and reports every mismatch (entity set, edge set,
+graph hash, schema version, metrics) as a structured diff. See
+`docs/GOLDEN_TRACES.md` for the format, usage, and the regression
+matrix (prompt regression, reducer drift, schema migration, event
+loss). Tests: `tests/test_traces.py`.
+
 ## Model–Harness Matrix
 
 Evaluate each model with:
@@ -164,6 +174,17 @@ Metrics:
 - solve rate
 - unsupported-fact rate
 - unsupported-flag rate
+
+Implemented as PR28 in `src/ozzgraph/matrix.py` (`ozzgraph.matrix`):
+`evaluate_model` runs a model client (a prompt callable or a
+`ModelService`-like object) against the harness protocols — reusing the
+`ozzgraph.adapters` adapters and `profiles.probe_protocol` for protocol
+detection — and the synthetic lab targets, computing all nine metrics
+deterministically from the recorded interactions (a scope-policy-gated
+bounded shell per tool action; nothing outside loopback is ever
+touched). The metrics are also the golden trace's `expected_metrics`
+contract. See `docs/GOLDEN_TRACES.md` for the metric definitions and
+usage. Tests: `tests/test_matrix.py`.
 
 ## Adversarial Tests
 
