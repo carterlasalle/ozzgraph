@@ -1,0 +1,68 @@
+{
+  "artifacts": {
+    "content_files_with_flag": [
+      "8956b9071e1471a171c6e384d0dcd3c4a86d0fb5d08b51b787e29ea746ac8d1a"
+    ],
+    "index_record_field_names": [
+      "artifact_id",
+      "created_at",
+      "hash",
+      "mime_type",
+      "parser_metadata",
+      "relative_path",
+      "sensitivity",
+      "size",
+      "source_action",
+      "target",
+      "truncated"
+    ],
+    "index_records_with_flag": []
+  },
+  "event_log": {
+    "event_types_containing_raw_flag": [
+      "flags.candidate_found",
+      "graph.entity_created",
+      "submission.accepted",
+      "submission.attempted"
+    ],
+    "event_types_without_flag": [
+      "bootstrap",
+      "bootstrap.challenge_status",
+      "bootstrap.hint_requested",
+      "bootstrap.probe_run",
+      "bootstrap.reachability",
+      "bootstrap.targets_parsed",
+      "executor.action_attempted",
+      "graph.edge_created",
+      "termination"
+    ],
+    "graph_events_with_flag_replay_required": [
+      "graph.entity_created"
+    ],
+    "run_events_with_flag_not_replay_required": [
+      "flags.candidate_found",
+      "submission.accepted",
+      "submission.attempted"
+    ],
+    "total_events": 21
+  },
+  "graph_entities_containing_flag": [
+    {
+      "entity_id": "obs-1",
+      "entity_type": "observation"
+    },
+    {
+      "entity_id": "flag-51d262d74cf9d46ad32e87b50333e3d808e8e9e0c67f63b6a9e4419a32fe70c8",
+      "entity_type": "flag_candidate"
+    },
+    {
+      "entity_id": "submission-1",
+      "entity_type": "submission"
+    }
+  ],
+  "state_dir_file_sweep": [
+    "actions.jsonl events: ['flags.candidate_found', 'graph.entity_created', 'submission.accepted', 'submission.attempted']",
+    "8956b9071e1471a171c6e384d0dcd3c4a86d0fb5d08b51b787e29ea746ac8d1a",
+    "graph.db: binary sqlite (entity payloads \u2014 see entity list below)"
+  ]
+}

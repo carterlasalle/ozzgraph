@@ -1,0 +1,438 @@
+{
+  "counts": {
+    "audit": {
+      "FAIL": 0,
+      "PASS": 5,
+      "UNTESTABLE": 0
+    },
+    "b2f": {
+      "FAIL": 0,
+      "PASS": 5,
+      "UNTESTABLE": 0
+    },
+    "crypto": {
+      "FAIL": 1,
+      "PASS": 8,
+      "UNTESTABLE": 0
+    },
+    "f2b": {
+      "FAIL": 0,
+      "PASS": 10,
+      "UNTESTABLE": 0
+    },
+    "negative": {
+      "FAIL": 0,
+      "PASS": 34,
+      "UNTESTABLE": 1
+    },
+    "wiring": {
+      "FAIL": 0,
+      "PASS": 3,
+      "UNTESTABLE": 0
+    }
+  },
+  "results": [
+    {
+      "detail": "turn phase=RECON, action fingerprinted=True, action text prefix='curl -sS --max-time 5 http://127'",
+      "dim": "f2b",
+      "name": "executor_turn_single_bounded_action",
+      "status": "PASS"
+    },
+    {
+      "detail": "ExecutorTurn carries exactly one ActionRequest by construction; asserted type and single action field.",
+      "dim": "f2b",
+      "name": "turn_exactly_one_action_request",
+      "status": "PASS"
+    },
+    {
+      "detail": "shell run exit=0, flag present in stdout: True",
+      "dim": "f2b",
+      "name": "tool_plane_action_execution",
+      "status": "PASS"
+    },
+    {
+      "detail": "observation keys=['action_id', 'artifact_ids', 'data', 'exit_code', 'kind', 'malformed', 'ok', 'parse_error', 'source', 'summary', 'truncated', 'truncated_streams']",
+      "dim": "f2b",
+      "name": "observation_parse_and_persist",
+      "status": "PASS"
+    },
+    {
+      "detail": "record.hash==sha256(content): True",
+      "dim": "f2b",
+      "name": "artifact_content_addressed",
+      "status": "PASS"
+    },
+    {
+      "detail": "second put returned same id: True",
+      "dim": "f2b",
+      "name": "artifact_dedupe_same_content",
+      "status": "PASS"
+    },
+    {
+      "detail": "source_action==fingerprint: True",
+      "dim": "f2b",
+      "name": "artifact_provenance_source_action",
+      "status": "PASS"
+    },
+    {
+      "detail": "candidates=1, match=True",
+      "dim": "f2b",
+      "name": "flag_candidate_provenance_gated",
+      "status": "PASS"
+    },
+    {
+      "detail": "accepted=True, points=100, message='Correct!'",
+      "dim": "f2b",
+      "name": "kernel_submission_accepted",
+      "status": "PASS"
+    },
+    {
+      "detail": "phase=DONE, predicate=has_accepted_submission",
+      "dim": "f2b",
+      "name": "router_done_after_accepted_submission",
+      "status": "PASS"
+    },
+    {
+      "detail": "live=32403510b68f68851ff1b61a49a7f98883c214a6ae384947b763ea536a34011a, replay=32403510b68f68851ff1b61a49a7f98883c214a6ae384947b763ea536a34011a, equal=True",
+      "dim": "b2f",
+      "name": "replay_hash_byte_for_byte",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=0, single JSON doc=True, fields=True, stray-stdout-lines=False",
+      "dim": "b2f",
+      "name": "halctl_status_read",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=0, single JSON doc=True, fields=True, stray-stdout-lines=False",
+      "dim": "b2f",
+      "name": "halctl_scoreboard_read",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=0, single JSON doc=True, fields=True, stray-stdout-lines=False",
+      "dim": "b2f",
+      "name": "halctl_challenge_show_read",
+      "status": "PASS"
+    },
+    {
+      "detail": "records=1, index fields complete=True, get() roundtrip=True",
+      "dim": "b2f",
+      "name": "artifact_index_record_shape",
+      "status": "PASS"
+    },
+    {
+      "detail": "len=0, exit=0, JSON doc=True, rejected=True",
+      "dim": "negative",
+      "name": "flag_length_empty",
+      "status": "PASS"
+    },
+    {
+      "detail": "len=1, exit=0, JSON doc=True, rejected=True",
+      "dim": "negative",
+      "name": "flag_length_one_char",
+      "status": "PASS"
+    },
+    {
+      "detail": "len=255, exit=0, JSON doc=True, rejected=True",
+      "dim": "negative",
+      "name": "flag_length_len_255",
+      "status": "PASS"
+    },
+    {
+      "detail": "len=256, exit=0, JSON doc=True, rejected=True",
+      "dim": "negative",
+      "name": "flag_length_len_256",
+      "status": "PASS"
+    },
+    {
+      "detail": "len=1000, exit=0, JSON doc=True, rejected=True",
+      "dim": "negative",
+      "name": "flag_length_len_1000",
+      "status": "PASS"
+    },
+    {
+      "detail": "len=65535, exit=0, JSON doc=True, rejected=True",
+      "dim": "negative",
+      "name": "flag_length_len_65535",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=0 (expected 0), no traceback=True",
+      "dim": "negative",
+      "name": "hint_index_zero",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=1 (expected 1), no traceback=True",
+      "dim": "negative",
+      "name": "hint_index_negative",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=2 (expected 2), no traceback=True",
+      "dim": "negative",
+      "name": "hint_index_float_string",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=2 (expected 2), no traceback=True",
+      "dim": "negative",
+      "name": "hint_index_word",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=0 (expected 0), no traceback=True",
+      "dim": "negative",
+      "name": "hint_index_huge",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=0, single JSON doc=True, mojibake-on-stderr=False",
+      "dim": "negative",
+      "name": "unicode_flag_emoji",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=0, single JSON doc=True, mojibake-on-stderr=False",
+      "dim": "negative",
+      "name": "unicode_flag_rtl",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=0, single JSON doc=True, mojibake-on-stderr=False",
+      "dim": "negative",
+      "name": "unicode_flag_combining_nfc",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=0, single JSON doc=True, mojibake-on-stderr=False",
+      "dim": "negative",
+      "name": "unicode_flag_combining_nfd",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=0, single JSON doc=True, mojibake-on-stderr=False",
+      "dim": "negative",
+      "name": "unicode_flag_zero_width_space",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=0, single JSON doc=True, rejected=True",
+      "dim": "negative",
+      "name": "injection_sql_drop",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=0, single JSON doc=True, rejected=True",
+      "dim": "negative",
+      "name": "injection_sql_or",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=0, single JSON doc=True, rejected=True",
+      "dim": "negative",
+      "name": "injection_shell_subst",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=0, single JSON doc=True, rejected=True",
+      "dim": "negative",
+      "name": "injection_shell_backtick",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=0, single JSON doc=True, rejected=True",
+      "dim": "negative",
+      "name": "injection_shell_pipe",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=0, single JSON doc=True, rejected=True",
+      "dim": "negative",
+      "name": "injection_path_traversal",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=0, single JSON doc=True, rejected=True",
+      "dim": "negative",
+      "name": "injection_crlf",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=2 (expected 2), stdout-head=''",
+      "dim": "negative",
+      "name": "cli_contract_unknown_subcommand",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=2 (expected 2), stdout-head=''",
+      "dim": "negative",
+      "name": "cli_contract_unknown_flag",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=2 (expected 2), stdout-head=''",
+      "dim": "negative",
+      "name": "cli_contract_submit_missing_flag",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=2 (expected 2), stdout-head=''",
+      "dim": "negative",
+      "name": "cli_contract_hint_missing_index",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=2 (expected 2), stdout-head='{\"error\": {\"message\": \"challenge id required: pass --challen'",
+      "dim": "negative",
+      "name": "cli_contract_status_missing_challenge_id",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=2 (expected 2), stdout-head='{\"error\": {\"message\": \"challenge id required: pass --challen'",
+      "dim": "negative",
+      "name": "cli_contract_challenge_show_missing_id",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=1, error type=HalPrivilegeError: True",
+      "dim": "negative",
+      "name": "privilege_submit_no_privilege",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=1, error type=HalPrivilegeError: True",
+      "dim": "negative",
+      "name": "privilege_paid_hint_no_privilege",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=1, error type=HalPrivilegeError: True",
+      "dim": "negative",
+      "name": "privilege_exit_no_privilege",
+      "status": "PASS"
+    },
+    {
+      "detail": "exit=0, hint doc index=0: True (free hint is public by design)",
+      "dim": "negative",
+      "name": "privilege_free_hint_zero_allowed",
+      "status": "PASS"
+    },
+    {
+      "detail": "graph hash unchanged across all negative CLI runs: True",
+      "dim": "negative",
+      "name": "cli_runs_no_graph_corruption",
+      "status": "PASS"
+    },
+    {
+      "detail": "execve forbids NUL in argv (OS-level guard); a flag containing \\x00 cannot be expressed through the halctl CLI contract, so there is no CLI path to test. Python-level subprocess raises ValueError on \\x00 in args (verified by design).",
+      "dim": "negative",
+      "name": "nul_byte_flag",
+      "status": "UNTESTABLE"
+    },
+    {
+      "detail": "methods seen=['challenge.status', 'hint.request', 'flag.submit', 'challenge.status', 'scoreboard.get', 'challenge.get', 'flag.submit', 'flag.submit', 'flag.submit', 'flag.submit', 'flag.submit', 'flag.submit', 'hint.request', 'hint.request', 'hint.request', 'flag.submit', 'flag.submit', 'flag.submit', 'flag.submit', 'flag.submit', 'flag.submit', 'flag.submit', 'flag.submit', 'flag.submit', 'flag.submit', 'flag.submit', 'flag.submit', 'hint.request', 'challenge.status', 'challenge.get', 'hint.request', 'scoreboard.get', 'exit'], expected subset=True",
+      "dim": "wiring",
+      "name": "halctl_to_mcp_method_roundtrip",
+      "status": "PASS"
+    },
+    {
+      "detail": "hint.request index always int across 6 calls: True",
+      "dim": "wiring",
+      "name": "mcp_params_types_preserved",
+      "status": "PASS"
+    },
+    {
+      "detail": "HalPrivilegeError raised=True, HTTP requests before/after=33/33",
+      "dim": "wiring",
+      "name": "privilege_gate_before_wire",
+      "status": "PASS"
+    },
+    {
+      "detail": "missing=none, total events=21",
+      "dim": "audit",
+      "name": "event_log_completeness",
+      "status": "PASS"
+    },
+    {
+      "detail": "last event=termination",
+      "dim": "audit",
+      "name": "termination_last_event",
+      "status": "PASS"
+    },
+    {
+      "detail": "reachability/hint events precede executor.action_attempted",
+      "dim": "audit",
+      "name": "bootstrap_before_executor_ordering",
+      "status": "PASS"
+    },
+    {
+      "detail": "action entity at log line 8, observation at 10",
+      "dim": "audit",
+      "name": "attempts_first_action_before_observation",
+      "status": "PASS"
+    },
+    {
+      "detail": "graph.edge_created present: True",
+      "dim": "audit",
+      "name": "evidence_edge_mirrored",
+      "status": "PASS"
+    },
+    {
+      "detail": "files containing raw flag: ['actions.jsonl', 'artifacts/8956b9071e1471a171c6e384d0dcd3c4a86d0fb5d08b51b787e29ea746ac8d1a', 'graph.db', 'replay.db']",
+      "dim": "crypto",
+      "name": "flag_leak_sweep_state_dir",
+      "status": "FAIL"
+    },
+    {
+      "detail": "flag in stdout/stderr: False",
+      "dim": "crypto",
+      "name": "no_flag_in_error_doc",
+      "status": "PASS"
+    },
+    {
+      "detail": "flag in stdout/stderr: False",
+      "dim": "crypto",
+      "name": "no_flag_in_status_doc",
+      "status": "PASS"
+    },
+    {
+      "detail": "flag in stdout/stderr: False",
+      "dim": "crypto",
+      "name": "no_flag_in_scoreboard_doc",
+      "status": "PASS"
+    },
+    {
+      "detail": "flag in stdout/stderr: False",
+      "dim": "crypto",
+      "name": "no_flag_in_priv_error_doc",
+      "status": "PASS"
+    },
+    {
+      "detail": "no hal_failure events in this run (no retryable errors); payload schema verified in source to carry only provider/status/attempts",
+      "dim": "crypto",
+      "name": "hal_failure_no_flag",
+      "status": "PASS"
+    },
+    {
+      "detail": "evidence edge + flag-candidate-observed-in-evidence edges present (edge events=3)",
+      "dim": "crypto",
+      "name": "provenance_edges_enforced",
+      "status": "PASS"
+    },
+    {
+      "detail": "OZZGRAPH_HAL_PRIVILEGED absent from status stdout: True",
+      "dim": "crypto",
+      "name": "privileged_env_not_echoed",
+      "status": "PASS"
+    },
+    {
+      "detail": "files containing model key: none (no model calls in this run; key injected via env only)",
+      "dim": "crypto",
+      "name": "api_key_not_persisted",
+      "status": "PASS"
+    }
+  ]
+}
