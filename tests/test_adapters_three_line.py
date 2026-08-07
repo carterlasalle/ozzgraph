@@ -1,4 +1,4 @@
-"""Tests for the strict three-line adapter (PR14).
+"""Tests for the strict three-line adapter (PR14/15).
 
 Covers :class:`ThreeLineAdapter`: exact-format parse success (payloads
 with spaces pass through, blank lines are ignored probe-consistently),
@@ -6,8 +6,8 @@ every deviation raising :class:`AdapterParseError` (empty input, wrong
 line count, wrong label order, missing/empty values, extra lines),
 kind passthrough without vocabulary validation, prompt compilation
 including the strict template and the output contract, import-time
-registry registration, and the minimal never-raising whitespace-trim
-repair.
+registry registration, and the deterministic never-raising repair that
+rebuilds prose-wrapped completions from their labeled lines.
 """
 
 from __future__ import annotations
@@ -196,14 +196,47 @@ def test_three_line_adapter_registered_at_import() -> None:
     assert ADAPTERS[PROTOCOL_THREE_LINE] is ThreeLineAdapter
 
 
-def test_three_line_repair_trims_whitespace_or_returns_none() -> None:
-    """PR14 repair trims surrounding whitespace and never raises."""
+def test_three_line_repair_rebuilds_prose_wrapped_completion() -> None:
+    """Prose around the labeled lines is dropped; the rebuilt text re-parses."""
+    error = AdapterParseError(protocol=PROTOCOL_THREE_LINE, detail="n/a")
+    completion = (
+        "Let me think this through.\n"
+        "THOUGHT: port 22 is open\n"
+        "Some reasoning in between.\n"
+        "ACTION: run\n"
+        "PAYLOAD: nmap -sV 127.0.0.1\n"
+        "That's my plan."
+    )
+    repaired = _adapter().repair(completion, error)
+    assert repaired == "THOUGHT: port 22 is open\nACTION: run\nPAYLOAD: nmap -sV 127.0.0.1"
+    action = _adapter().parse(repaired)
+    assert action.kind == "run"
+    assert action.payload == "nmap -sV 127.0.0.1"
+    assert action.rationale == "port 22 is open"
+
+
+def test_three_line_repair_still_canonicalizes_whitespace() -> None:
+    """Whitespace-padded completions rebuild to the exact format."""
     error = AdapterParseError(protocol=PROTOCOL_THREE_LINE, detail="n/a")
     adapter = _adapter()
     assert (
         adapter.repair("  THOUGHT: t\nACTION: run\nPAYLOAD: p  ", error)
         == "THOUGHT: t\nACTION: run\nPAYLOAD: p"
     )
+    # Already-clean completions are unchanged: nothing to fix.
     assert adapter.repair("THOUGHT: t\nACTION: run\nPAYLOAD: p", error) is None
-    assert adapter.repair("", error) is None
-    assert adapter.repair("   ", error) is None
+
+
+def test_three_line_repair_returns_none_without_three_labels() -> None:
+    """Fewer than three distinct labels means nothing salvageable."""
+    error = AdapterParseError(protocol=PROTOCOL_THREE_LINE, detail="n/a")
+    adapter = _adapter()
+    for bad in (
+        "",
+        "   ",
+        "just prose",
+        "ACTION: run\nPAYLOAD: p",
+        "THOUGHT: t\nACTION: run\nACTION: run",
+        "THOUGHT: t\nTHOUGHT: t\nTHOUGHT: t",
+    ):
+        assert adapter.repair(bad, error) is None
