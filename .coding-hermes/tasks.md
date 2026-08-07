@@ -10,11 +10,13 @@ commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
 ## Active
 
-| ID | Task | Pri | Cpx | Deps | Tags | Model | Reasoning | Fallback |
-|----|------|-----|-----|------|------|-------|-----------|----------|
-| DEPS-001 | ruff 0.16.1→0.16.2 (direct dev dep patch bump; pydantic-core 2.48.0 BLOCKED by pydantic==2.46.4 pin) | Low | 1±0 | — | +terminal, +testing | DS-V4-Flash | Minimal | — |
+_No pending tasks (board empty — only NEVER-DONE + E2E-001 fixtures remain)._
 
 ## Completed
+
+| ID | Task | Pri | Cpx | Commit | Model |
+|----|------|-----|-----|--------|-------|
+| DEPS-001 | ruff 0.16.1→0.16.2 (direct dev dep patch bump; pydantic-core 2.48.0 BLOCKED by pydantic==2.46.4 pin) | Low | 1±0 | a70f3f7 | DS-V4-Flash |
 
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
