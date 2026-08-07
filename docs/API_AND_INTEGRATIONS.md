@@ -94,6 +94,32 @@ Privileged methods:
 
 Only the supervisor may invoke privileged methods.
 
+Configuration is constructor-injected with environment fallback; the
+``OZZGRAPH_HAL_PRIVILEGED`` variable marks a supervisor-owned client:
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `OZZGRAPH_MCP_BASE_URL` | `http://127.0.0.1:9000/mcp` | Base URL including the MCP endpoint path |
+| `OZZGRAPH_MCP_TIMEOUT_S` | `60` | Request timeout in seconds |
+| `OZZGRAPH_MCP_MAX_RETRIES` | `3` | Retries for transient failures; `0` disables, bounded to max 10 |
+| `OZZGRAPH_HAL_PRIVILEGED` | *(unset)* | Supervisor flag; only a privileged `halctl`/`HalClient` may submit flags, buy paid hints, or exit the run |
+| `OZZGRAPH_CHALLENGE_ID` | *(unset)* | Challenge id used by the `halctl` subcommands that need one |
+
+The wire protocol is JSON-RPC 2.0 (`challenge.get`, `challenge.status`,
+`flag.submit`, `hint.request`, `scoreboard.get`, `exit`). Every upstream
+response is normalized into an internal versioned schema
+(`Challenge`/`ChallengeStatus`/`SubmissionResult`/`HintResult`/`Scoreboard`)
+so upstream changes do not leak throughout the codebase.
+
+Every failure is raised as a single typed `HalServiceError` carrying
+`provider`, `status_code`, `retryable`, and `message`. Retries apply only to
+transient failures (HTTP 429, HTTP ≥ 500, JSON-RPC `-32603`, and httpx
+transport errors); 4xx statuses (400/401/403/404/422) and application
+JSON-RPC errors never retry, and backoff is exponential and bounded (no
+infinite retry). Whenever an `EventLog` is provided, a `hal_failure` event
+(producer `hal_client`, payload `provider`/`status`/`attempts`) is appended
+to the run log alongside the raised error.
+
 ## Shell Runner
 
 ```python
