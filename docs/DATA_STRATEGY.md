@@ -70,6 +70,23 @@ SUBMISSION SUBMITS FLAG_CANDIDATE
 WORKER_RUN EXPLORED HYPOTHESIS
 ```
 
+The graph stores entity and edge types as plain strings, so the lists above
+are semantic contracts rather than SQL enums. Convention: entity types are
+stored in lowercase (`run`, `action`, `hypothesis`, ...), edge types in upper
+snake case (`ACTION PRODUCED OBSERVATION`), both caller-supplied stable
+strings.
+
+Concrete schema details (see `src/ozzgraph/state_graph.py`):
+
+- `entities(id, type, data, created_at, updated_at)`; a `data_version`
+  payload-version column is added by migration 2.
+- `edges(id, type, src_id, dst_id, data, created_at)`; both endpoints are
+  foreign keys to `entities` with `ON DELETE CASCADE`, and the
+  `(type, src_id, dst_id)` triple is unique so duplicate relationships are
+  rejected.
+- The schema version lives in `PRAGMA user_version`; forward-only migrations
+  apply in ascending order, and reopening an up-to-date database is a no-op.
+
 ### Artifact Store
 
 `/state/artifacts`
