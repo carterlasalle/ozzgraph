@@ -12,7 +12,6 @@ commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
 | ID | Task | Pri | Cpx | Deps | Tags | Model | Reasoning | Fallback |
 |----|------|-----|-----|------|------|-------|-----------|----------|
-| T06 | PR6: MCP client + `halctl` adapter (challenge/status/submit/hint/exit) | High | 5±1 | T02 | +++python, ++cli, ++integration, -vision | GLM-5.2 | High | DS-V4-Pro |
 | T07 | PR7: SQLite state graph (entities, edges, schema_version, migrations) | Critical | 5±1 | T02 | +++python, +++aiosqlite, +++sqlite, -vision | GLM-5.2 | High | DS-V4-Pro |
 | T08 | PR8: artifact store + JSONL event log + replay (graph hash) | Critical | 5±1 | T07 | +++python, +++sqlite, ++replay, -vision | GLM-5.2 | High | DS-V4-Pro |
 | T09 | PR9: bounded shell runner (process-group timeout, truncation, ToolResult) | Critical | 5±1 | T04 | +++python, ++subprocess, ++security, -vision | DS-V4-Flash | Medium | GLM-5.2 |
