@@ -130,7 +130,9 @@ async def test_naive_timestamp_rejected(tmp_path: Path) -> None:
     async with StateGraph(tmp_path / "graph.db") as graph:
         with pytest.raises(ValueError):
             await graph.create_entity(
-                "e1", "node", at=datetime(2026, 8, 6, 10, 0, 0)  # noqa: DTZ001 - deliberately naive
+                "e1",
+                "node",
+                at=datetime(2026, 8, 6, 10, 0, 0),  # noqa: DTZ001 - deliberately naive
             )
 
 
@@ -171,9 +173,7 @@ async def test_create_get_delete_edge(tmp_path: Path) -> None:
         await graph.create_entity("svc-1", "service")
         await graph.create_entity("tgt-1", "target")
 
-        edge = await graph.create_edge(
-            "edge-1", "OBSERVED_ON", "svc-1", "tgt-1", {"probe": "nmap"}
-        )
+        edge = await graph.create_edge("edge-1", "OBSERVED_ON", "svc-1", "tgt-1", {"probe": "nmap"})
         assert edge.id == "edge-1"
         assert edge.type == "OBSERVED_ON"
         assert edge.src_id == "svc-1"
@@ -386,7 +386,9 @@ async def test_migration_failure_raises_and_leaves_graph_closed(tmp_path: Path) 
     # Simulate a partially-applied v2: the column exists but user_version
     # was never bumped, so the ALTER will collide.
     async with aiosqlite.connect(path, isolation_level=None) as conn:
-        await conn.execute("ALTER TABLE entities ADD COLUMN data_version INTEGER NOT NULL DEFAULT 1")
+        await conn.execute(
+            "ALTER TABLE entities ADD COLUMN data_version INTEGER NOT NULL DEFAULT 1"
+        )
         await conn.execute("PRAGMA user_version = 1")
 
     graph = StateGraph(path)
@@ -399,7 +401,9 @@ async def test_migration_failure_raises_and_leaves_graph_closed(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
-async def test_malformed_migration_list_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_malformed_migration_list_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A migration list that skips version 1 is rejected at open time."""
     monkeypatch.setattr(
         state_graph_module,

@@ -212,8 +212,11 @@ def _validate_migrations(migrations: tuple[Migration, ...]) -> None:
             or do not start at version 1.
     """
     versions = [migration.version for migration in migrations]
-    if not versions or versions[0] != 1 or versions != sorted(versions) or len(set(versions)) != len(
-        versions
+    if (
+        not versions
+        or versions[0] != 1
+        or versions != sorted(versions)
+        or len(set(versions)) != len(versions)
     ):
         raise MigrationError(
             "migrations must have unique, strictly ascending versions starting at 1"
@@ -493,7 +496,13 @@ class StateGraph:
             await conn.execute(
                 "INSERT INTO entities (id, type, data, created_at, updated_at)"
                 " VALUES (?, ?, ?, ?, ?)",
-                (entity_id, entity_type, _dumps({} if data is None else data), _fmt_ts(now), _fmt_ts(now)),
+                (
+                    entity_id,
+                    entity_type,
+                    _dumps({} if data is None else data),
+                    _fmt_ts(now),
+                    _fmt_ts(now),
+                ),
             )
         except sqlite3.IntegrityError as exc:
             raise DuplicateEntityError(f"entity {entity_id!r} already exists") from exc
@@ -623,7 +632,9 @@ class StateGraph:
                         (edge_id, edge_type, src_id, dst_id, _dumps(payload), _fmt_ts(now)),
                     )
                 except sqlite3.IntegrityError as exc:
-                    raise _map_edge_integrity_error(exc, edge_id, edge_type, src_id, dst_id) from exc
+                    raise _map_edge_integrity_error(
+                        exc, edge_id, edge_type, src_id, dst_id
+                    ) from exc
         except sqlite3.Error as exc:
             raise StateGraphError(f"failed to create edge {edge_id!r}: {exc}") from exc
         return EdgeRecord(
@@ -714,9 +725,7 @@ class StateGraph:
         conn = self._connection()
         try:
             if entity_type is None:
-                cursor = await conn.execute(
-                    f"SELECT {_ENTITY_COLUMNS} FROM entities ORDER BY id"
-                )
+                cursor = await conn.execute(f"SELECT {_ENTITY_COLUMNS} FROM entities ORDER BY id")
             else:
                 cursor = await conn.execute(
                     f"SELECT {_ENTITY_COLUMNS} FROM entities WHERE type = ? ORDER BY id",
