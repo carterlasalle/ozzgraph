@@ -21,15 +21,25 @@ The core principle:
 > supplies memory, discipline, tools, safety boundaries, execution, evidence,
 > and recovery.
 
-```text
-Supervisor Kernel
-  └─ State & Work Graph (SQLite) + append-only JSONL events + artifact store
-       └─ Phase Router — graph predicates, never action counts
-            ├─ Planner / Scheduler — bounded plans, task DAG, conflict keys
-            ├─ Context Compiler → Model Adapter → [model: bounded judgment only]
-            ├─ Policy & Tool Plane — allowlists, fingerprints, timeouts, limits
-            ├─ Observation & Artifact Pipeline — raw output stays outside context
-            └─ Evaluator & Reducer — provenance-validated facts ──▶ loop
+```mermaid
+flowchart TB
+    subgraph Kernel[Supervisor Kernel]
+        S[State & Work Graph<br/>SQLite + JSONL events + artifact store]
+        P[Phase Router<br/>graph predicates, never action counts]
+        PS[Planner / Scheduler<br/>bounded plans, task DAG, conflict keys]
+        CC[Context Compiler] --> M[Model Adapter]
+        M --> R[model: bounded judgment only]
+        PO[Policy & Tool Plane<br/>allowlists, fingerprints, timeouts, limits]
+        OA[Observation & Artifact Pipeline<br/>raw output stays outside context]
+        ER[Evaluator & Reducer<br/>provenance-validated facts]
+    end
+    S --> P
+    P --> PS
+    P --> CC
+    P --> PO
+    P --> OA
+    OA --> ER
+    ER -->|loop| P
 ```
 
 **Release status: v1.0.0 — all 32 PRs of the implementation plan are merged;
