@@ -1,0 +1,111 @@
+name: publish-docker
+
+# Builds the OzzGraph competition image once, pushes it to GHCR (always) and
+# Docker Hub (when the DOCKERHUB_* secrets are configured), on:
+#   - every push to main            -> tag :latest
+#   - version tags (v1.0.0)         -> tag the exact version + :latest
+#   - manual dispatch               -> tag :latest (or :<input-tag>)
+# The build reuses the same size/smoke gates as CI's docker job.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Override the tag to publish (defaults to latest)'
+        required: false
+        type: string
+
+env:
+  REGISTRY_GHCR: ghcr.io
+  IMAGE: carterlasalle/ozzgraph
+
+jobs:
+  publish:
+    name: Build + push (GHCR + Docker Hub)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write   # push to GHCR (ghcr.io/carterlasalle/ozzgraph)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ----- derive tags -----
+      - name: Compute image tags
+        id: tags
+        shell: bash
+        run: |
+          base_ghcr="${REGISTRY_GHCR}/${IMAGE}"
+          base_dh="docker.io/${IMAGE}"
+          ghcr_tags=""
+          dh_tags=""
+          if [ -n "${{ inputs.tag }}" ]; then
+            ghcr_tags="${base_ghcr}:${{ inputs.tag }},${base_ghcr}:latest"
+            dh_tags="${base_dh}:${{ inputs.tag }},${base_dh}:latest"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            ver="${GITHUB_REF_NAME#v}"
+            ghcr_tags="${base_ghcr}:${GITHUB_REF_NAME},${base_ghcr}:${ver},${base_ghcr}:latest"
+            dh_tags="${base_dh}:${GITHUB_REF_NAME},${base_dh}:${ver},${base_dh}:latest"
+          else
+            ghcr_tags="${base_ghcr}:latest"
+            dh_tags="${base_dh}:latest"
+          fi
+          echo "ghcr_tags=$ghcr_tags" >> "$GITHUB_OUTPUT"
+          echo "dh_tags=$dh_tags" >> "$GITHUB_OUTPUT"
+          # If Docker Hub is configured, publish both; else GHCR only.
+          if [ -n "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
+            echo "all_tags=${ghcr_tags},${dh_tags}" >> "$GITHUB_OUTPUT"
+            echo "publish_dh=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "all_tags=${ghcr_tags}" >> "$GITHUB_OUTPUT"
+            echo "publish_dh=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ----- GHCR auth (automatic via GITHUB_TOKEN) -----
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY_GHCR }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ----- Docker Hub auth (only when secrets exist) -----
+      - name: Log in to Docker Hub
+        if: ${{ secrets.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # ----- build + push both -----
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.tags.outputs.all_tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ----- smoke the pushed image from GHCR (the always-present registry) -----
+      - name: Smoke — pulled image version
+        run: |
+          docker pull "${GHCR_TAGS%%,*}"
+          docker run --rm "${GHCR_TAGS%%,*}" --version
+        env:
+          GHCR_TAGS: ${{ steps.tags.outputs.ghcr_tags }}
+
+      # ----- report -----
+      - name: Report pushed tags
+        run: |
+          echo "GHCR:    ${{ steps.tags.outputs.ghcr_tags }}"
+          if [ "${{ steps.tags.outputs.publish_dh }}" = "yes" ]; then
+            echo "Docker Hub: ${{ steps.tags.outputs.dh_tags }}"
+          else
+            echo "Docker Hub: skipped — set DOCKERHUB_USERNAME + DOCKERHUB_TOKEN secrets to enable"
+          fi
