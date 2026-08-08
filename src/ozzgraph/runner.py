@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from enum import Enum
@@ -79,7 +80,13 @@ from ozzgraph.budgets import BudgetExceeded, Budgets
 from ozzgraph.config import OzzGraphConfig
 from ozzgraph.context import CompiledContext, ContextRequest, compile_context
 from ozzgraph.environments import EnvironmentAdapter, Objective, Scope
-from ozzgraph.evaluator import Evaluator, NoPlanError, PlanVerdict
+from ozzgraph.evaluator import (
+    Evaluator,
+    HypothesisVerdict,
+    NoPlanError,
+    PlanEvaluation,
+    PlanVerdict,
+)
 from ozzgraph.events import (
     GRAPH_EDGE_CREATED,
     GRAPH_ENTITY_CREATED,
@@ -98,6 +105,16 @@ from ozzgraph.executor import (
     ExecutorTurn,
     FailedAction,
 )
+from ozzgraph.findings import (
+    DEFAULT_FINDING_CWE,
+    EDGE_FINDING_VALIDATES_HYPOTHESIS,
+    ENTITY_FINDING,
+    REPRODUCTION_LIMIT,
+    Finding,
+    FindingStore,
+    ImpactCIA,
+    ImpactLevel,
+)
 from ozzgraph.model_client import (
     DEFAULT_MODEL_BASE_URL,
     ModelMessage,
@@ -106,10 +123,17 @@ from ozzgraph.model_client import (
     ModelServiceError,
 )
 from ozzgraph.phases import Phase
-from ozzgraph.planner import NoPlanDecision, Plan, Planner
+from ozzgraph.planner import (
+    EDGE_EVIDENCE_CONTRADICTS_HYPOTHESIS,
+    NoPlanDecision,
+    Plan,
+    Planner,
+)
 from ozzgraph.policy import ScopePolicy, ScopeViolationError
 from ozzgraph.profiles import ModelProfile, probe_protocol, profile_for_model_id
 from ozzgraph.router import (
+    EDGE_EVIDENCE_SUPPORTS_HYPOTHESIS,
+    ENTITY_HYPOTHESIS,
     ENTITY_OBJECTIVE,
     FIELD_COMPLETED,
     PhaseRoute,
@@ -131,6 +155,7 @@ RUNNER_ACTION_FAILED = "runner.action_failed"
 RUNNER_EVALUATED = "runner.evaluated"
 RUNNER_OBJECTIVE_COMPLETED = "runner.objective_completed"
 RUNNER_TERMINATED = "runner.terminated"
+RUNNER_FINDING_CREATED = "runner.finding_created"
 
 #: Entity types the runner seeds (docs/DATA_STRATEGY.md, lowercase by
 #: convention).
@@ -143,6 +168,33 @@ ENTITY_EVIDENCE = "evidence"
 #: Edge types the runner writes.
 EDGE_ACTION_PRODUCED_OBSERVATION = "ACTION PRODUCED OBSERVATION"
 EDGE_EVIDENCE_EXTRACTED_FROM_OBSERVATION = "EVIDENCE EXTRACTED_FROM OBSERVATION"
+
+#: Deterministic confidence stamped on a hypothesis formed from a
+#: successful observation (V02 minimal; the security-brain milestone
+#: replaces the heuristic with measured reasoning).
+HYPOTHESIS_CONFIDENCE = 0.6
+
+#: Confidence stamped on a hypothesis whose observation output matched
+#: the configured flag pattern — the deterministic sensitive-data
+#: signal (``config.flag_pattern``, the same pattern the flag candidate
+#: extractor scans with).
+HYPOTHESIS_FLAG_CONFIDENCE = 0.9
+
+#: Deterministic impact labels for a finding whose validated evidence
+#: exposed the target's sensitive data (matched the flag pattern).
+_FINDING_EXPOSED_IMPACT: dict[str, ImpactLevel] = {
+    "confidentiality": "high",
+    "integrity": "low",
+    "availability": "none",
+}
+
+#: Impact labels for a finding validated without the sensitive-data
+#: signal: the conservative unknown axes (never inflated).
+_FINDING_DEFAULT_IMPACT: dict[str, ImpactLevel] = {
+    "confidentiality": "medium",
+    "integrity": "unknown",
+    "availability": "unknown",
+}
 
 #: Environment variable holding the model identifier the runner calls.
 MODEL_ID_ENV = "OZZGRAPH_MODEL_ID"
@@ -626,6 +678,10 @@ class AutonomousRunner:
                 at=at,
             )
 
+        # V02: form/link hypotheses from the new evidence (the
+        # discover -> ... -> hypothesis step of the vertical slice).
+        await self._update_hypotheses(turn, result, evidence_id, at)
+
         failed = result.exit_code != 0 or result.timeout_state
         if failed:
             self._failed_actions.append(
@@ -687,6 +743,221 @@ class AutonomousRunner:
         )
         if evaluation.verdict is PlanVerdict.COMPLETE:
             await self._complete_objectives()
+            # V02: a COMPLETE verdict means a ranked hypothesis was
+            # validated — produce the evidence-backed Finding.
+            await self._produce_findings(evaluation)
+
+    # ------------------------------------------------------------------
+    # hypotheses + findings (V02: discover -> ... -> validate -> Finding)
+    # ------------------------------------------------------------------
+
+    async def _update_hypotheses(
+        self,
+        turn: ExecutorTurn,
+        result: ToolResult,
+        evidence_id: str,
+        at: datetime,
+    ) -> None:
+        """Form or link hypotheses from one new evidence entity.
+
+        Two deterministic cases:
+
+        - The turn served a plan step (``request.hypothesis_id`` set):
+          the new evidence is linked to that hypothesis — ``EVIDENCE
+          SUPPORTS HYPOTHESIS`` when the action succeeded, ``EVIDENCE
+          CONTRADICTS HYPOTHESIS`` when it failed. The evaluator reads
+          exactly these edges to confirm/refute hypotheses and complete
+          plan steps (its \"new supporting evidence\" signal).
+        - No plan step (pre-branching graph): a successful observation
+          FORMS a new hypothesis — a deterministic ``hypothesis``
+          entity derived from the action's fingerprint, stamped with a
+          deterministic confidence (boosted when the output matched the
+          configured flag pattern) and linked to the new evidence.
+
+        Idempotent: ids derive from fingerprints/evidence ids, so
+        re-persistence writes nothing new.
+        """
+        request = turn.action
+        ok = result.exit_code == 0 and not result.timeout_state
+        edge_type = (
+            EDGE_EVIDENCE_SUPPORTS_HYPOTHESIS if ok else EDGE_EVIDENCE_CONTRADICTS_HYPOTHESIS
+        )
+        if request.hypothesis_id is not None:
+            hypothesis_id = request.hypothesis_id
+            direction = "supports" if ok else "contradicts"
+            edge_id = f"{evidence_id}-{direction}-{hypothesis_id}"
+            if await self._graph.get_edge(edge_id) is None:
+                await self._create_edge(edge_id, edge_type, evidence_id, hypothesis_id, at=at)
+            return
+
+        if not ok:
+            # A failed probe forms no hypothesis — there is nothing to
+            # claim yet (AGENTS.md rule #3).
+            return
+        hypothesis_id = f"hypothesis-{request.fingerprint[:12]}"
+        if await self._graph.get_entity(hypothesis_id) is None:
+            flag_matched = self._flag_matches(result)
+            payload: dict[str, object] = {
+                "confidence": (
+                    HYPOTHESIS_FLAG_CONFIDENCE if flag_matched else HYPOTHESIS_CONFIDENCE
+                ),
+                "objective": _bounded(
+                    f"{request.action} -> {_summarize(result)}",
+                    300,
+                ),
+                "exploitation_direction": _bounded(request.action, 200),
+            }
+            if flag_matched:
+                payload["cwe"] = DEFAULT_FINDING_CWE
+            await self._create_entity(hypothesis_id, ENTITY_HYPOTHESIS, payload, at=at)
+        edge_id = f"{evidence_id}-supports-{hypothesis_id}"
+        if await self._graph.get_edge(edge_id) is None:
+            await self._create_edge(
+                edge_id,
+                EDGE_EVIDENCE_SUPPORTS_HYPOTHESIS,
+                evidence_id,
+                hypothesis_id,
+                at=at,
+            )
+
+    def _flag_matches(self, result: ToolResult) -> bool:
+        """True when the raw action output matched the flag pattern.
+
+        The deterministic sensitive-data signal: the configured
+        ``flag_pattern`` (the same pattern the flag candidate extractor
+        scans with) appearing in the raw stdout/stderr. ``config``
+        validates the pattern at load time, so a compile failure here
+        is a defensive no-match.
+        """
+        try:
+            pattern = re.compile(self._config.flag_pattern)
+        except re.error:
+            return False  # pragma: no cover - config validates at load
+        haystack = (result.stdout or "") + "\n" + (result.stderr or "")
+        return pattern.search(haystack) is not None
+
+    async def _produce_findings(self, evaluation: PlanEvaluation) -> None:
+        """Persist one evidence-backed Finding for a confirmed hypothesis.
+
+        Called only on an evaluator COMPLETE verdict: the first
+        hypothesis with a CONFIRMED verdict (new supporting evidence,
+        no contradictions) becomes a ``finding`` graph entity carrying
+        the CHANGES_v2 Findings model (CWE classification, affected
+        assets, preconditions, evidence ids, reproduction, impact CIA,
+        confidence), linked to the hypothesis it validates, mirrored as
+        a ``graph.*`` event, and rendered to ``findings.json``.
+
+        Idempotent: the finding id derives from the hypothesis id.
+        """
+        confirmed = next(
+            (
+                outcome
+                for outcome in evaluation.hypothesis_outcomes
+                if outcome.verdict is HypothesisVerdict.CONFIRMED
+            ),
+            None,
+        )
+        if confirmed is None:
+            return
+        hypothesis_id = confirmed.hypothesis_id
+        finding_id = f"finding-{hypothesis_id}"
+        if await self._graph.get_entity(finding_id) is not None:
+            return
+
+        confidence, cwe = await self._hypothesis_characteristics(hypothesis_id)
+        targets = await self._graph.list_entities(ENTITY_TARGET)
+        target_id = targets[0].id if targets else None
+        exposed = cwe == DEFAULT_FINDING_CWE
+        impact = ImpactCIA(**(_FINDING_EXPOSED_IMPACT if exposed else _FINDING_DEFAULT_IMPACT))
+        finding = Finding(
+            id=finding_id,
+            cwe=cwe,
+            affected_assets=tuple(record.id for record in targets),
+            preconditions=("authorized assessment scope",),
+            evidence_ids=confirmed.supporting_evidence,
+            reproduction=await self._reproduction_steps(confirmed.supporting_evidence),
+            impact=impact,
+            confidence=confidence,
+            hypothesis_id=hypothesis_id,
+            target_id=target_id,
+        )
+        at = datetime.now(UTC)
+        await self._create_entity(
+            finding_id,
+            ENTITY_FINDING,
+            finding.model_dump(mode="json"),
+            at=at,
+        )
+        await self._create_edge(
+            f"{finding_id}-validates-{hypothesis_id}",
+            EDGE_FINDING_VALIDATES_HYPOTHESIS,
+            finding_id,
+            hypothesis_id,
+            at=at,
+        )
+        self._append(
+            RUNNER_FINDING_CREATED,
+            {
+                "finding_id": finding_id,
+                "cwe": finding.cwe,
+                "hypothesis_id": hypothesis_id,
+                "evidence_ids": list(finding.evidence_ids),
+                "confidence": finding.confidence,
+            },
+        )
+        FindingStore.for_run(self._config.state_dir).save(finding)
+
+    async def _hypothesis_characteristics(self, hypothesis_id: str) -> tuple[float, str]:
+        """The validated hypothesis's confidence and CWE classification.
+
+        Reads the ``hypothesis`` entity payload deterministically: the
+        confidence the runner stamped at formation, and the CWE the
+        runner recorded when the evidence matched the flag pattern
+        (else the conservative default). A missing or foreign-typed
+        payload field falls back to the conservative defaults — the
+        finding must never fail because a payload is sparse.
+        """
+        record = await self._graph.get_entity(hypothesis_id)
+        confidence = HYPOTHESIS_CONFIDENCE
+        cwe = DEFAULT_FINDING_CWE
+        if record is not None:
+            raw_confidence = record.data.get("confidence")
+            if isinstance(raw_confidence, (int, float)) and not isinstance(raw_confidence, bool):
+                confidence = float(raw_confidence)
+            raw_cwe = record.data.get("cwe")
+            if isinstance(raw_cwe, str) and raw_cwe:
+                cwe = raw_cwe
+        return confidence, cwe
+
+    async def _reproduction_steps(self, evidence_ids: tuple[str, ...]) -> str:
+        """The bounded reproduction steps behind one evidence set.
+
+        Walks the provenance chain the runner persisted (evidence ->
+        observation -> action, via the payload ids) and joins the
+        action commands — the deterministic steps that produced the
+        supporting evidence. Bounded by :data:`REPRODUCTION_LIMIT`.
+        """
+        steps: list[str] = []
+        for evidence_id in evidence_ids:
+            record = await self._graph.get_entity(evidence_id)
+            if record is None:
+                continue
+            observation_id = record.data.get("observation_id")
+            if not isinstance(observation_id, str):
+                continue
+            observation = await self._graph.get_entity(observation_id)
+            if observation is None:
+                continue
+            action_id = observation.data.get("action_id")
+            if not isinstance(action_id, str):
+                continue
+            action = await self._graph.get_entity(action_id)
+            if action is None:
+                continue
+            command = action.data.get("command")
+            if isinstance(command, str) and command:
+                steps.append(command)
+        return _bounded("; ".join(steps), REPRODUCTION_LIMIT)
 
     # ------------------------------------------------------------------
     # context + model

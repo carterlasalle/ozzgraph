@@ -51,6 +51,7 @@ from ozzgraph.environments import (
     HalCTFEnvironment,
     LocalEnvironment,
 )
+from ozzgraph.evaluator import Evaluator
 from ozzgraph.events import BOOTSTRAP, TERMINATION, Event, EventLog
 from ozzgraph.hal_client import HalClient, HintResult, SubmissionResult
 from ozzgraph.halctl import CHALLENGE_ID_ENV
@@ -212,6 +213,13 @@ class Supervisor:
                     allowed_command_families=cfg.allowed_command_families,
                 )
                 async with StateGraph(cfg.state_dir / "graph.db") as graph:
+                    # V02: the evaluator is wired into the loop so a
+                    # validated hypothesis (COMPLETE verdict) completes
+                    # the objectives and produces a Finding — without
+                    # it, a default run ends on budget exhaustion
+                    # (docs/adr/0008, "Harder"). Deterministic-only:
+                    # no model fallback client, no extra model calls.
+                    evaluator = Evaluator(run_id=self._run_id, event_log=self._event_log)
                     runner = AutonomousRunner(
                         config=cfg,
                         graph=graph,
@@ -222,6 +230,7 @@ class Supervisor:
                         stop_event=stop_event,
                         run_id=self._run_id,
                         policy=policy,
+                        evaluator=evaluator,
                     )
                     try:
                         status = await runner.run()

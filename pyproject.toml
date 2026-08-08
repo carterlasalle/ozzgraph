@@ -21,6 +21,7 @@ dev = [
 
 [project.scripts]
 halctl = "ozzgraph.halctl:main"
+ozzgraph = "ozzgraph.__main__:main"
 
 [build-system]
 requires = ["hatchling"]
