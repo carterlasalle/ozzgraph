@@ -102,6 +102,31 @@ independently implemented components.
    > evaluator still consume it).
 7. `v2/specialists` — genuine narrow micro-agents; parallelize independent
    hypotheses, serialize global strategy, merge through reducer.
+   > V07 (2026-08-08): implemented — genuine narrow micro-agents
+   > (`src/ozzgraph/workers.py`: `SpecialistMicroAgent` + `MicroAgentTask`)
+   > run a bounded, deterministic hypothesis → experiment → observation →
+   > conclusion loop per task: at most `MAX_MICRO_ITERATIONS` bounded
+   > experiments through the existing policy-gate/shell/artifact path, each
+   > normalized with the tool parsers (`parser_for_command`), then a
+   > structured `Verdict` with mandatory evidence references — ZERO model
+   > calls, and the only context is the hypothesis objective plus the prior
+   > observations, never the full graph. `src/ozzgraph/scheduler.py`
+   > parallelizes independent hypotheses (`hypothesis_task`: the hypothesis
+   > id IS the conflict key, so same-hypothesis tasks serialize while
+   > independent hypotheses run concurrently under `max_workers`, driven by
+   > `ready_order`); global strategy stays serialized through
+   > `serialized_task` and the reserved `MUTATION_CONFLICT_KEY`. Conclusions
+   > ride the scheduler `Finding` as `verdict` + `impact`
+   > (CWE/assets/confidence), and `src/ozzgraph/reducer.py` merges them as
+   > structured facts — verdict and impact live in the fact payload and
+   > fingerprint. `src/ozzgraph/specialists.py` wires it into a
+   > `SpecialistFleet` batch (narrow task build → bounded parallel schedule →
+   > reducer → promote confirmed / abandon refuted → evidence-backed
+   > findings + `findings.json`), and the runner (`src/ozzgraph/runner.py`)
+   > dispatches a fleet batch instead of an LLM call when the brain's
+   > `StrategicDecision` is a pure independent-hypothesis batch AND a fleet
+   > is wired in (`specialists=`); the strategic LLM path and the
+   > deterministic single-obvious-action path are unchanged.
 8. `v2/local-assessment` — URL/network/repository/Docker-Compose/hybrid modes,
    credentials, scope files, reporting, SARIF; default OzzGraph experience.
 9. `v2/halctf-adapter` — HAL_* discovery, official tool set, smoke flag,

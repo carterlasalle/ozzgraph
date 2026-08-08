@@ -1197,13 +1197,22 @@ class SpecialistMicroAgent(SpecialistWorker):
         )
 
     def _conclude(self, work: MicroAgentTask, verdict: Verdict) -> TaskOutcome:
-        """One evidence-backed finding from the verdict (rule #3)."""
+        """One evidence-backed finding from the verdict (rule #3).
+
+        The structured conclusion travels through the finding unchanged:
+        ``verdict`` (confirmed/refuted/inconclusive) and ``impact``
+        (CWE/assets/confidence) ride on the :class:`Finding` so the
+        reducer merges the verdict — not a summary that mentions it —
+        into the graph fact (V07, docs/CHANGES_v2.md milestone 7).
+        """
         finding = Finding(
             task_id=work.task.id,
             source=self.worker_id,
             evidence_ids=verdict.evidence_ids,
             summary=verdict.summary,
             confidence=self.default_confidence,
+            verdict=verdict.verdict,
+            impact=verdict.impact,
         )
         return TaskOutcome(
             task_id=work.task.id,

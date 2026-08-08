@@ -204,6 +204,13 @@ class Finding(BaseModel):
             authoritative state by itself.
         confidence: The worker's confidence in [0.0, 1.0]; defaults to
             0.0 (weak).
+        verdict: The structured worker conclusion (V07): ``confirmed``
+            / ``refuted`` / ``inconclusive``, or ``None`` for a plain
+            finding without a verdict.
+        impact: The structured verdict impact payload (V07): ``cwe``
+            (None or a non-empty string), ``assets`` (non-empty
+            strings), and ``confidence`` in [0.0, 1.0]; ``None`` for a
+            plain finding.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -213,6 +220,8 @@ class Finding(BaseModel):
     evidence_ids: tuple[str, ...]
     summary: str = Field(min_length=1, max_length=512)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    verdict: str | None = Field(default=None, pattern=r"^(confirmed|refuted|inconclusive)$")
+    impact: dict[str, object] | None = None
 
     @field_validator("evidence_ids")
     @classmethod
@@ -228,6 +237,17 @@ class Finding(BaseModel):
             )
         return value
 
+    @field_validator("impact")
+    @classmethod
+    def _impact_shape(cls, value: dict[str, object] | None) -> dict[str, object] | None:
+        """The verdict impact payload carries exactly CWE/assets/confidence."""
+        if value is None:
+            return None
+        errors = _impact_shape_errors(value)
+        if errors:
+            raise ValueError("; ".join(errors))
+        return value
+
 
 class WorkerRunStatus(str, Enum):
     """Lifecycle status of one scheduled task execution."""
@@ -236,6 +256,36 @@ class WorkerRunStatus(str, Enum):
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+
+
+def _impact_shape_errors(impact: dict[str, object]) -> list[str]:
+    """Validation errors for the V07 structured-verdict impact payload.
+
+    The impact payload is exactly ``cwe`` (None or a non-empty string),
+    ``assets`` (a sequence of non-empty strings), and ``confidence`` (a
+    number in [0.0, 1.0]). Returns the human-readable errors in
+    deterministic order; an empty list means the payload is valid.
+    """
+    missing = {"cwe", "assets", "confidence"} - set(impact)
+    if missing:
+        return [f"impact must carry exactly cwe/assets/confidence; missing {sorted(missing)}"]
+    errors: list[str] = []
+    cwe = impact.get("cwe")
+    if cwe is not None and (not isinstance(cwe, str) or not cwe.strip()):
+        errors.append("impact cwe must be None or a non-empty string")
+    assets = impact.get("assets")
+    if not isinstance(assets, (tuple, list)) or any(
+        not isinstance(asset, str) or not asset.strip() for asset in assets
+    ):
+        errors.append("impact assets must be a sequence of non-empty strings")
+    confidence = impact.get("confidence")
+    if (
+        isinstance(confidence, bool)
+        or not isinstance(confidence, (int, float))
+        or not 0.0 <= confidence <= 1.0
+    ):
+        errors.append("impact confidence must be a number in [0.0, 1.0]")
+    return errors
 
 
 class WorkerRun(BaseModel):
@@ -464,6 +514,37 @@ def serialized_task(
         id=task_id,
         depends_on=tuple(depends_on),
         conflict_keys=(SERIALIZED_CONFLICT_KEY,),
+        plan_step_id=plan_step_id,
+        hypothesis_id=hypothesis_id,
+    )
+
+
+def hypothesis_task(
+    task_id: str,
+    hypothesis_id: str,
+    *,
+    depends_on: Sequence[str] = (),
+    plan_step_id: str | None = None,
+) -> Task:
+    """A task testing one hypothesis (V07): parallel by default, serialized on conflict.
+
+    The dedicated hook for specialist hypothesis batches: the task carries
+    the hypothesis id AS its conflict key, so two tasks exploring the SAME
+    hypothesis are mutually exclusive (never concurrent) while tasks
+    exploring DIFFERENT hypotheses carry disjoint keys and run concurrently
+    under ``max_workers`` — the AGENTS.md rule #7 partition (parallelize
+    evidence gathering, not mutable exploit chains). The hypothesis id is
+    recorded on the task so the scheduler persists the ``WORKER_RUN
+    EXPLORED HYPOTHESIS`` edge. Global-strategy tasks stay
+    supervisor-serialized through :func:`serialized_task` (the reserved
+    key conflicts with every other task, including hypothesis tasks);
+    mutating work stays serialized through the reserved
+    :data:`MUTATION_CONFLICT_KEY`.
+    """
+    return Task(
+        id=task_id,
+        depends_on=tuple(depends_on),
+        conflict_keys=(hypothesis_id,),
         plan_step_id=plan_step_id,
         hypothesis_id=hypothesis_id,
     )

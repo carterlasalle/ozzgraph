@@ -23,8 +23,10 @@ from ozzgraph.config import OzzGraphConfig
 from ozzgraph.environments import EnvironmentAdapter, Objective, Scope, Target
 from ozzgraph.events import EventLog
 from ozzgraph.model_client import ModelService
+from ozzgraph.phases import Phase
 from ozzgraph.policy import ScopePolicy
 from ozzgraph.profiles import GPT_PROFILE
+from ozzgraph.router import PhaseRoute
 from ozzgraph.runner import (
     RUNNER_ACTION_EXECUTED,
     RUNNER_MODEL_FAILURE,
@@ -34,7 +36,13 @@ from ozzgraph.runner import (
     AutonomousRunner,
     RunnerStatus,
 )
+from ozzgraph.security_brain import (
+    Opportunity,
+    OpportunityKind,
+    StrategicDecision,
+)
 from ozzgraph.shell import ShellRunner, ToolResult, TruncationState
+from ozzgraph.specialists import SpecialistBatchResult
 from ozzgraph.state_graph import StateGraph
 from ozzgraph.toolplane import ToolInventory
 
@@ -139,6 +147,7 @@ def _runner(
     budgets: Budgets | None = None,
     inventory: ToolInventory | None = None,
     shell: ShellRunner | FakeShell | None = None,
+    specialists=None,
 ) -> AutonomousRunner:
     state = tmp_path / "state"
     state.mkdir(parents=True, exist_ok=True)
@@ -162,6 +171,7 @@ def _runner(
         # the model context advertises no capabilities and no version
         # probe ever spawns a subprocess (deterministic, fast).
         inventory=inventory if inventory is not None else ToolInventory(paths=()),
+        specialists=specialists,
     )
 
 
@@ -597,3 +607,86 @@ async def test_semantic_observation_raw_first_flow(tmp_path: Path) -> None:
         artifacts = ArtifactStore(tmp_path / "state" / "artifacts")
         raw = artifacts.path_for(str(payload["artifact_id"])).read_text(encoding="utf-8")
         assert raw == NMAP_XML_OUTPUT
+
+
+# ---------------------------------------------------------------------------
+# V07: specialist batch wiring (a pure hypothesis batch dispatches the fleet)
+# ---------------------------------------------------------------------------
+
+
+class StubFleet:
+    """A minimal SpecialistFleet stand-in recording the dispatched batch."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[tuple[str, ...], Phase]] = []
+
+    async def run_hypothesis_batch(self, graph, *, hypothesis_ids, phase):
+        self.calls.append((tuple(hypothesis_ids), phase))
+        return SpecialistBatchResult(
+            run_id=RUN,
+            scheduled=2,
+            succeeded=2,
+            failed=0,
+            promoted=("h-1", "h-2"),
+        )
+
+
+def _hypothesis_opportunity(opportunity_id: str, hypothesis_id: str) -> Opportunity:
+    return Opportunity(
+        id=opportunity_id,
+        kind=OpportunityKind.TEST_HYPOTHESIS,
+        entity_id=hypothesis_id,
+        objective=f"test {hypothesis_id}",
+        score=1100.0,
+        rationale="evidence present",
+        hypothesis_id=hypothesis_id,
+    )
+
+
+def _batch_decision() -> StrategicDecision:
+    return StrategicDecision(
+        phase=Phase.ENUMERATION,
+        reason="2 independent hypotheses; specialist batch",
+        opportunities=(
+            _hypothesis_opportunity("opportunity-test_hypothesis-h-1", "h-1"),
+            _hypothesis_opportunity("opportunity-test_hypothesis-h-2", "h-2"),
+        ),
+        strategy_prompt="STRATEGIC",
+    )
+
+
+def test_is_hypothesis_batch_gate() -> None:
+    from ozzgraph.runner import _is_hypothesis_batch
+
+    assert _is_hypothesis_batch(_batch_decision()) is True
+    mixed = _batch_decision()
+    service = Opportunity(
+        id="opportunity-characterize_service-svc-1",
+        kind=OpportunityKind.CHARACTERIZE_SERVICE,
+        entity_id="svc-1",
+        objective="characterize service svc-1",
+        score=100.0,
+        rationale="uncharacterized",
+        action="nmap -sV --top-ports 1000 svc-1",
+        skill_id="nmap",
+    )
+    mixed.opportunities = (*mixed.opportunities, service)
+    assert _is_hypothesis_batch(mixed) is False
+
+
+@pytest.mark.asyncio
+async def test_specialist_batch_turn_dispatches_fleet_without_model_call(
+    tmp_path: Path,
+) -> None:
+    """A pure hypothesis batch dispatches the fleet; no model completion is made."""
+    stub = StubFleet()
+    async with StateGraph(":memory:") as graph:
+        runner = _runner(tmp_path, graph, specialists=stub)
+        route = PhaseRoute(phase=Phase.ENUMERATION, predicate="has_uncharacterized_services")
+        outcome = await runner._run_specialist_batch_turn(route, _batch_decision())
+        assert outcome is None  # continue the loop
+        assert stub.calls == [(("h-1", "h-2"), Phase.ENUMERATION)]
+        events = _read_events(tmp_path)
+        assert any(e["event_type"] == "runner.specialist_batch" for e in events)
+        assert any(e["event_type"] == "runner.turn" for e in events)
+        await runner.aclose()

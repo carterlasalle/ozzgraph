@@ -50,6 +50,17 @@ Design rules:
   findings (the scheduler guarantees this), so :meth:`Reducer.reduce`
   skips failed runs entirely — nothing to merge, and never an error.
 
+- Structured verdicts (V07, docs/CHANGES_v2.md milestone 7): a worker
+  conclusion travels through :class:`~ozzgraph.scheduler.Finding` as an
+  optional ``verdict`` (``confirmed`` / ``refuted`` / ``inconclusive``)
+  plus an ``impact`` payload (CWE / assets / confidence). When present,
+  the merged :class:`Fact` carries the same verdict and impact — the
+  graph fact IS the structured verdict, not a summary that mentions it —
+  and the fact fingerprint includes both, so two findings with the same
+  evidence and summary but different verdicts merge as distinct facts
+  (contradictions stay additive with provenance). Findings without a
+  verdict merge exactly as before (additive optional fields).
+
 - Small kernel (AGENTS.md rule #10): the reducer only validates and
   merges; nothing is wired into the supervisor here. It is a component
   plus its contracts, delivered standalone (PR step 26).
@@ -74,7 +85,12 @@ from ozzgraph.events import (
     graph_event,
 )
 from ozzgraph.flags import ENTITY_EVIDENCE
-from ozzgraph.scheduler import Finding, WorkerRun, WorkerRunStatus
+from ozzgraph.scheduler import (
+    Finding,
+    WorkerRun,
+    WorkerRunStatus,
+    _impact_shape_errors,
+)
 from ozzgraph.state_graph import StateGraph
 
 #: Producer name on every reducer event.
@@ -126,6 +142,13 @@ class Fact(BaseModel):
         summary: Bounded prose summary — never authoritative by itself
             (the evidence references are the authority).
         confidence: The finding's confidence in [0.0, 1.0].
+        verdict: The structured worker conclusion (V07): ``confirmed``
+            / ``refuted`` / ``inconclusive``, or ``None`` for a plain
+            finding without a verdict.
+        impact: The structured verdict impact payload (V07): ``cwe``
+            (None or a non-empty string), ``assets`` (non-empty
+            strings), and ``confidence`` in [0.0, 1.0]; ``None`` for a
+            plain finding.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -136,6 +159,8 @@ class Fact(BaseModel):
     evidence_ids: tuple[str, ...]
     summary: str = Field(min_length=1, max_length=512)
     confidence: float = Field(ge=0.0, le=1.0)
+    verdict: str | None = Field(default=None, pattern=r"^(confirmed|refuted|inconclusive)$")
+    impact: dict[str, object] | None = None
 
     @field_validator("evidence_ids")
     @classmethod
@@ -149,6 +174,17 @@ class Fact(BaseModel):
                 "a fact must reference at least one evidence/artifact id; "
                 "a fact without evidence violates the AGENTS.md data invariant"
             )
+        return value
+
+    @field_validator("impact")
+    @classmethod
+    def _impact_shape(cls, value: dict[str, object] | None) -> dict[str, object] | None:
+        """The verdict impact payload carries exactly CWE/assets/confidence."""
+        if value is None:
+            return None
+        errors = _impact_shape_errors(value)
+        if errors:
+            raise ValueError("; ".join(errors))
         return value
 
 
@@ -176,28 +212,55 @@ def fact_id(finding: Finding) -> str:
     """Deterministic fact entity id: ``fact-<sha256(fingerprint)>``.
 
     The fingerprint is ``{task_id}:{source}:{sorted(evidence_ids)}:{summary}``
-    — the evidence tuple is normalized by sorting, so the id does not
-    depend on finding field order. Two identical findings always map to
-    one fact (dedupe); two findings whose summary differs map to two facts
-    even when they share evidence (contradictions are additive with
-    provenance).
+    for a plain finding — unchanged from before V07, so replaying a
+    pre-V07 run reconstructs the identical fact ids (replay compatibility).
+    A finding carrying a structured verdict (V07) extends the fingerprint
+    with ``:{verdict}:{impact}``, so two findings with the same evidence
+    and summary but different verdicts merge as distinct facts. The
+    evidence tuple is normalized by sorting and the verdict/impact
+    serialize deterministically, so the id does not depend on finding
+    field order. Two identical findings always map to one fact (dedupe);
+    two findings whose summary OR verdict differs map to two facts even
+    when they share evidence (contradictions are additive with provenance).
     """
     fingerprint = (
         f"{finding.task_id}:{finding.source}:{sorted(finding.evidence_ids)}:{finding.summary}"
     )
+    if finding.verdict is not None:
+        fingerprint += f":{finding.verdict}:{_impact_fingerprint(finding.impact)}"
     digest = hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()
     return f"fact-{digest}"
 
 
+def _impact_fingerprint(impact: dict[str, object] | None) -> str:
+    """Deterministic fingerprint of a verdict impact payload (V07).
+
+    ``None`` and an empty payload are distinct from a payload with
+    content; items are sorted by key so field order never changes the
+    fingerprint. Values are JSON-scalar or tuples of JSON scalars (the
+    impact validator guarantees the shape), so ``repr`` is deterministic.
+    """
+    if impact is None:
+        return "none"
+    if not impact:
+        return "empty"
+    return repr(sorted(impact.items()))
+
+
 def _fact_payload(fact: Fact) -> dict[str, object]:
     """The ``fact`` entity payload (docs/DATA_STRATEGY.md)."""
-    return {
+    payload: dict[str, object] = {
         "task_id": fact.task_id,
         "source": fact.source,
         "evidence_ids": list(fact.evidence_ids),
         "summary": fact.summary,
         "confidence": fact.confidence,
     }
+    if fact.verdict is not None:
+        payload["verdict"] = fact.verdict
+    if fact.impact is not None:
+        payload["impact"] = fact.impact
+    return payload
 
 
 class Reducer:
@@ -325,6 +388,8 @@ class Reducer:
                     evidence_ids=evidence_ids,
                     summary=finding.summary,
                     confidence=finding.confidence,
+                    verdict=finding.verdict,
+                    impact=finding.impact,
                 )
                 await self._merge_fact(graph, run_id, fact)
                 facts_by_id[fact.id] = fact

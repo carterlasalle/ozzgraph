@@ -62,6 +62,7 @@ from ozzgraph.scheduler import (
     TaskNotFoundError,
     TaskOutcome,
     WorkerRunStatus,
+    hypothesis_task,
     serialized_task,
     worker_run_id,
 )
@@ -824,3 +825,137 @@ def _read_log(log: EventLog) -> list[Event]:
         for line in handle:
             events.append(Event.model_validate_json(line))
     return events
+
+
+# ---------------------------------------------------------------------------
+# V07: hypothesis tasks — parallel by default, serialized on conflict
+# ---------------------------------------------------------------------------
+
+
+async def _seed_hypothesis(graph: StateGraph, hypothesis_id: str) -> None:
+    """The hypothesis endpoint the schedule's EXPLORED edge references."""
+    await graph.create_entity(
+        hypothesis_id,
+        "hypothesis",
+        {"confidence": 0.7, "objective": f"test {hypothesis_id}"},
+        at=datetime(2026, 8, 7, 12, 0, 0, tzinfo=UTC),
+    )
+
+
+def test_hypothesis_task_carries_hypothesis_id_as_conflict_key() -> None:
+    task = hypothesis_task("spec-a", "hyp-1", plan_step_id="plan-1-step-1")
+    assert task.conflict_keys == ("hyp-1",)  # the hypothesis id IS the key
+    assert task.hypothesis_id == "hyp-1"
+    assert task.plan_step_id == "plan-1-step-1"
+    assert task.mutating is False  # evidence gathering stays parallel-eligible
+    # A DAG of independent hypothesis tasks is constructible.
+    TaskDAG([hypothesis_task("spec-a", "hyp-1"), hypothesis_task("spec-b", "hyp-2")])
+
+
+@pytest.mark.asyncio
+async def test_same_hypothesis_tasks_never_run_concurrently() -> None:
+    """Two tasks exploring the SAME hypothesis serialize (shared key)."""
+    dag = TaskDAG([hypothesis_task("spec-a", "hyp-1"), hypothesis_task("spec-b", "hyp-1")])
+    runner = GateRunner(closed_gates(("spec-a", "spec-b")))
+    async with StateGraph(":memory:") as graph:
+        await _seed_hypothesis(graph, "hyp-1")
+        task = asyncio.create_task(_scheduler(dag, runner, max_workers=2).run(graph))
+        await runner.wait_for_entries(1)
+        assert runner.active == {"spec-a"}  # spec-b is excluded: same hypothesis
+        runner.gates["spec-a"].set()
+        await runner.wait_for_entries(2)
+        assert runner.finished == ["spec-a"]
+        assert runner.active == {"spec-b"}
+        runner.gates["spec-b"].set()
+        result = await task
+    assert runner.max_active == 1
+    assert runner.intervals["spec-a"][1] < runner.intervals["spec-b"][0]
+    assert [run.task_id for run in result.worker_runs] == ["spec-a", "spec-b"]
+
+
+@pytest.mark.asyncio
+async def test_independent_hypotheses_run_concurrently() -> None:
+    """Tasks exploring DIFFERENT hypotheses carry disjoint keys and overlap."""
+    dag = TaskDAG([hypothesis_task("spec-a", "hyp-1"), hypothesis_task("spec-b", "hyp-2")])
+    runner = GateRunner(closed_gates(("spec-a", "spec-b")))
+    async with StateGraph(":memory:") as graph:
+        await _seed_hypothesis(graph, "hyp-1")
+        await _seed_hypothesis(graph, "hyp-2")
+        task = asyncio.create_task(_scheduler(dag, runner, max_workers=2).run(graph))
+        await runner.wait_for_entries(2)
+        assert runner.active == {"spec-a", "spec-b"}
+        runner.gates["spec-a"].set()
+        runner.gates["spec-b"].set()
+        result = await task
+    assert runner.max_active == 2
+    assert [run.task_id for run in result.worker_runs] == ["spec-a", "spec-b"]
+
+
+@pytest.mark.asyncio
+async def test_serialized_global_strategy_never_overlaps_hypothesis_tasks() -> None:
+    """A serialized (global-strategy) task excludes hypothesis tasks too."""
+    dag = TaskDAG([hypothesis_task("spec-a", "hyp-1"), serialized_task("global-1")])
+    runner = GateRunner(closed_gates(("global-1", "spec-a")))
+    async with StateGraph(":memory:") as graph:
+        await _seed_hypothesis(graph, "hyp-1")
+        task = asyncio.create_task(_scheduler(dag, runner, max_workers=2).run(graph))
+        await runner.wait_for_entries(1)
+        assert runner.active == {"global-1"}  # the hypothesis task is excluded
+        runner.gates["global-1"].set()
+        await runner.wait_for_entries(2)
+        assert runner.finished == ["global-1"]
+        assert runner.active == {"spec-a"}
+        runner.gates["spec-a"].set()
+        result = await task
+    assert runner.max_active == 1
+    assert [run.task_id for run in result.worker_runs] == ["global-1", "spec-a"]
+
+
+# ---------------------------------------------------------------------------
+# V07: findings carry structured verdicts (verdict + impact payload)
+# ---------------------------------------------------------------------------
+
+
+def test_finding_carries_structured_verdict_and_impact() -> None:
+    finding = Finding(
+        task_id="t-1",
+        source="micro-agent",
+        evidence_ids=("ev-1",),
+        summary="micro agent confirmed: 1 experiment(s), evidence: ev-1",
+        confidence=0.7,
+        verdict="confirmed",
+        impact={
+            "cwe": "CWE-200: Exposure of Sensitive Information",
+            "assets": ("target-a",),
+            "confidence": 0.7,
+        },
+    )
+    assert finding.verdict == "confirmed"
+    assert finding.impact == {
+        "cwe": "CWE-200: Exposure of Sensitive Information",
+        "assets": ("target-a",),
+        "confidence": 0.7,
+    }
+    # A plain finding without a verdict stays valid (backward compatible).
+    plain = Finding(task_id="t-1", source="probe", evidence_ids=("ev-1",), summary="x")
+    assert plain.verdict is None
+    assert plain.impact is None
+
+
+def test_finding_rejects_invalid_verdict_and_impact_shape() -> None:
+    base = {
+        "task_id": "t-1",
+        "source": "micro-agent",
+        "evidence_ids": ("ev-1",),
+        "summary": "concluded",
+    }
+    with pytest.raises(ValidationError):
+        Finding(**base, verdict="maybe")  # type: ignore[arg-type]
+    with pytest.raises(ValidationError, match="missing"):
+        Finding(**base, impact={"cwe": None})  # type: ignore[arg-type]
+    with pytest.raises(ValidationError, match="cwe"):
+        Finding(**base, impact={"cwe": " ", "assets": (), "confidence": 0.7})  # type: ignore[arg-type]
+    with pytest.raises(ValidationError, match="assets"):
+        Finding(**base, impact={"cwe": None, "assets": (" ",), "confidence": 0.7})  # type: ignore[arg-type]
+    with pytest.raises(ValidationError, match="confidence"):
+        Finding(**base, impact={"cwe": None, "assets": (), "confidence": 1.5})  # type: ignore[arg-type]

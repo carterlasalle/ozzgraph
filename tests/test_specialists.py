@@ -23,15 +23,20 @@ fail-closed BEFORE any execution.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
 from ozzgraph.artifacts import ArtifactStore
+from ozzgraph.events import EventLog
 from ozzgraph.phases import Phase
+from ozzgraph.policy import ScopePolicy
 from ozzgraph.scheduler import Task, WorkerRunStatus
 from ozzgraph.shell import ToolResult, TruncationState
+from ozzgraph.specialists import SpecialistError, SpecialistFleet
+from ozzgraph.state_graph import StateGraph
 from ozzgraph.workers import (
     DEFAULT_MICRO_AGENT_SCOPE,
     MAX_MICRO_ITERATIONS,
@@ -563,3 +568,277 @@ def test_micro_agent_error_hierarchy(tmp_path: Path) -> None:
     assert agent.worker_id == "micro-agent"
     assert agent.default_confidence == 0.7
     assert MAX_MICRO_ITERATIONS == 3
+
+
+# ---------------------------------------------------------------------------
+# SpecialistFleet: bounded parallel hypothesis batches through the Scheduler
+# ---------------------------------------------------------------------------
+
+
+class ScriptedShell:
+    """Fake bounded shell: a scripted ToolResult per command, recording calls.
+
+    When ``gated`` is True, every ``run`` blocks on an internal gate until
+    the test releases it — the deterministic GateRunner pattern — so tests
+    can hold experiments open and prove the batch parallelizes independent
+    hypotheses (``max_active`` peaks at the true concurrency).
+    """
+
+    def __init__(self, results: dict[str, ToolResult], *, gated: bool = False) -> None:
+        self.results = results
+        self.calls: list[str] = []
+        self.max_active = 0
+        self._active = 0
+        self._gate = asyncio.Event()
+        if not gated:
+            self._gate.set()  # non-gated shells proceed immediately
+        self._entered = asyncio.Event()
+        self._entered_count = 0
+
+    async def run(
+        self,
+        command: str,
+        *,
+        timeout_seconds: float,
+        stdout_limit: int,
+        stderr_limit: int,
+        working_directory: Path,
+    ) -> ToolResult:
+        self.calls.append(command)
+        self._active += 1
+        self.max_active = max(self.max_active, self._active)
+        self._entered_count += 1
+        self._entered.set()
+        await self._gate.wait()
+        self._active -= 1
+        result = self.results.get(command)
+        if result is None:
+            return ToolResult(
+                command=command,
+                exit_code=0,
+                stdout=f"out:{command}",
+                stderr="",
+                duration=0.01,
+                timeout_state=False,
+                truncation_state=TruncationState(),
+            )
+        return result
+
+    async def wait_for_entries(self, count: int) -> None:
+        """Block until ``count`` runs have entered ``run``."""
+        while self._entered_count < count:
+            self._entered.clear()
+            await self._entered.wait()
+        self._entered.clear()
+
+    def release(self) -> None:
+        """Open the gate so every blocked run proceeds."""
+        self._gate.set()
+
+
+def _result(command: str, *, exit_code: int = 0, stdout: str = "probe output") -> ToolResult:
+    """One deterministic bounded shell result for a reproduction command."""
+    return ToolResult(
+        command=command,
+        exit_code=exit_code,
+        stdout=stdout,
+        stderr="" if exit_code == 0 else "boom",
+        duration=0.01,
+        timeout_state=False,
+        truncation_state=TruncationState(),
+    )
+
+
+async def _seed_hypothesis(graph: StateGraph, hypothesis_id: str, direction: str) -> None:
+    """One open, evidence-bearing hypothesis entity with a reproduction direction."""
+    await graph.create_entity(
+        hypothesis_id,
+        "hypothesis",
+        {
+            "objective": f"test {hypothesis_id}",
+            "exploitation_direction": direction,
+            "confidence": 0.6,
+            "status": "open",
+        },
+    )
+    await graph.create_entity(
+        f"ev-{hypothesis_id}",
+        "evidence",
+        {"note": "seed"},
+    )
+    await graph.create_edge(
+        f"{hypothesis_id}-supported-by-ev-{hypothesis_id}",
+        "EVIDENCE SUPPORTS HYPOTHESIS",
+        f"ev-{hypothesis_id}",
+        hypothesis_id,
+    )
+
+
+def _fleet(
+    tmp_path: Path,
+    *,
+    shell: ScriptedShell,
+    state_dir: Path | None = None,
+    policy: ScopePolicy | None = None,
+) -> SpecialistFleet:
+    state = tmp_path / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    return SpecialistFleet(
+        artifacts=ArtifactStore(tmp_path / "artifacts"),
+        event_log=EventLog.for_run(state),
+        run_id="run-fleet-1",
+        policy=policy if policy is not None else ScopePolicy(target_allowlist=("127.0.0.1",)),
+        shell=shell,
+        max_workers=4,
+        state_dir=state_dir,
+    )
+
+
+@pytest.mark.asyncio
+async def test_fleet_runs_independent_hypotheses_in_parallel_and_merges_facts(
+    tmp_path: Path,
+) -> None:
+    """Two independent hypotheses run concurrently; confirmed -> fact + finding."""
+    shell = ScriptedShell(
+        {
+            "echo probe-h1": _result("echo probe-h1"),
+            "echo probe-h2": _result("echo probe-h2"),
+        },
+        gated=True,  # hold both experiments open to prove parallelism
+    )
+    async with StateGraph(":memory:") as graph:
+        await _seed_hypothesis(graph, "h-1", "echo probe-h1")
+        await _seed_hypothesis(graph, "h-2", "echo probe-h2")
+        fleet = _fleet(tmp_path, shell=shell)
+        batch = asyncio.create_task(
+            fleet.run_hypothesis_batch(
+                graph, hypothesis_ids=("h-1", "h-2"), phase=Phase.ENUMERATION
+            )
+        )
+        await shell.wait_for_entries(2)
+        assert shell.max_active == 2  # both independent hypotheses active at once
+        shell.release()
+        result = await batch
+        assert result.scheduled == 2
+        assert result.succeeded == 2
+        assert result.failed == 0
+        assert set(result.promoted) == {"h-1", "h-2"}  # both confirmed
+        assert result.abandoned == ()
+        assert result.open_hypotheses == ()
+        assert len(result.facts) == 2  # reducer merged the verdicts into facts
+        assert len(result.findings) == 2
+        # terminal lifecycle: promoted
+        h1 = await graph.get_entity("h-1")
+        h2 = await graph.get_entity("h-2")
+        assert h1 is not None and h1.data["status"] == "promoted"
+        assert h2 is not None and h2.data["status"] == "promoted"
+        # reducer wrote facts; findings entities + validates edges exist
+        facts = await graph.list_entities("fact")
+        assert len(facts) == 2
+        findings = await graph.list_entities("finding")
+        assert len(findings) == 2
+    # findings rendered to findings.json when a state_dir is configured
+    shell2 = ScriptedShell({"echo probe-h1": _result("echo probe-h1")})
+    async with StateGraph(":memory:") as graph:
+        await _seed_hypothesis(graph, "h-1", "echo probe-h1")
+        fleet2 = _fleet(tmp_path, shell=shell2, state_dir=tmp_path / "state")
+        result2 = await fleet2.run_hypothesis_batch(
+            graph, hypothesis_ids=("h-1",), phase=Phase.ENUMERATION
+        )
+        assert len(result2.findings) == 1
+        assert (tmp_path / "state" / "findings.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_fleet_promotes_confirmed_and_abandons_refuted(tmp_path: Path) -> None:
+    """Confirmed hypotheses promote with a finding; refuted ones abandon."""
+    shell = ScriptedShell(
+        {
+            "echo probe-h1": _result("echo probe-h1"),  # non-empty -> confirmed
+            "echo probe-h2": _result("echo probe-h2", stdout=""),  # empty -> refuted
+        }
+    )
+    async with StateGraph(":memory:") as graph:
+        await _seed_hypothesis(graph, "h-1", "echo probe-h1")
+        await _seed_hypothesis(graph, "h-2", "echo probe-h2")
+        fleet = _fleet(tmp_path, shell=shell)
+        result = await fleet.run_hypothesis_batch(
+            graph, hypothesis_ids=("h-1", "h-2"), phase=Phase.ENUMERATION
+        )
+        assert result.promoted == ("h-1",)
+        assert result.abandoned == ("h-2",)
+        assert result.open_hypotheses == ()
+        assert len(result.facts) == 2  # both verdicts become facts
+        assert len(result.findings) == 1  # only the confirmed one gets a finding
+        h1 = await graph.get_entity("h-1")
+        h2 = await graph.get_entity("h-2")
+        assert h1 is not None and h1.data["status"] == "promoted"
+        assert h2 is not None and h2.data["status"] == "abandoned"
+
+
+@pytest.mark.asyncio
+async def test_fleet_skips_mutating_direction_loudly(tmp_path: Path) -> None:
+    """A mutating reproduction direction is skipped (stays open), never run."""
+    shell = ScriptedShell({})
+    async with StateGraph(":memory:") as graph:
+        await _seed_hypothesis(graph, "h-1", "hydra -l admin -P /tmp/pass 127.0.0.1")
+        await _seed_hypothesis(graph, "h-2", "echo probe-h2")
+        fleet = _fleet(tmp_path, shell=shell)
+        result = await fleet.run_hypothesis_batch(
+            graph, hypothesis_ids=("h-1", "h-2"), phase=Phase.ENUMERATION
+        )
+        assert result.scheduled == 1  # h-1 (mutating) was skipped
+        assert shell.calls == ["echo probe-h2"]  # the mutating direction never ran
+        assert result.promoted == ("h-2",)
+        h1 = await graph.get_entity("h-1")
+        assert h1 is not None and h1.data["status"] == "open"  # left open
+
+
+@pytest.mark.asyncio
+async def test_fleet_failed_run_leaves_hypothesis_open(tmp_path: Path) -> None:
+    """A failed experiment gathers no evidence -> the run fails, hypothesis stays open."""
+    shell = ScriptedShell({"echo probe-h1": _result("echo probe-h1", exit_code=1)})
+    async with StateGraph(":memory:") as graph:
+        await _seed_hypothesis(graph, "h-1", "echo probe-h1")
+        fleet = _fleet(tmp_path, shell=shell)
+        result = await fleet.run_hypothesis_batch(
+            graph, hypothesis_ids=("h-1",), phase=Phase.ENUMERATION
+        )
+        assert result.scheduled == 1
+        assert result.succeeded == 0
+        assert result.failed == 1
+        assert result.promoted == ()
+        assert result.abandoned == ()
+        assert result.open_hypotheses == ("h-1",)
+        assert result.facts == ()  # no evidence -> no fact
+        assert result.findings == ()
+        h1 = await graph.get_entity("h-1")
+        assert h1 is not None and h1.data["status"] == "open"
+
+
+@pytest.mark.asyncio
+async def test_fleet_missing_hypothesis_raises_loudly(tmp_path: Path) -> None:
+    """A hypothesis absent from the graph is corrupt kernel state -> SpecialistError."""
+    shell = ScriptedShell({})
+    async with StateGraph(":memory:") as graph:
+        fleet = _fleet(tmp_path, shell=shell)
+        with pytest.raises(SpecialistError, match="not in the graph"):
+            await fleet.run_hypothesis_batch(
+                graph, hypothesis_ids=("ghost-1",), phase=Phase.ENUMERATION
+            )
+
+
+@pytest.mark.asyncio
+async def test_fleet_rejects_empty_batch(tmp_path: Path) -> None:
+    shell = ScriptedShell({})
+    async with StateGraph(":memory:") as graph:
+        fleet = _fleet(tmp_path, shell=shell)
+        with pytest.raises(ValueError, match="non-empty"):
+            await fleet.run_hypothesis_batch(graph, hypothesis_ids=(), phase=Phase.ENUMERATION)
+
+
+def test_fleet_requires_nonempty_run_id_and_positive_workers(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="run_id"):
+        SpecialistFleet(artifacts=ArtifactStore(tmp_path / "a"), run_id="")
+    with pytest.raises(ValueError, match="max_workers"):
+        SpecialistFleet(artifacts=ArtifactStore(tmp_path / "a"), run_id="r", max_workers=0)

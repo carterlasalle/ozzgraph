@@ -30,6 +30,21 @@ brain's :class:`~ozzgraph.security_brain.HypothesisManager`, and the
 brain's :class:`~ozzgraph.security_brain.ProgressEvaluator` decides
 continue / pivot / finish each loop iteration.
 
+V07 (docs/CHANGES_v2.md milestone 7): specialists. When a
+:class:`~ozzgraph.security_brain.StrategicDecision` is a PURE batch of
+independent testable hypotheses (every opportunity is a
+``test_hypothesis`` with a hypothesis id) AND a specialist fleet is
+wired in (``specialists=``), the runner dispatches a bounded parallel
+specialist batch instead of calling the model: narrow micro-agent tasks
+(hypothesis -> experiment -> observation -> conclusion, ZERO LLM calls,
+no full-graph context) run under bounded concurrency with per-hypothesis
+conflict keys, and the structured verdicts merge back through the
+reducer into graph facts — confirmed hypotheses promote with an
+evidence-backed finding, refuted ones abandon. Global strategy (mixed
+paths, service characterization) stays serialized on the LLM
+StrategicPlanner path, and the deterministic single-obvious-action path
+is unchanged.
+
 Design rules:
 
 - Real work, never sleep-wait (docs/CHANGES_v2.md): each iteration
@@ -148,6 +163,7 @@ from ozzgraph.security_brain import (
     BRAIN_DETERMINISTIC_ACTION,
     BRAIN_PROGRESS_EVALUATED,
     DeterministicActionDecision,
+    OpportunityKind,
     ProgressEvaluation,
     ProgressVerdict,
     SecurityBrain,
@@ -155,6 +171,7 @@ from ozzgraph.security_brain import (
 )
 from ozzgraph.shell import ShellRunner, ToolResult
 from ozzgraph.skills import SkillRegistry
+from ozzgraph.specialists import SpecialistFleet
 from ozzgraph.state_graph import EntityRecord, StateGraph
 from ozzgraph.toolplane import ToolInventory
 
@@ -171,6 +188,9 @@ RUNNER_EVALUATED = "runner.evaluated"
 RUNNER_OBJECTIVE_COMPLETED = "runner.objective_completed"
 RUNNER_TERMINATED = "runner.terminated"
 RUNNER_FINDING_CREATED = "runner.finding_created"
+#: Run-log event emitted when a V07 specialist batch is dispatched and
+#: when it completes (the verdict counts).
+RUNNER_SPECIALIST_BATCH = "runner.specialist_batch"
 
 #: Entity types the runner seeds (docs/DATA_STRATEGY.md, lowercase by
 #: convention).
@@ -347,6 +367,12 @@ class AutonomousRunner:
             probed against the environment's PATH at startup. Its
             available capabilities bound the model context: the model
             only hears about capabilities backed by installed tools.
+        specialists: The V07 specialist fleet (docs/CHANGES_v2.md
+            milestone 7); when wired in, a StrategicDecision whose
+            opportunities are ALL independent testable hypotheses
+            dispatches a bounded parallel specialist batch (micro-agent
+            loop -> scheduler -> reducer -> facts) instead of calling
+            the model. ``None`` keeps the V06 strategic path unchanged.
     """
 
     def __init__(
@@ -371,6 +397,7 @@ class AutonomousRunner:
         policy: ScopePolicy | None = None,
         shell: ShellRunner | None = None,
         inventory: ToolInventory | None = None,
+        specialists: SpecialistFleet | None = None,
     ) -> None:
         self._config = config
         self._graph = graph
@@ -435,6 +462,12 @@ class AutonomousRunner:
         self._failed_actions: list[FailedAction] = []
         self._turns = 0
         self._adapter_cache: dict[str, ModelAdapter] = {}
+        # V07 specialist fleet: when wired in (the supervisor-level
+        # composition), a pure independent-hypothesis strategic decision
+        # dispatches a bounded parallel specialist batch instead of an
+        # LLM call. Default None keeps the V06 behavior byte-for-byte —
+        # the E2E happy path never changes shape.
+        self._specialists = specialists
 
     # ------------------------------------------------------------------
     # public surface
@@ -534,6 +567,8 @@ class AutonomousRunner:
         if isinstance(decision, DeterministicActionDecision):
             return await self._run_deterministic_turn(route, decision)
         if isinstance(decision, StrategicDecision):
+            if self._specialists is not None and _is_hypothesis_batch(decision):
+                return await self._run_specialist_batch_turn(route, decision)
             return await self._run_strategic_turn(route, decision)
         return await self._run_model_turn(route)
 
@@ -683,6 +718,65 @@ class AutonomousRunner:
             return executed
         await self._persist_execution(turn, executed)
         await self._evaluate(route, plan_id)
+        return None
+
+    async def _run_specialist_batch_turn(
+        self, route: PhaseRoute, decision: StrategicDecision
+    ) -> RunnerStatus | None:
+        """Dispatch a bounded parallel specialist batch (V07, ZERO LLM calls).
+
+        The brain identified multiple INDEPENDENT testable hypotheses;
+        instead of calling the StrategicPlanner, the fleet runs one
+        narrow micro-agent task per hypothesis under bounded concurrency
+        (per-hypothesis conflict keys), merges the structured verdicts
+        through the reducer into graph facts, promotes confirmed
+        hypotheses with evidence-backed findings, and abandons refuted
+        ones. Global strategy stays serialized on the LLM path — this
+        branch only ever fires for a pure test-hypothesis batch.
+        """
+        specialists = self._specialists
+        if specialists is None:
+            return None  # defensive: the dispatch gate already checked
+        hypothesis_ids = tuple(
+            opportunity.hypothesis_id
+            for opportunity in decision.opportunities
+            if opportunity.hypothesis_id is not None
+        )
+        self._append(
+            RUNNER_TURN,
+            {
+                "phase": route.phase.value,
+                "predicate": route.predicate,
+                "plan_id": None,
+                "action_kind": "specialist_batch",
+                "rationale": _bounded(decision.reason, 500),
+                "executed": False,
+                "reason": (
+                    f"{len(hypothesis_ids)} independent hypotheses; bounded parallel "
+                    "specialist batch (no LLM call)"
+                ),
+            },
+        )
+        try:
+            result = await specialists.run_hypothesis_batch(
+                self._graph, hypothesis_ids=hypothesis_ids, phase=route.phase
+            )
+        except Exception as exc:  # noqa: BLE001 - structured failure, rule #9
+            return self._record_turn_failure("specialists", exc, phase=route.phase.value)
+        self._append(
+            RUNNER_SPECIALIST_BATCH,
+            {
+                "hypotheses": len(hypothesis_ids),
+                "scheduled": result.scheduled,
+                "succeeded": result.succeeded,
+                "failed": result.failed,
+                "promoted": len(result.promoted),
+                "abandoned": len(result.abandoned),
+                "open": len(result.open_hypotheses),
+                "facts": len(result.facts),
+                "findings": len(result.findings),
+            },
+        )
         return None
 
     async def _run_model_turn(self, route: PhaseRoute) -> RunnerStatus | None:
@@ -1686,6 +1780,23 @@ class AutonomousRunner:
                 ),
             )
         )
+
+
+def _is_hypothesis_batch(decision: StrategicDecision) -> bool:
+    """True when every viable path is an independent testable hypothesis.
+
+    The V07 specialist-dispatch gate: a StrategicDecision whose
+    opportunities are ALL ``test_hypothesis`` kind with a hypothesis id
+    is a pure independent-hypothesis batch — the runner dispatches the
+    bounded parallel specialist fleet instead of calling the
+    StrategicPlanner. Anything else (service characterization, mixed
+    paths) is global strategy and stays serialized on the LLM path.
+    """
+    return all(
+        opportunity.kind is OpportunityKind.TEST_HYPOTHESIS
+        and opportunity.hypothesis_id is not None
+        for opportunity in decision.opportunities
+    )
 
 
 def _payload_bool(record: EntityRecord, key: str) -> bool:

@@ -626,3 +626,92 @@ async def test_reduce_rejects_empty_run_id() -> None:
     async with StateGraph(":memory:") as graph:
         with pytest.raises(ValueError, match="run_id"):
             await Reducer().reduce(graph, "", ())
+
+
+# ---------------------------------------------------------------------------
+# V07: structured verdicts merge into facts (verdict + impact payload)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_verdict_finding_merges_into_structured_fact(tmp_path: Path) -> None:
+    """A finding carrying verdict + impact merges as a structured fact."""
+    log = EventLog.for_run(tmp_path)
+    finding = Finding(
+        task_id="t-a",
+        source="micro-agent",
+        evidence_ids=("ev-1",),
+        summary="micro agent confirmed: 1 experiment(s), evidence: ev-1",
+        confidence=0.7,
+        verdict="confirmed",
+        impact={
+            "cwe": "CWE-200: Exposure of Sensitive Information",
+            "assets": ("target-a",),
+            "confidence": 0.7,
+        },
+    )
+    async with StateGraph(tmp_path / "live.db") as live:
+        await _seed_evidence(live, "ev-1", log=log)
+        result = await Reducer(event_log=log).reduce(live, RUN, (_run(RUN, "t-a", (finding,)),))
+        assert result.accepted == 1
+        assert result.rejected == 0
+        assert len(result.facts) == 1
+        fact = result.facts[0]
+        # The merged fact IS the structured verdict.
+        assert fact.verdict == "confirmed"
+        assert fact.impact == {
+            "cwe": "CWE-200: Exposure of Sensitive Information",
+            "assets": ("target-a",),
+            "confidence": 0.7,
+        }
+        # The graph payload carries the verdict + impact.
+        record = await live.get_entity(fact.id)
+        assert record is not None
+        assert record.data["verdict"] == "confirmed"
+        assert record.data["impact"] == {
+            "cwe": "CWE-200: Exposure of Sensitive Information",
+            "assets": ["target-a"],
+            "confidence": 0.7,
+        }
+        live_hash = await live.graph_hash()
+    assert await replay_graph(log.path, tmp_path / "replay.db") == live_hash
+
+
+def test_verdict_changes_the_fact_id() -> None:
+    """Same evidence + summary, different verdicts: two distinct facts."""
+    base = {
+        "task_id": "t-a",
+        "source": "micro-agent",
+        "evidence_ids": ("ev-1",),
+        "summary": "same summary",
+    }
+    confirmed = Finding(**base, verdict="confirmed")  # type: ignore[arg-type]
+    refuted = Finding(**base, verdict="refuted")  # type: ignore[arg-type]
+    assert fact_id(confirmed) != fact_id(refuted)
+    # An impact payload also changes the fingerprint.
+    with_impact = Finding(
+        **base, verdict="confirmed", impact={"cwe": None, "assets": ("t",), "confidence": 0.7}
+    )  # type: ignore[arg-type]
+    assert fact_id(confirmed) != fact_id(with_impact)
+    # The same verdict + impact on the same evidence stays one fact.
+    again = Finding(
+        **base, verdict="confirmed", impact={"cwe": None, "assets": ("t",), "confidence": 0.7}
+    )  # type: ignore[arg-type]
+    assert fact_id(with_impact) == fact_id(again)
+
+
+def test_fact_schema_rejects_invalid_verdict_and_impact() -> None:
+    base = {
+        "id": "fact-x",
+        "task_id": "t-a",
+        "source": "probe",
+        "evidence_ids": ("ev-1",),
+        "summary": "x",
+        "confidence": 0.5,
+    }
+    with pytest.raises(ValidationError):
+        Fact(**base, verdict="maybe")  # type: ignore[arg-type]
+    with pytest.raises(ValidationError, match="missing"):
+        Fact(**base, impact={"cwe": None})  # type: ignore[arg-type]
+    with pytest.raises(ValidationError, match="confidence"):
+        Fact(**base, impact={"cwe": None, "assets": (), "confidence": 2.0})  # type: ignore[arg-type]
