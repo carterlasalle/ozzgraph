@@ -49,10 +49,23 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 > prior tick's worker but left uncommitted (timeout) — this tick verified
 > gates green (ruff/format/mypy strict, 941 tests) and committed, no redo.
 > Judge PASS 3f4640ae (5/5 criteria). Next: V04 (semantic-observations).
+>
+> ✅ V04 DONE (2026-08-08): committed 8e49dd0 (observations.py 26KB→~140KB
+> expansion: 17 tool-specific typed parsers — curl/nmap/ffuf/feroxbuster/
+> nuclei/netexec/smbmap/ldapsearch/semgrep(JSON+SARIF)/codeql(SARIF)/trivy/
+> gitleaks/file/readelf/checksec/exiftool(JSON+text)/binwalk — consuming
+> JSON/XML/SARIF/JSONL/LDIF via registry keys (source,kind), parser_for_command
+> dispatch gated by tool flags, runner `_persist_execution` wired through
+> observation_for_result: raw output persisted to ArtifactStore FIRST, then
+> semantic parse → typed Observation referencing artifact id → observation
+> entity + evidence edge; malformed output still stored raw with
+> malformed=True observation (fail loudly). docs/OBSERVATIONS.md added,
+> toolplane.py capability entries for parseable tools, 56 new tests.
+> Gates green (ruff/format/mypy strict, 997 tests). Judge PASS 01aa9dd
+> (3/3 criteria, tier1 lint/tests/secrets PASS). Next: V05 (model-harness-matrix).
 
 | ID | Task | Pri | Cpx | Deps | Tags | Model | Reasoning | Fallback |
 |----|------|-----|-----|------|------|-------|-----------|----------|
-| V04 | semantic-observations: typed parsers/projectors for high-value tools (curl/nmap/ffuf/feroxbuster/nuclei/netexec/smbmap/ldap/semgrep/CodeQL/trivy/gitleaks/file/readelf/checksec/exiftool/binwalk) using machine-readable output (JSON/XML/SARIF/JSONL); ALWAYS persist raw output to ArtifactStore FIRST, then parse → evidence → graph | Critical | 5±1 | V02 | +++python, ++parsing, ++graph | DS-V4-Pro | High | DS-V4-Flash |
 | V05 | model-harness-matrix: empirical per-model profiles (TOML: protocol, output tokens, benchmarks) via GET /v1/models + capability probe; benchmark format compliance/tool selection/repetition/evidence grounding/solve rates; pick protocols from data not family assumptions | High | 4±1 | V02 | +++python, ++benchmark, ++models | DS-V4-Flash | Medium | Kimi-K3 |
 | V06 | security-brain: replace round-robin planner with OpportunityGenerator + StrategicPlanner (LLM only when >1 viable path), TaskBuilder, HypothesisManager, ProgressEvaluator; deterministic single-obvious-action path avoids extra LLM calls | Critical | 5±1 | V02 | +++python, ++planner, ++reasoning | DS-V4-Pro | High | DS-V4-Flash |
 | V07 | specialists: turn workers into genuine narrow micro-agents (bounded objectives, tiny context, hypothesis→experiment→observation→conclusion loop, structured verdict+evidence_ids+impact); parallelize independent hypotheses, serialize global strategy, merge via reducer | High | 4±1 | V06 | +++python, ++agents, ++parallel | DS-V4-Pro | High | DS-V4-Flash |
@@ -64,6 +77,7 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
+| V04 | semantic-observations: typed parsers/projectors for 17 high-value tools (JSON/XML/SARIF/JSONL), raw-first ArtifactStore persistence, runner observation wiring (judge PASS 01aa9dd, all 3 criteria) | Critical | 5±1 | 8e49dd0 | DS-V4-Flash |
 | V03 | tool-runtime: ToolCatalog/ToolInventory/CapabilityRegistry/ToolProvider, startup tool inventory, capabilities-not-binaries, `:max` Kali image (judge PASS 3f4640ae, all 5 criteria) | Critical | 5±1 | c3c44f9 | DS-V4-Flash |
 | V02 | autonomous-vertical-slice: `ozzgraph run <target>` end-to-end as a real process (CLI + console script, Finding model/store, evidence→hypothesis→Finding, evaluator wiring, process-level E2E test) (judge PASS 6c6a117a, all 3 criteria) | Critical | 5±1 | db18787 | DS-V4-Flash |
 | V01 | generic-runtime: EnvironmentAdapter protocol, Scope/Target/Objective, Local/HalCTF environments, kernel rewrites, real AutonomousRunner (judge PASS d1416f4, all 5 criteria) | Critical | 5±1 | da1aaaf | DS-V4-Flash |
