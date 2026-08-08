@@ -23,6 +23,20 @@ synced (2 tick entries), gitignore complete, wiring OK ([project.scripts] halctl
 E2E-001 ran today, GitReins judge config correctly sized (60 iter/1M in).
 Cooldown set 43200s. Counter: 1/7.
 
+## [ ] DOCS-000 — documentation gate pass (missing CONTRIBUTING.md + SECURITY.md)
+
+Per coding-hermes-board documentation gate: the project must complete the docs
+pass before E2E/NEVER-DONE idle. README.md, AGENTS.md, and docs/ exist but
+CONTRIBUTING.md and SECURITY.md are MISSING. Add:
+- CONTRIBUTING.md — build/test/lint/PR workflow, toolchain (uv, pytest,
+  ruff, mypy), quality gates.
+- SECURITY.md — vulnerability reporting, security model (agent-isolated CTF
+  harness: state outside model context, provenance, flag isolation,
+  supervisor-only privileged ops), threat boundaries, secrets handling.
+- Refresh README.md to the launchpad formatting bar (title+badges+nav+
+  diagram+tables, skimmable at a glance) if it doesn't already meet it.
+Judge via GitReins; commit; mark [x].
+
 ## Completed
 
 | ID | Task | Pri | Cpx | Commit | Model |
