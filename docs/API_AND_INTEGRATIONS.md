@@ -294,8 +294,6 @@ class Phase(str, Enum):
     EXPLOITATION = "EXPLOITATION"
     POST_EXPLOITATION = "POST_EXPLOITATION"
     PIVOT = "PIVOT"
-    FLAG_HUNT = "FLAG_HUNT"
-    VERIFY_AND_SUBMIT = "VERIFY_AND_SUBMIT"
     REPLAN = "REPLAN"
     DONE = "DONE"
 
@@ -337,8 +335,9 @@ an unregistered parser key is a broken registry entry and also raises
 lookup errors are the typed `SkillRegistryError` (fail loudly, AGENTS.md
 rule #9).
 
-Initial skill packs (PR17) — 12 skills across RECON, ENUMERATION,
-EXPLOITATION, FLAG_HUNT, and VERIFY_AND_SUBMIT:
+Initial skill packs (PR17) — 9 skills across RECON, ENUMERATION, and
+EXPLOITATION (V01, docs/adr/0008: the FLAG_HUNT packs left with the
+removed phases; the halctf environment owns them in V09):
 
 | skill_id | phases | timeout (s) | parsers |
 |---|---|---|---|
@@ -351,9 +350,6 @@ EXPLOITATION, FLAG_HUNT, and VERIFY_AND_SUBMIT:
 | `exploit_parameter_injection` | EXPLOITATION | 90 | shell/text |
 | `exploit_command_injection` | EXPLOITATION | 90 | shell/text |
 | `exploit_auth_bypass` | EXPLOITATION | 60 | shell/text |
-| `flag_hunt_filesystem` | FLAG_HUNT | 60 | shell/text |
-| `flag_hunt_web_artifacts` | FLAG_HUNT | 60 | shell/text |
-| `flag_hunt_submit` | FLAG_HUNT, VERIFY_AND_SUBMIT | 30 | halctl/json |
 
 Each skill card is bounded prompt text: purpose, bounded command guidance
 consistent with the policy gate's command families, and an explicit
@@ -415,28 +411,31 @@ docs/DATA_STRATEGY.md):
 | `hypothesis.exploitable` | hypothesis has an exploitation direction |
 | `credential.valid` | credential grants usable access |
 | `credential.explored` | post-exploitation already consumed the access |
-| `flag_candidate.verified` | flag candidate has observed provenance |
-| `flag_candidate.rejected` | platform rejected the candidate (PR22) — it is never re-submitted and never routes VERIFY_AND_SUBMIT |
+| `flag_candidate.verified` | flag candidate has observed provenance (HalCTF-owned; the kernel no longer routes on it, V01) |
+| `flag_candidate.rejected` | platform rejected the candidate (PR22) — it is never re-submitted |
+| `objective.completed` | objective satisfied — the generic DONE predicate (V01) |
 | `submission.accepted` | submission was accepted (terminal signal) |
 
-Transition predicates, in evaluation order:
+Transition predicates, in evaluation order (V01, docs/adr/0008:
+FLAG_HUNT / VERIFY_AND_SUBMIT left the kernel; the generic DONE
+predicate is `all_objectives_completed`):
 
 | # | Predicate | Graph state it matches | Phase |
 |---|---|---|---|
 | 1 | `graph_is_empty` | no entities at all | `BOOTSTRAP` |
 | 2 | `has_accepted_submission` | a `submission` with `accepted: true` and its `SUBMISSION SUBMITS FLAG_CANDIDATE` edge | `DONE` |
-| 3 | `has_verified_flag` | a `flag_candidate` with `verified: true`, not `rejected`, and its `FLAG_CANDIDATE OBSERVED_IN EVIDENCE` edge | `VERIFY_AND_SUBMIT` |
+| 3 | `all_objectives_completed` | every `objective` entity with `completed: true` (and at least one objective) | `DONE` |
 | 4 | `targets_unconfirmed` | no `target`, or a non-pivot `target` without `confirmed: true` | `RECON` |
 | 5 | `has_uncharacterized_services` | a `service` without `characterized: true` | `ENUMERATION` |
 | 6 | `has_supported_exploitable_hypothesis` | a `hypothesis` with `exploitable: true` and an incoming `EVIDENCE SUPPORTS HYPOTHESIS` edge | `EXPLOITATION` |
 | 7 | `has_new_access` | a `credential` with `valid: true` and `explored` not true | `POST_EXPLOITATION` |
 | 8 | `has_new_reachable_targets` | a `target` with `pivot: true` and `reachable: true` | `PIVOT` |
-| 9 | `has_access_but_no_flag` | a `credential` with `valid: true` and no verified `flag_candidate` | `FLAG_HUNT` |
-| 10 | `default_replan` | any other non-empty graph | `REPLAN` |
+| 9 | `default_replan` | any other non-empty graph | `REPLAN` |
 
 The predicate list mirrors docs/ARCHITECTURE.md ("Phase Transition
-Examples") with two additions: `DONE`/`VERIFY_AND_SUBMIT` are terminal
-states evaluated first, and `BOOTSTRAP` is the empty-graph default.
+Examples") with two additions: `DONE` is terminal and evaluated first
+(accepted submission or all objectives completed), and `BOOTSTRAP` is
+the empty-graph default.
 The executor (PR20) consumes `PhaseRouter`; nothing is wired into the
 supervisor yet.
 

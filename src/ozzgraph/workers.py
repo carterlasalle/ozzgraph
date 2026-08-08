@@ -738,7 +738,6 @@ class ArtifactAnalysisWorker(SpecialistWorker):
         phases=(
             Phase.ENUMERATION,
             Phase.POST_EXPLOITATION,
-            Phase.FLAG_HUNT,
         ),
         mutating=False,
     )
@@ -758,12 +757,19 @@ class SubmissionWorker(SpecialistWorker):
     wrapper shape composes paid-hint purchases. Only the supervisor may
     wire this worker (AGENTS.md rule #5); this PR delivers the component
     only.
+
+    V01 (docs/adr/0008): VERIFY_AND_SUBMIT left the generic kernel, so
+    the worker's scope is the generic POST_EXPLOITATION phase — the
+    phase where collected artifacts (including flags) are validated.
+    Flag submission itself is a HalCTF environment behavior owned by the
+    supervisor's privileged submission surface and the full HalCTF
+    adapter (V09).
     """
 
     scope = WorkerScope(
         name="flag-submission",
         command_families=("shell",),
-        phases=(Phase.VERIFY_AND_SUBMIT,),
+        phases=(Phase.POST_EXPLOITATION,),
         mutating=True,
     )
     worker_id = "flag-submission"

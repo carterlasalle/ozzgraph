@@ -44,10 +44,12 @@ Design rules:
 - Rejected candidates are terminal (docs/TECHNICAL_REQUIREMENTS.md:
   not previously rejected): a platform rejection marks the candidate
   ``rejected: true`` (mirrored as a ``graph.entity_updated`` event) and
-  increments its ``attempts``, so the phase router re-routes away from
-  VERIFY_AND_SUBMIT and the flag is never re-submitted. The typed
-  :class:`SubmissionRejectedError` carries the platform message so the
-  caller (the supervisor) decides what happens next.
+  increments its ``attempts``, so the flag is never re-submitted. The
+  typed :class:`SubmissionRejectedError` carries the platform message
+  so the caller (the supervisor) decides what happens next. (V01,
+  docs/adr/0008: the kernel no longer routes on flag candidates —
+  VERIFY_AND_SUBMIT left the generic phase set — rejection still
+  guarantees non-re-submission through the coordinator.)
 
 Payload contracts (docs/DATA_STRATEGY.md):
 
@@ -134,9 +136,10 @@ class SubmissionRejectedError(SubmissionError):
 
     The candidate has been marked ``rejected: true`` and its ``attempts``
     incremented (mirrored as a ``graph.entity_updated`` event), so the
-    router re-routes away from VERIFY_AND_SUBMIT and the flag is never
-    re-submitted. The platform ``message`` rides on the error so the
-    caller decides the next move (hunt another flag, terminate, ...).
+    flag is never re-submitted (the coordinator refuses rejected
+    candidates; V01, docs/adr/0008: the generic kernel no longer routes
+    on flag candidates). The platform ``message`` rides on the error so
+    the caller decides the next move (hunt another flag, terminate, ...).
 
     Attributes:
         candidate_id: The rejected ``flag_candidate`` entity id.
@@ -404,9 +407,10 @@ class SubmissionCoordinator:
 
         The updated payload is mirrored as a ``graph.entity_updated``
         event with the same timestamp, so replay reconstructs the
-        identical graph hash. The router (PR18) treats a rejected
-        candidate as not-verified, so the graph re-routes away from
-        VERIFY_AND_SUBMIT and the flag is never re-submitted.
+        identical graph hash. A rejected candidate is never submitted
+        again — the coordinator refuses it (V01, docs/adr/0008: the
+        kernel no longer routes on flag candidates, so there is no
+        re-submission path to route away from).
         """
         payload = dict(record.data)
         payload[FIELD_REJECTED] = True

@@ -1,15 +1,23 @@
-"""Graph phases for the OzzGraph phase router (PR17).
+"""Graph phases for the OzzGraph phase router (PR17, V01 generic runtime).
 
-Defines :class:`Phase`: the ten supported graph phases in canonical
+Defines :class:`Phase`: the eight supported graph phases in canonical
 order (docs/ARCHITECTURE.md, "Phase Router"). The enum is the single
 phase vocabulary shared by the skill registry (:mod:`ozzgraph.skills`)
-and the future graph-driven phase router (PR18) — and its VALUES are
+and the graph-driven phase router (PR18) — and its VALUES are
 exactly the uppercase phase names the policy gate already uses
 (:data:`ozzgraph.policy.PHASES`, the ``phase="..."`` argument of
 :meth:`ozzgraph.policy.ScopePolicy.check`), so a :class:`Phase` member
 compares equal to the phase strings already flowing through
 :mod:`ozzgraph.policy` and :mod:`ozzgraph.context` without any string
 translation.
+
+V01 (docs/adr/0008): FLAG_HUNT and VERIFY_AND_SUBMIT were removed from
+the generic kernel — the kernel is a general security-research runtime
+whose phases end at the generic lifecycle
+(BOOTSTRAP/RECON/ENUMERATION/EXPLOITATION/POST_EXPLOITATION/PIVOT/
+REPLAN/DONE). Flag hunting and submission are HalCTF behaviors owned by
+the halctf environment adapter (full adapter in V09); the generic DONE
+predicate is "all objectives completed".
 
 Design rules:
 
@@ -28,12 +36,12 @@ class Phase(str, Enum):
     """One supported graph phase, in canonical ARCHITECTURE.md order.
 
     Iterating :class:`Phase` yields BOOTSTRAP, RECON, ENUMERATION,
-    EXPLOITATION, POST_EXPLOITATION, PIVOT, FLAG_HUNT,
-    VERIFY_AND_SUBMIT, REPLAN, DONE — the exact order of
-    docs/ARCHITECTURE.md ("Phase Router"). Values are the uppercase
-    names the policy gate uses, so ``Phase.RECON == "RECON"`` and a
-    member can be passed to :meth:`ozzgraph.policy.ScopePolicy.check`
-    and :class:`ozzgraph.context.ContextRequest` without conversion.
+    EXPLOITATION, POST_EXPLOITATION, PIVOT, REPLAN, DONE — the exact
+    order of docs/ARCHITECTURE.md ("Phase Router"). Values are the
+    uppercase names the policy gate uses, so ``Phase.RECON == "RECON"``
+    and a member can be passed to
+    :meth:`ozzgraph.policy.ScopePolicy.check` and
+    :class:`ozzgraph.context.ContextRequest` without conversion.
     """
 
     BOOTSTRAP = "BOOTSTRAP"
@@ -42,7 +50,5 @@ class Phase(str, Enum):
     EXPLOITATION = "EXPLOITATION"
     POST_EXPLOITATION = "POST_EXPLOITATION"
     PIVOT = "PIVOT"
-    FLAG_HUNT = "FLAG_HUNT"
-    VERIFY_AND_SUBMIT = "VERIFY_AND_SUBMIT"
     REPLAN = "REPLAN"
     DONE = "DONE"

@@ -164,13 +164,13 @@ def test_worker_scope_valid_declaration() -> None:
     scope = WorkerScope(
         name="recon",
         command_families=("Recon", "SHELL"),
-        phases=("FLAG_HUNT", "RECON", "RECON"),
+        phases=("POST_EXPLOITATION", "RECON", "RECON"),
         mutating=False,
         target_allowlist=("10.0.0.0/24",),
     )
     assert scope.name == "recon"
     assert scope.command_families == ("recon", "shell")  # casefolded
-    assert [phase.value for phase in scope.phases] == ["RECON", "FLAG_HUNT"]  # canonical
+    assert [phase.value for phase in scope.phases] == ["RECON", "POST_EXPLOITATION"]  # canonical
     assert scope.mutating is False
     assert scope.target_allowlist == ("10.0.0.0/24",)
 
@@ -274,7 +274,7 @@ def test_worker_scope_covers_containment() -> None:
     missing_phase = WorkerScope(
         name="task",
         command_families=("recon",),
-        phases=(Phase.FLAG_HUNT,),
+        phases=(Phase.EXPLOITATION,),
         mutating=False,
     )
     assert not provided.covers(missing_phase)
@@ -389,11 +389,11 @@ def test_assign_rejects_nonserialized_task_for_submission_worker(tmp_path: Path)
             WorkerTask(
                 task=Task(id="t-submit"),
                 command="halctl submit --challenge-id c1 --flag FLAG{x}",
-                phase=Phase.VERIFY_AND_SUBMIT,
+                phase=Phase.POST_EXPLOITATION,
                 required_scope=WorkerScope(
                     name="required-submit",
                     command_families=("shell",),
-                    phases=(Phase.VERIFY_AND_SUBMIT,),
+                    phases=(Phase.POST_EXPLOITATION,),
                     mutating=True,
                 ),
             )
@@ -599,11 +599,11 @@ def test_submission_worker_runs_serialized_task(tmp_path: Path) -> None:
         WorkerTask(
             task=task,
             command="halctl submit --challenge-id c1 --flag FLAG{x}",
-            phase=Phase.VERIFY_AND_SUBMIT,
+            phase=Phase.POST_EXPLOITATION,
             required_scope=WorkerScope(
                 name="required-submit",
                 command_families=("shell",),
-                phases=(Phase.VERIFY_AND_SUBMIT,),
+                phases=(Phase.POST_EXPLOITATION,),
                 mutating=True,
             ),
         )
@@ -696,11 +696,11 @@ def build_fleet(tmp_path: Path) -> tuple[DispatcherRunner, dict[str, Task]]:
         WorkerTask(
             task=tasks["t-submit"],
             command="echo submit-ok",
-            phase=Phase.VERIFY_AND_SUBMIT,
+            phase=Phase.POST_EXPLOITATION,
             required_scope=WorkerScope(
                 name="required-submit",
                 command_families=("shell",),
-                phases=(Phase.VERIFY_AND_SUBMIT,),
+                phases=(Phase.POST_EXPLOITATION,),
                 mutating=True,
             ),
             working_directory=str(tmp_path),

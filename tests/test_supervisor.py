@@ -119,6 +119,14 @@ def test_run_writes_bootstrap_and_termination_events(tmp_path) -> None:
     assert records[-1]["payload"] == {"reason": "budget_exhausted"}
 
 
+def test_run_creates_the_state_graph_database(tmp_path) -> None:
+    """run() opens the authoritative SQLite graph at state_dir/graph.db
+    and the runner seeds it (V01: the runner drives the graph)."""
+    supervisor = Supervisor(_config(tmp_path, max_runtime_s=1))
+    asyncio.run(supervisor.run())
+    assert (tmp_path / "state" / "graph.db").is_file()
+
+
 def test_run_id_fixed_at_construction_and_read_only(tmp_path) -> None:
     """run_id is minted once per supervisor and cannot be reassigned."""
     supervisor = Supervisor(_config(tmp_path))
@@ -476,3 +484,63 @@ async def test_request_paid_hint_missing_challenge_id_raises(tmp_path, monkeypat
         await _seed_hint_ready_graph(graph)
         with pytest.raises(ConfigError, match="challenge id"):
             await supervisor.request_paid_hint(graph, 1, client=_PrivilegedHintFake())
+
+
+# ---------------------------------------------------------------------------
+# V01: environment selection + local scope print + runner status mapping
+# ---------------------------------------------------------------------------
+
+
+def test_make_environment_defaults_to_local(tmp_path, monkeypatch) -> None:
+    """Without OZZGRAPH_CHALLENGE_ID the run is a local assessment."""
+    from ozzgraph.environments import LocalEnvironment
+
+    monkeypatch.delenv("OZZGRAPH_CHALLENGE_ID", raising=False)
+    supervisor = Supervisor(_config(tmp_path))
+    environment = supervisor._make_environment()
+    assert isinstance(environment, LocalEnvironment)
+
+
+def test_make_environment_uses_halctf_when_challenge_id_set(tmp_path, monkeypatch) -> None:
+    """With OZZGRAPH_CHALLENGE_ID the HalCTF environment is selected."""
+    from ozzgraph.environments import HalCTFEnvironment
+
+    monkeypatch.setenv("OZZGRAPH_CHALLENGE_ID", "web-01")
+    supervisor = Supervisor(_config(tmp_path))
+    environment = supervisor._make_environment()
+    assert isinstance(environment, HalCTFEnvironment)
+
+
+@pytest.mark.asyncio
+async def test_print_local_scope_prints_scope_and_objectives(tmp_path, capsys) -> None:
+    """The local-mode bootstrap summary prints scope, targets, and
+    objectives; HalCTF mode prints nothing."""
+    from ozzgraph.environments import LocalEnvironment
+
+    supervisor = Supervisor(_config(tmp_path, target_allowlist=("127.0.0.1",)))
+    await supervisor._print_local_scope(LocalEnvironment(supervisor.config))
+    out = capsys.readouterr().out
+    assert "SCOPE: local" in out
+    assert "TARGETS:" in out
+    assert "OBJECTIVES:" in out
+    assert "objective-local-1" in out
+    assert "CAPABILITIES:" in out
+
+    from ozzgraph.environments import HalCTFEnvironment
+
+    await supervisor._print_local_scope(
+        HalCTFEnvironment(supervisor.config, environ={"OZZGRAPH_CHALLENGE_ID": "web-01"})
+    )
+    assert capsys.readouterr().out == ""
+
+
+def test_map_status_matches_termination_reasons() -> None:
+    """Every runner status maps to the matching termination reason."""
+    from ozzgraph.runner import RunnerStatus
+
+    assert Supervisor._map_status(RunnerStatus.COMPLETED) == TerminationReason.COMPLETED
+    assert Supervisor._map_status(RunnerStatus.STOPPED) == TerminationReason.INTERRUPTED
+    assert Supervisor._map_status(RunnerStatus.FAILED) == TerminationReason.FAILED
+    assert (
+        Supervisor._map_status(RunnerStatus.BUDGET_EXHAUSTED) == TerminationReason.BUDGET_EXHAUSTED
+    )

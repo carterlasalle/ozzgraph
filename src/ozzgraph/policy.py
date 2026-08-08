@@ -141,7 +141,9 @@ _COMMAND_FAMILIES: dict[str, str] = {
 
 #: Command families permitted per graph phase (docs/ARCHITECTURE.md,
 #: "Phase Router"). Unknown phases map to nothing so the gate fails
-#: closed rather than guessing.
+#: closed rather than guessing. V01 (docs/adr/0008): FLAG_HUNT /
+#: VERIFY_AND_SUBMIT left the generic kernel, so their phase entries
+#: are gone; the halctf environment adapter owns them in V09.
 _PHASE_FAMILIES: dict[str, frozenset[str]] = {
     "BOOTSTRAP": frozenset({"shell", "recon"}),
     "RECON": frozenset({"shell", "recon"}),
@@ -149,8 +151,6 @@ _PHASE_FAMILIES: dict[str, frozenset[str]] = {
     "EXPLOITATION": frozenset({"shell", "exploit"}),
     "POST_EXPLOITATION": frozenset({"shell", "exploit"}),
     "PIVOT": frozenset({"shell", "recon"}),
-    "FLAG_HUNT": frozenset({"shell"}),
-    "VERIFY_AND_SUBMIT": frozenset({"shell"}),
     "REPLAN": frozenset({"shell"}),
     "DONE": frozenset(),
 }

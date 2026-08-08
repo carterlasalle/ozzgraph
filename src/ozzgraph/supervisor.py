@@ -1,4 +1,4 @@
-"""Supervisor kernel (PR2/PR3).
+"""Supervisor kernel (PR2/PR3, V01 generic runtime).
 
 The supervisor owns startup, identity output, runtime-directory
 initialization, heartbeat emission, budget enforcement, signal handling, and
@@ -9,16 +9,28 @@ PR3 turns :meth:`Supervisor.run` into an asyncio loop that emits heartbeats,
 enforces budgets, and terminates gracefully on ``SIGTERM``/``SIGINT``. PR4 adds
 append-only structured event logging (bootstrap and termination events). PR12
 runs the deterministic bootstrap reconnaissance
-(:mod:`ozzgraph.bootstrap`) after heartbeat setup and before the main idle
-loop, constructing the supervisor-owned privileged HalClient for it. PR22
-adds :meth:`Supervisor.submit_verified_candidate` — the supervisor-only
+(:mod:`ozzgraph.bootstrap`) after heartbeat setup and before the main loop,
+constructing the supervisor-owned privileged HalClient for it. PR22 adds
+:meth:`Supervisor.submit_verified_candidate` — the supervisor-only
 submission surface that drives
 :class:`~ozzgraph.submissions.SubmissionCoordinator` with a privileged
 client. PR23 adds :meth:`Supervisor.request_paid_hint` — the
 supervisor-only paid-hint surface that drives
-:class:`~ozzgraph.hints.HintCoordinator` (the deterministic
-paid-hint gate) with a privileged client; the idle loop itself is
-untouched.
+:class:`~ozzgraph.hints.HintCoordinator` with a privileged client.
+
+V01 (docs/adr/0008): :meth:`Supervisor.run` drives the v2 "most important
+fix" (docs/CHANGES_v2.md) — instead of the idle
+``while ...: await asyncio.sleep(0.25)`` poll, the supervisor builds the
+runtime :class:`~ozzgraph.environments.base.EnvironmentAdapter` and hands
+it to the :class:`~ozzgraph.runner.AutonomousRunner`, which runs the real
+investigate loop (route -> plan -> context -> one model action -> execute
+-> persist -> evaluate) until the objectives complete, a budget is
+exhausted, or a signal stops the run. Environment selection is
+deterministic: HalCTF when ``OZZGRAPH_CHALLENGE_ID`` is configured
+(bootstrap stays wired for HalCTF), else the local environment, whose
+discovered scope/targets/objectives are printed as the local-mode
+bootstrap summary. All supervisor-owned privileged surfaces (bootstrap
+client, submission, paid hints) are unchanged.
 """
 
 from __future__ import annotations
@@ -34,15 +46,20 @@ from ozzgraph.artifacts import ArtifactStore
 from ozzgraph.bootstrap import BootstrapRunner
 from ozzgraph.budgets import Budgets
 from ozzgraph.config import ConfigError, OzzGraphConfig
+from ozzgraph.environments import (
+    EnvironmentAdapter,
+    HalCTFEnvironment,
+    LocalEnvironment,
+)
 from ozzgraph.events import BOOTSTRAP, TERMINATION, Event, EventLog
 from ozzgraph.hal_client import HalClient, HintResult, SubmissionResult
 from ozzgraph.halctl import CHALLENGE_ID_ENV
 from ozzgraph.heartbeat import Heartbeat
 from ozzgraph.hints import HintClient, HintCoordinator
+from ozzgraph.policy import ScopePolicy
+from ozzgraph.runner import AutonomousRunner, RunnerStatus
 from ozzgraph.state_graph import StateGraph
 from ozzgraph.submissions import SubmissionClient, SubmissionCoordinator
-
-_POLL_SECONDS = 0.25
 
 
 class TerminationReason(str, Enum):
@@ -132,10 +149,14 @@ class Supervisor:
     async def run(self) -> TerminationReason:
         """Run the supervisor until a terminal condition.
 
-        Installs ``SIGTERM``/``SIGINT`` handlers, starts the heartbeat, then
-        loops until either a budget is exhausted (returning
-        ``BUDGET_EXHAUSTED``) or a signal requests a graceful stop (returning
-        ``INTERRUPTED``).
+        Installs ``SIGTERM``/``SIGINT`` handlers, starts the heartbeat,
+        runs deterministic bootstrap, then drives the
+        :class:`~ozzgraph.runner.AutonomousRunner` investigate loop
+        (V01, docs/adr/0008) until it returns a structured
+        :class:`~ozzgraph.runner.RunnerStatus`, which is mapped to the
+        corresponding :class:`TerminationReason` (COMPLETED, INTERRUPTED
+        on a signal stop, FAILED on a loud kernel failure, or
+        BUDGET_EXHAUSTED).
 
         Signal handlers are installed before :meth:`start` so a signal that
         arrives immediately after the identity line is still caught gracefully
@@ -180,17 +201,99 @@ class Supervisor:
             bootstrap_reason = await self._run_bootstrap()
             if bootstrap_reason is not None:
                 return bootstrap_reason
-            while not stop_event.is_set():
-                if budgets.is_exhausted():
-                    return self.stop(reason=TerminationReason.BUDGET_EXHAUSTED)
-                await asyncio.sleep(_POLL_SECONDS)
-            return self.stop(reason=TerminationReason.INTERRUPTED)
+            environment = self._make_environment()
+            try:
+                await self._print_local_scope(environment)
+                assert self._event_log is not None  # start() set it
+                assert self._artifact_store is not None  # start() set it
+                policy = ScopePolicy(
+                    max_command_length=cfg.max_command_length,
+                    target_allowlist=cfg.target_allowlist,
+                    allowed_command_families=cfg.allowed_command_families,
+                )
+                async with StateGraph(cfg.state_dir / "graph.db") as graph:
+                    runner = AutonomousRunner(
+                        config=cfg,
+                        graph=graph,
+                        event_log=self._event_log,
+                        artifacts=self._artifact_store,
+                        budgets=budgets,
+                        environment=environment,
+                        stop_event=stop_event,
+                        run_id=self._run_id,
+                        policy=policy,
+                    )
+                    try:
+                        status = await runner.run()
+                    finally:
+                        await runner.aclose()
+                return self.stop(reason=self._map_status(status))
+            finally:
+                await environment.aclose()
         finally:
             heartbeat.stop()
             heartbeat_task.cancel()
             await asyncio.gather(heartbeat_task, return_exceptions=True)
             for sig in installed_signals:
                 loop.remove_signal_handler(sig)
+
+    def _make_environment(self) -> EnvironmentAdapter:
+        """Build the runtime environment adapter for this run.
+
+        Deterministic selection (docs/adr/0008): the HalCTF environment
+        is used when ``OZZGRAPH_CHALLENGE_ID`` is configured (bootstrap
+        stays wired for HalCTF); otherwise the run is a local
+        assessment and the :class:`~ozzgraph.environments.local.LocalEnvironment`
+        is used.
+        """
+        if os.environ.get(CHALLENGE_ID_ENV, "").strip():
+            return HalCTFEnvironment(self._config)
+        return LocalEnvironment(self._config)
+
+    async def _print_local_scope(self, environment: EnvironmentAdapter) -> None:
+        """Print the local-mode bootstrap summary (scope/objectives).
+
+        The v1 HalCTF bootstrap prints challenge status through the
+        privileged client; the local environment has no such surface, so
+        its deterministic bootstrap summary IS the discovered scope,
+        targets, objectives, and capabilities — printed before the
+        investigate loop starts so the operator sees what the run is
+        authorized to assess. HalCTF mode prints nothing here (the
+        HalCTF bootstrap already owns its output).
+        """
+        if not isinstance(environment, LocalEnvironment):
+            return
+        scope = await environment.discover_scope()
+        targets = await environment.discover_targets()
+        objectives = await environment.discover_objectives()
+        capabilities = await environment.discover_capabilities()
+        print(f"SCOPE: {scope.name}", flush=True)
+        if scope.hosts:
+            print(f"  hosts: {', '.join(scope.hosts)}", flush=True)
+        if scope.urls:
+            print(f"  urls: {', '.join(scope.urls)}", flush=True)
+        if scope.networks:
+            print(f"  networks: {', '.join(scope.networks)}", flush=True)
+        print("TARGETS:", flush=True)
+        for target in targets:
+            print(f"  - {target.id} ({target.type}) {target.address}", flush=True)
+        if not targets:
+            print("  (none)", flush=True)
+        print("OBJECTIVES:", flush=True)
+        for objective in objectives:
+            print(f"  - {objective.id}: {objective.description}", flush=True)
+        print(f"CAPABILITIES: {', '.join(sorted(capabilities))}", flush=True)
+
+    @staticmethod
+    def _map_status(status: RunnerStatus) -> TerminationReason:
+        """Map the runner's structured status to a termination reason."""
+        if status is RunnerStatus.COMPLETED:
+            return TerminationReason.COMPLETED
+        if status is RunnerStatus.STOPPED:
+            return TerminationReason.INTERRUPTED
+        if status is RunnerStatus.BUDGET_EXHAUSTED:
+            return TerminationReason.BUDGET_EXHAUSTED
+        return TerminationReason.FAILED
 
     async def _run_bootstrap(self) -> TerminationReason | None:
         """Run deterministic bootstrap reconnaissance before the main loop.

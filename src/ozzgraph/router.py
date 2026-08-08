@@ -18,18 +18,16 @@ Design rules:
   phase.
 
 - Deterministic ordering: :data:`TRANSITIONS` is evaluated top to
-  bottom and the first matching predicate wins. Terminal states (DONE,
-  VERIFY_AND_SUBMIT) outrank working phases, and the trailing default
-  matches every non-empty graph, so :meth:`PhaseRouter.route` always
-  terminates.
+  bottom and the first matching predicate wins. Terminal states (DONE)
+  outrank working phases, and the trailing default matches every
+  non-empty graph, so :meth:`PhaseRouter.route` always terminates.
 
 - Loud, typed failures (AGENTS.md rule #9): the router validates the
   payload fields it reads (strict booleans) and the invariant-critical
   edges it relies on. A wrong-typed payload field raises
   :class:`InvalidGraphStateError`; an accepted submission without its
-  ``SUBMISSION SUBMITS FLAG_CANDIDATE`` edge, or a verified flag
-  candidate without its ``FLAG_CANDIDATE OBSERVED_IN EVIDENCE`` edge,
-  raises :class:`MissingRequiredStateError`. Nothing is swallowed.
+  ``SUBMISSION SUBMITS FLAG_CANDIDATE`` edge raises
+  :class:`MissingRequiredStateError`. Nothing is swallowed.
 
 - Skill interop (AGENTS.md rule #6): the router resolves the skill
   summaries covering a phase through the
@@ -51,8 +49,8 @@ docs/API_AND_INTEGRATIONS.md, "Phase Router"):
 - ``hypothesis``: ``exploitable`` (has an exploitation direction).
 - ``credential``: ``valid`` (usable access), ``explored`` (post-
   exploitation already consumed it).
-- ``flag_candidate``: ``verified`` (provenance-backed flag),
-  ``rejected`` (platform rejected it — never re-submitted, PR22).
+- ``objective``: ``completed`` (the generic DONE predicate — all
+  objectives completed, V01 docs/adr/0008).
 - ``submission``: ``accepted`` (the run's terminal signal).
 """
 
@@ -73,27 +71,25 @@ ENTITY_TARGET = "target"
 ENTITY_SERVICE = "service"
 ENTITY_HYPOTHESIS = "hypothesis"
 ENTITY_CREDENTIAL = "credential"
-ENTITY_FLAG_CANDIDATE = "flag_candidate"
+ENTITY_OBJECTIVE = "objective"
 ENTITY_SUBMISSION = "submission"
 
 #: Edge types the router reads (docs/DATA_STRATEGY.md, uppercase by
 #: convention).
 EDGE_SUBMISSION_SUBMITS_FLAG_CANDIDATE = "SUBMISSION SUBMITS FLAG_CANDIDATE"
-EDGE_FLAG_CANDIDATE_OBSERVED_IN_EVIDENCE = "FLAG_CANDIDATE OBSERVED_IN EVIDENCE"
 EDGE_EVIDENCE_SUPPORTS_HYPOTHESIS = "EVIDENCE SUPPORTS HYPOTHESIS"
 
 #: Payload fields the router reads, as strict booleans. A field that is
 #: present but not a bool is an invalid graph state (AGENTS.md rule #9).
 FIELD_ACCEPTED = "accepted"
 FIELD_CHARACTERIZED = "characterized"
+FIELD_COMPLETED = "completed"
 FIELD_CONFIRMED = "confirmed"
 FIELD_EXPLOITABLE = "exploitable"
 FIELD_EXPLORED = "explored"
 FIELD_PIVOT = "pivot"
 FIELD_REACHABLE = "reachable"
-FIELD_REJECTED = "rejected"
 FIELD_VALID = "valid"
-FIELD_VERIFIED = "verified"
 
 
 class PhaseRouterError(RuntimeError):
@@ -115,11 +111,9 @@ class MissingRequiredStateError(PhaseRouterError):
 
     Raised when a transition's decision input violates an AGENTS.md data
     invariant: an accepted submission without its ``SUBMISSION SUBMITS
-    FLAG_CANDIDATE`` edge, or a verified flag candidate without its
-    ``FLAG_CANDIDATE OBSERVED_IN EVIDENCE`` edge. The check applies to
-    the entities that drive the transition (accepted submissions,
-    verified flag candidates); rejected or unverified entities never
-    trigger it.
+    FLAG_CANDIDATE`` edge. The check applies to the entities that drive
+    the transition (accepted submissions); rejected or unverified
+    entities never trigger it.
     """
 
 
@@ -187,32 +181,22 @@ async def _has_accepted_submission(graph: StateGraph) -> bool:
     return False
 
 
-async def _has_verified_flag(graph: StateGraph) -> bool:
-    """True when a flag candidate is verified and ready to submit.
+async def _all_objectives_completed(graph: StateGraph) -> bool:
+    """True when every ``objective`` entity is completed (generic DONE).
 
-    A candidate marked ``rejected: true`` (PR22: the platform rejected
-    it, so it must never be re-submitted) is not a verified candidate:
-    the submission coordinator flips the marker and the router then
-    re-routes away from VERIFY_AND_SUBMIT.
-
-    Raises:
-        MissingRequiredStateError: If a verified, non-rejected flag
-            candidate has no ``FLAG_CANDIDATE OBSERVED_IN EVIDENCE``
-            edge (AGENTS.md data invariant: submitted flag candidates
-            have observed provenance).
+    The generic terminal predicate (docs/adr/0008): a run is done when
+    the environment's objectives are all satisfied — the authoritative
+    state is the graph's ``objective`` entities, which the runner seeds
+    from the environment adapter and flips to ``completed`` only through
+    deterministic evidence paths. A graph with NO objectives is never
+    done by this predicate (a run without objectives is not a completed
+    run); an empty graph is routed to BOOTSTRAP by the leading
+    predicate, so this only ever decides non-empty graphs.
     """
-    for record in await graph.list_entities(ENTITY_FLAG_CANDIDATE):
-        if not _payload_bool(record, FIELD_VERIFIED):
-            continue
-        if _payload_bool(record, FIELD_REJECTED):
-            continue
-        if not await _has_outgoing_edge(graph, record.id, EDGE_FLAG_CANDIDATE_OBSERVED_IN_EVIDENCE):
-            raise MissingRequiredStateError(
-                f"flag candidate {record.id!r} is verified but has no "
-                f"{EDGE_FLAG_CANDIDATE_OBSERVED_IN_EVIDENCE!r} edge"
-            )
-        return True
-    return False
+    objectives = await graph.list_entities(ENTITY_OBJECTIVE)
+    if not objectives:
+        return False
+    return all(_payload_bool(record, FIELD_COMPLETED) for record in objectives)
 
 
 async def _targets_unconfirmed(graph: StateGraph) -> bool:
@@ -280,25 +264,6 @@ async def _has_new_reachable_targets(graph: StateGraph) -> bool:
     return False
 
 
-async def _has_access_but_no_flag(graph: StateGraph) -> bool:
-    """True when access exists but no verified flag candidate does.
-
-    A rejected candidate (PR22) is not a verified candidate: it must
-    never be re-submitted, so it neither routes VERIFY_AND_SUBMIT nor
-    blocks a fresh FLAG_HUNT for a different flag.
-    """
-    has_access = any(
-        _payload_bool(record, FIELD_VALID)
-        for record in await graph.list_entities(ENTITY_CREDENTIAL)
-    )
-    if not has_access:
-        return False
-    for record in await graph.list_entities(ENTITY_FLAG_CANDIDATE):
-        if _payload_bool(record, FIELD_VERIFIED) and not _payload_bool(record, FIELD_REJECTED):
-            return False
-    return True
-
-
 async def _default_replan(graph: StateGraph) -> bool:
     """The fallback transition: every non-empty graph matches REPLAN.
 
@@ -309,14 +274,17 @@ async def _default_replan(graph: StateGraph) -> bool:
 
 
 #: The full transition table, in evaluation order (first match wins).
-#: Terminal states (DONE, VERIFY_AND_SUBMIT) outrank working phases,
-#: and the trailing default matches every non-empty graph, so
-#: :meth:`PhaseRouter.route` always terminates. Mirrored in
-#: docs/API_AND_INTEGRATIONS.md ("Phase Router").
+#: Terminal states (DONE) outrank working phases, and the trailing
+#: default matches every non-empty graph, so :meth:`PhaseRouter.route`
+#: always terminates. Mirrored in docs/API_AND_INTEGRATIONS.md
+#: ("Phase Router"). V01 (docs/adr/0008): FLAG_HUNT /
+#: VERIFY_AND_SUBMIT transitions were removed — the generic DONE
+#: predicate is ``all_objectives_completed`` (plus the accepted-
+#: submission terminal signal kept for the HalCTF submission path).
 TRANSITIONS: tuple[Transition, ...] = (
     Transition("graph_is_empty", Phase.BOOTSTRAP, _is_empty),
     Transition("has_accepted_submission", Phase.DONE, _has_accepted_submission),
-    Transition("has_verified_flag", Phase.VERIFY_AND_SUBMIT, _has_verified_flag),
+    Transition("all_objectives_completed", Phase.DONE, _all_objectives_completed),
     Transition("targets_unconfirmed", Phase.RECON, _targets_unconfirmed),
     Transition("has_uncharacterized_services", Phase.ENUMERATION, _has_uncharacterized_services),
     Transition(
@@ -326,7 +294,6 @@ TRANSITIONS: tuple[Transition, ...] = (
     ),
     Transition("has_new_access", Phase.POST_EXPLOITATION, _has_new_access),
     Transition("has_new_reachable_targets", Phase.PIVOT, _has_new_reachable_targets),
-    Transition("has_access_but_no_flag", Phase.FLAG_HUNT, _has_access_but_no_flag),
     Transition("default_replan", Phase.REPLAN, _default_replan),
 )
 
@@ -367,9 +334,8 @@ class PhaseRouter:
         Raises:
             InvalidGraphStateError: If a payload field the router reads
                 is present but not a bool.
-            MissingRequiredStateError: If an accepted submission or a
-                verified flag candidate lacks its invariant-critical
-                provenance edge.
+            MissingRequiredStateError: If an accepted submission lacks
+                its invariant-critical provenance edge.
         """
         for transition in TRANSITIONS:
             if await transition.check(graph):

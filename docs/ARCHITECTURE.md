@@ -77,13 +77,16 @@ ENUMERATION
 EXPLOITATION
 POST_EXPLOITATION
 PIVOT
-FLAG_HUNT
-VERIFY_AND_SUBMIT
 REPLAN
 DONE
 ```
 
-Transitions are based on graph predicates, not action counts.
+Transitions are based on graph predicates, not action counts. The
+terminal DONE predicate is generic (docs/adr/0008): every seeded
+`objective` entity is `completed: true`, or a submission was accepted
+(the HalCTF path). FLAG_HUNT and VERIFY_AND_SUBMIT were removed from
+the kernel in V01 — flag hunting and submission are HalCTF environment
+behaviors (full adapter in V09).
 
 ### Planner
 
@@ -223,8 +226,8 @@ elif graph.has_new_access():
     phase = POST_EXPLOITATION
 elif graph.has_new_reachable_targets():
     phase = PIVOT
-elif graph.has_access_but_no_flag():
-    phase = FLAG_HUNT
+elif graph.all_objectives_completed():
+    phase = DONE
 else:
     phase = REPLAN
 ```

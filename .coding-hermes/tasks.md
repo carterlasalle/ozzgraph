@@ -27,6 +27,15 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 > HalCTF as one adapter." Vertical-first. Read docs/CHANGES_v2.md before
 > starting. Phases V01-V10; work strictly in order (FIFO), each a judged commit.
 
+> ⚠️ V01 NOTE (2026-08-08): The V01 tick did the work but TIMED OUT at the old
+> 30-min cap BEFORE committing. The full V01 implementation is STAGED but
+> uncommitted (25 files, ~2959 insertions: environments/__init__.py, base.py,
+> local.py, halctf.py, models.py; runner.py; ADR-0008; rewrites of phases.py,
+> policy.py, router.py, skills.py, submissions.py, supervisor.py; + tests).
+> Do NOT redo V01. The next tick should run the quality gate on the staged
+> work, `gitreins task complete` + commit it (judge PASS), mark V01 [x], then
+> proceed to V02. Tick cap is now 3600s.
+
 | ID | Task | Pri | Cpx | Deps | Tags | Model | Reasoning | Fallback |
 |----|------|-----|-----|------|------|-------|-----------|----------|
 | V01 | generic-runtime: EnvironmentAdapter protocol (discover_scope/targets/objectives/capabilities), Scope/Target/Objective types, LocalEnvironment + HalCTFEnvironment; REMOVE FLAG_HUNT + VERIFY_AND_SUBMIT from generic kernel; supervisor drives a real AutonomousRunner (not sleep loop) | Critical | 5±1 | — | +++python, ++architecture, ++security | DS-V4-Pro | High | DS-V4-Flash |

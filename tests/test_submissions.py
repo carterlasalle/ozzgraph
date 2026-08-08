@@ -7,8 +7,9 @@ validated (MissingRequiredStateError mirrors the phase router), attempt
 budgets are enforced per candidate and in total (budget-style), an
 accepted submission persists the entity + SUBMISSION SUBMITS
 FLAG_CANDIDATE edge and routes DONE, a rejection marks the candidate
-rejected (so the router re-routes away from VERIFY_AND_SUBMIT and the
-flag is never re-submitted) and raises a typed
+rejected (the flag is never re-submitted; V01, docs/adr/0008: the
+kernel no longer routes on flag candidates — no VERIFY_AND_SUBMIT /
+FLAG_HUNT — so the graph replans) and raises a typed
 SubmissionRejectedError, and every mutation is replay-consistent.
 """
 
@@ -194,9 +195,9 @@ async def test_accepted_submission_keeps_candidate_verified() -> None:
 
 @pytest.mark.asyncio
 async def test_rejected_submission_marks_candidate_and_reroutes() -> None:
-    """A rejection marks the candidate rejected and re-routes away from submit."""
+    """A rejection marks the candidate rejected; the generic kernel replans."""
     async with StateGraph(":memory:") as graph:
-        # Baseline so only the FLAG_HUNT transition can fire after rejection.
+        # Baseline: recon + enumeration complete, explored access.
         await graph.create_entity("tgt-1", "target", {"confirmed": True})
         await graph.create_entity("svc-1", "service", {"characterized": True})
         await graph.create_entity("cred-1", "credential", {"valid": True, "explored": True})
@@ -216,11 +217,13 @@ async def test_rejected_submission_marks_candidate_and_reroutes() -> None:
         assert record.data[FIELD_REJECTED] is True
         assert record.data[FIELD_ATTEMPTS] == 1
 
-        # The router treats the rejected candidate as not-verified: it
-        # neither routes VERIFY_AND_SUBMIT nor blocks a fresh FLAG_HUNT.
+        # V01 (docs/adr/0008): the kernel no longer routes on flag
+        # candidates — no VERIFY_AND_SUBMIT, no FLAG_HUNT; the graph
+        # replans, and the flag is never re-submitted.
         route = await PhaseRouter().route(graph)
-        assert route.phase == Phase.FLAG_HUNT
-        assert route.predicate == "has_access_but_no_flag"
+        assert route.phase == Phase.REPLAN
+        assert route.predicate == "default_replan"
+        assert route.phase.value not in ("FLAG_HUNT", "VERIFY_AND_SUBMIT")
 
 
 @pytest.mark.asyncio

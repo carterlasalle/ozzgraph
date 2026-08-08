@@ -32,12 +32,17 @@ Design rules (AGENTS.md):
   and resolves skills; nothing is wired into the supervisor, which
   PR18 (graph-driven phase router) owns.
 
-Initial packs cover RECON, ENUMERATION, EXPLOITATION, FLAG_HUNT (and
-VERIFY_AND_SUBMIT via the submission skill). Every skill card is
-bounded prompt text: purpose, bounded command guidance consistent with
-the policy gate's command families, and an explicit "Do NOT" list.
+Initial packs cover RECON, ENUMERATION, and EXPLOITATION. Every skill
+card is bounded prompt text: purpose, bounded command guidance
+consistent with the policy gate's command families, and an explicit
+"Do NOT" list.
 Parser mappings are consistent with the two built-in parsers
 (``shell``/``text`` and ``halctl``/``json``, :mod:`ozzgraph.observations`).
+
+V01 (docs/adr/0008): the FLAG_HUNT skill packs (filesystem hunt, web
+artifact hunt, submission) were removed from the generic kernel with
+the FLAG_HUNT / VERIFY_AND_SUBMIT phases; flag hunting and submission
+are HalCTF environment behaviors arriving with the full adapter in V09.
 """
 
 from __future__ import annotations
@@ -466,77 +471,6 @@ EXPLOIT_AUTH_BYPASS = _skill(
     timeout_seconds=60,
 )
 
-
-# ---------------------------------------------------------------------------
-# Initial packs: FLAG_HUNT (+ VERIFY_AND_SUBMIT)
-# ---------------------------------------------------------------------------
-
-#: Filesystem flag hunting on a compromised host.
-FLAG_HUNT_FILESYSTEM = _skill(
-    skill_id="flag_hunt_filesystem",
-    name="Filesystem flag hunting",
-    phases=(Phase.FLAG_HUNT,),
-    description="Filesystem flag hunting: grep flag patterns in bounded locations, env, history, backups",
-    card=(
-        "Purpose: locate flag material on a compromised host.\n"
-        "Commands (bounded, local only):\n"
-        "- grep -rE 'flag\\{[^}]+\\}' /root /home /tmp /opt /var/www 2>/dev/null\n"
-        "- env ; cat /etc/environment ; ls -la / ; find / -name '*.txt' -size -1M 2>/dev/null\n"
-        "- cat ~/.bash_history ; cat /root/.ssh/authorized_keys\n"
-        "Every hit is a FLAG CANDIDATE with the exact artifact path as\n"
-        "evidence.\n"
-        "Do NOT: exfiltrate data off the box, cat binary or large files, or\n"
-        "submit a flag from this skill — submission is supervisor-only (use\n"
-        "flag_hunt_submit)."
-    ),
-    timeout_seconds=60,
-)
-
-#: Web artifact flag hunting: source maps, git leaks, backups.
-FLAG_HUNT_WEB_ARTIFACTS = _skill(
-    skill_id="flag_hunt_web_artifacts",
-    name="Web artifact flag hunting",
-    phases=(Phase.FLAG_HUNT,),
-    description="Web artifact flag hunting: source maps, git leaks, backups, and comment/endpoint dumps",
-    card=(
-        "Purpose: mine web artifacts for embedded flag material.\n"
-        "Commands (bounded):\n"
-        "- curl -sS -m 5 https://<target>/.git/HEAD ; /.env ; /backup.zip ; /<app>.js.map\n"
-        "- grep -rE 'flag\\{[^}]+\\}' <downloaded artifacts>\n"
-        "- curl -sS -m 5 https://<target>/actuator/env   (Spring env endpoints)\n"
-        "Download artifacts to the artifact store and grep locally, never in\n"
-        "model context.\n"
-        "Do NOT: fetch artifacts without storing them first, read minified\n"
-        "megabyte JS into context, or submit flags directly (supervisor-only)."
-    ),
-    timeout_seconds=60,
-)
-
-#: Flag candidate validation and submission through the privileged halctl
-#: adapter. Covers VERIFY_AND_SUBMIT: the supervisor invokes this skill
-#: once a candidate has observed provenance.
-FLAG_HUNT_SUBMIT = _skill(
-    skill_id="flag_hunt_submit",
-    name="Flag validation and submission",
-    phases=(Phase.FLAG_HUNT, Phase.VERIFY_AND_SUBMIT),
-    description="Flag candidate validation and submission through halctl; supervisor-only submission",
-    card=(
-        "Purpose: validate and submit one flag candidate through the\n"
-        "privileged halctl adapter.\n"
-        "Commands (bounded):\n"
-        "- halctl submit --flag 'flag{...}' --json\n"
-        "- halctl status --json   (attempts/points after a submission)\n"
-        "- halctl scoreboard --json   (ranking context when verification needs it)\n"
-        "Only submit candidates that match the known flag format and carry\n"
-        "observed provenance — a flag seen in an observation or artifact.\n"
-        "Do NOT: submit unobserved guesses, retry a rejected candidate, batch\n"
-        "submissions, or submit from a worker context — this skill is invoked\n"
-        "by the supervisor during VERIFY_AND_SUBMIT."
-    ),
-    timeout_seconds=30,
-    parsers=(("halctl", "json"),),
-)
-
 register_skill(RECON_DNS_ENUM)
 register_skill(RECON_HTTP_FINGERPRINT)
 register_skill(RECON_PORT_PROBE)
@@ -546,6 +480,3 @@ register_skill(ENUM_HTTP_APPLICATION)
 register_skill(EXPLOIT_PARAMETER_INJECTION)
 register_skill(EXPLOIT_COMMAND_INJECTION)
 register_skill(EXPLOIT_AUTH_BYPASS)
-register_skill(FLAG_HUNT_FILESYSTEM)
-register_skill(FLAG_HUNT_WEB_ARTIFACTS)
-register_skill(FLAG_HUNT_SUBMIT)

@@ -1,14 +1,15 @@
-"""Tests for the graph-driven phase router (PR18).
+"""Tests for the graph-driven phase router (PR18, V01 generic runtime).
 
 Covers every documented transition predicate (each graph state routes
 to its phase), the no-transition defaults (empty graph -> BOOTSTRAP,
-unmatched non-empty graph -> REPLAN), terminal-state priority (DONE and
-VERIFY_AND_SUBMIT outrank working phases), determinism (same state
-twice -> identical route), the typed error paths (invalid payload
-types, missing provenance edges — AGENTS.md rule #9), and SkillRegistry
-interop for the routed phase.
+unmatched non-empty graph -> REPLAN), terminal-state priority (DONE
+outranks working phases — via accepted submission or all objectives
+completed, V01 docs/adr/0008), determinism (same state twice ->
+identical route), the typed error paths (invalid payload types, missing
+provenance edges — AGENTS.md rule #9), and SkillRegistry interop for
+the routed phase.
 
-Every test uses its own in-memory SQLite graph (``":memory:"``).
+Every test uses its own in-memory SQLite graph.
 """
 
 from __future__ import annotations
@@ -19,7 +20,6 @@ from pydantic import ValidationError
 from ozzgraph.phases import Phase
 from ozzgraph.router import (
     EDGE_EVIDENCE_SUPPORTS_HYPOTHESIS,
-    EDGE_FLAG_CANDIDATE_OBSERVED_IN_EVIDENCE,
     EDGE_SUBMISSION_SUBMITS_FLAG_CANDIDATE,
     TRANSITIONS,
     InvalidGraphStateError,
@@ -89,27 +89,38 @@ async def test_unmatched_non_empty_graph_routes_to_replan() -> None:
 
 
 def test_transitions_cover_every_phase() -> None:
-    """The transition table reaches all ten Phase values exactly once."""
+    """The transition table reaches every Phase value (DONE twice: both
+    terminal predicates route to it)."""
     phases = [transition.phase for transition in TRANSITIONS]
     assert set(phases) == set(Phase)
-    assert len(phases) == len(set(phases))
+    assert phases.count(Phase.DONE) == 2  # submission + objectives terminal
 
 
 def test_transitions_are_deterministic_table() -> None:
-    """First-match order is fixed: DONE/VERIFY first, REPLAN last."""
+    """First-match order is fixed: DONE predicates first, REPLAN last."""
     predicates = [transition.predicate for transition in TRANSITIONS]
     assert predicates == [
         "graph_is_empty",
         "has_accepted_submission",
-        "has_verified_flag",
+        "all_objectives_completed",
         "targets_unconfirmed",
         "has_uncharacterized_services",
         "has_supported_exploitable_hypothesis",
         "has_new_access",
         "has_new_reachable_targets",
-        "has_access_but_no_flag",
         "default_replan",
     ]
+
+
+def test_transitions_never_reference_removed_phases() -> None:
+    """V01 (docs/adr/0008): FLAG_HUNT / VERIFY_AND_SUBMIT are gone."""
+    routed = {transition.phase for transition in TRANSITIONS}
+    routed_values = {phase.value for phase in routed}
+    assert "FLAG_HUNT" not in routed_values
+    assert "VERIFY_AND_SUBMIT" not in routed_values
+    predicates = [transition.predicate for transition in TRANSITIONS]
+    assert "has_verified_flag" not in predicates
+    assert "has_access_but_no_flag" not in predicates
 
 
 # ---------------------------------------------------------------------------
@@ -155,8 +166,42 @@ async def test_rejected_submission_does_not_route_to_done() -> None:
 
 
 @pytest.mark.asyncio
-async def test_verified_flag_routes_to_verify_and_submit() -> None:
-    """A provenance-backed verified flag candidate means VERIFY_AND_SUBMIT."""
+async def test_all_objectives_completed_routes_to_done() -> None:
+    """The generic DONE predicate: every objective completed (V01)."""
+    async with StateGraph(":memory:") as graph:
+        await _seed_baseline(graph)
+        await _entity(graph, "objective-1", "objective", {"completed": True})
+        await _entity(graph, "objective-2", "objective", {"completed": True})
+        route = await PhaseRouter().route(graph)
+    assert route.phase == Phase.DONE
+    assert route.predicate == "all_objectives_completed"
+
+
+@pytest.mark.asyncio
+async def test_incomplete_objectives_do_not_route_done() -> None:
+    """A single incomplete objective keeps the run working."""
+    async with StateGraph(":memory:") as graph:
+        await _seed_baseline(graph)
+        await _entity(graph, "objective-1", "objective", {"completed": True})
+        await _entity(graph, "objective-2", "objective", {"completed": False})
+        route = await PhaseRouter().route(graph)
+    assert route.phase == Phase.REPLAN
+    assert route.predicate == "default_replan"
+
+
+@pytest.mark.asyncio
+async def test_no_objectives_never_routes_done_by_objectives() -> None:
+    """A graph with no objectives is not 'complete' by the objective DONE."""
+    async with StateGraph(":memory:") as graph:
+        await _seed_baseline(graph)
+        route = await PhaseRouter().route(graph)
+    assert route.phase == Phase.REPLAN
+    assert route.predicate == "default_replan"
+
+
+@pytest.mark.asyncio
+async def test_flag_candidate_state_no_longer_routes_the_kernel() -> None:
+    """V01: flag candidates are HalCTF-owned; the kernel ignores them."""
     async with StateGraph(":memory:") as graph:
         await _seed_baseline(graph)
         await _entity(graph, "obs-1", "observation")
@@ -166,54 +211,14 @@ async def test_verified_flag_routes_to_verify_and_submit() -> None:
         await _edge(
             graph,
             "flag-1->ev-1",
-            EDGE_FLAG_CANDIDATE_OBSERVED_IN_EVIDENCE,
-            "flag-1",
-            "ev-1",
-        )
-        route = await PhaseRouter().route(graph)
-    assert route.phase == Phase.VERIFY_AND_SUBMIT
-    assert route.predicate == "has_verified_flag"
-
-
-@pytest.mark.asyncio
-async def test_rejected_flag_candidate_does_not_route_verify_and_submit() -> None:
-    """A platform-rejected candidate (PR22) never routes VERIFY_AND_SUBMIT."""
-    async with StateGraph(":memory:") as graph:
-        await _seed_baseline(graph)
-        await _entity(graph, "obs-1", "observation")
-        await _entity(graph, "ev-1", "evidence")
-        await _entity(graph, "flag-1", "flag_candidate", {"verified": True, "rejected": True})
-        await _edge(graph, "ev-1->obs-1", "EVIDENCE EXTRACTED_FROM OBSERVATION", "ev-1", "obs-1")
-        await _edge(
-            graph,
-            "flag-1->ev-1",
-            EDGE_FLAG_CANDIDATE_OBSERVED_IN_EVIDENCE,
+            "FLAG_CANDIDATE OBSERVED_IN EVIDENCE",
             "flag-1",
             "ev-1",
         )
         route = await PhaseRouter().route(graph)
     assert route.phase == Phase.REPLAN
     assert route.predicate == "default_replan"
-
-
-@pytest.mark.asyncio
-async def test_rejected_flag_candidate_does_not_block_flag_hunt() -> None:
-    """A rejected candidate is not verified: FLAG_HUNT may open for a new flag."""
-    async with StateGraph(":memory:") as graph:
-        await _seed_baseline(graph)
-        await _entity(graph, "cred-1", "credential", {"valid": True, "explored": True})
-        await _entity(graph, "flag-1", "flag_candidate", {"verified": True, "rejected": True})
-        await _entity(graph, "ev-1", "evidence")
-        await _edge(
-            graph,
-            "flag-1->ev-1",
-            EDGE_FLAG_CANDIDATE_OBSERVED_IN_EVIDENCE,
-            "flag-1",
-            "ev-1",
-        )
-        route = await PhaseRouter().route(graph)
-    assert route.phase == Phase.FLAG_HUNT
-    assert route.predicate == "has_access_but_no_flag"
+    assert route.phase.value not in ("FLAG_HUNT", "VERIFY_AND_SUBMIT")
 
 
 @pytest.mark.asyncio
@@ -320,14 +325,14 @@ async def test_new_reachable_target_routes_to_pivot() -> None:
 
 
 @pytest.mark.asyncio
-async def test_access_without_flag_routes_to_flag_hunt() -> None:
-    """Explored access with no verified flag candidate means FLAG_HUNT."""
+async def test_explored_access_with_no_objective_routes_replan() -> None:
+    """V01: access without a flag no longer routes FLAG_HUNT — it replans."""
     async with StateGraph(":memory:") as graph:
         await _seed_baseline(graph)
         await _entity(graph, "cred-1", "credential", {"valid": True, "explored": True})
         route = await PhaseRouter().route(graph)
-    assert route.phase == Phase.FLAG_HUNT
-    assert route.predicate == "has_access_but_no_flag"
+    assert route.phase == Phase.REPLAN
+    assert route.predicate == "default_replan"
 
 
 # ---------------------------------------------------------------------------
@@ -355,23 +360,14 @@ async def test_done_outranks_all_other_states() -> None:
 
 
 @pytest.mark.asyncio
-async def test_verify_and_submit_outranks_recon() -> None:
-    """A verified flag wins over an unconfirmed target."""
+async def test_objectives_completed_outranks_recon() -> None:
+    """All objectives completed wins over an unconfirmed target (V01)."""
     async with StateGraph(":memory:") as graph:
         await _entity(graph, "tgt-1", "target", {"confirmed": False})
-        await _entity(graph, "obs-1", "observation")
-        await _entity(graph, "ev-1", "evidence")
-        await _entity(graph, "flag-1", "flag_candidate", {"verified": True})
-        await _edge(graph, "ev-1->obs-1", "EVIDENCE EXTRACTED FROM OBSERVATION", "ev-1", "obs-1")
-        await _edge(
-            graph,
-            "flag-1->ev-1",
-            EDGE_FLAG_CANDIDATE_OBSERVED_IN_EVIDENCE,
-            "flag-1",
-            "ev-1",
-        )
+        await _entity(graph, "objective-1", "objective", {"completed": True})
         route = await PhaseRouter().route(graph)
-    assert route.phase == Phase.VERIFY_AND_SUBMIT
+    assert route.phase == Phase.DONE
+    assert route.predicate == "all_objectives_completed"
 
 
 # ---------------------------------------------------------------------------
@@ -389,7 +385,7 @@ async def test_same_state_routes_identically() -> None:
         first = await router.route(graph)
         second = await router.route(graph)
     assert first == second
-    assert first.phase == Phase.FLAG_HUNT
+    assert first.phase == Phase.REPLAN
 
 
 @pytest.mark.asyncio
@@ -411,7 +407,7 @@ async def test_route_ignores_entity_creation_order() -> None:
             route = await PhaseRouter().route(graph)
         return route.phase
 
-    assert await build(False) == await build(True) == Phase.FLAG_HUNT
+    assert await build(False) == await build(True) == Phase.REPLAN
 
 
 # ---------------------------------------------------------------------------
@@ -439,12 +435,12 @@ async def test_accepted_submission_without_edge_raises() -> None:
 
 
 @pytest.mark.asyncio
-async def test_verified_flag_without_provenance_raises() -> None:
-    """A verified flag candidate must have observed provenance (invariant)."""
+async def test_objective_with_non_bool_completed_raises() -> None:
+    """A non-bool objective payload is invalid graph state (V01)."""
     async with StateGraph(":memory:") as graph:
         await _seed_baseline(graph)
-        await _entity(graph, "flag-1", "flag_candidate", {"verified": True})
-        with pytest.raises(MissingRequiredStateError, match="OBSERVED_IN EVIDENCE"):
+        await _entity(graph, "objective-1", "objective", {"completed": "yes"})
+        with pytest.raises(InvalidGraphStateError, match="completed"):
             await PhaseRouter().route(graph)
 
 

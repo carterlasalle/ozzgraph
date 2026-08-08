@@ -588,18 +588,26 @@ def test_executor_can_never_reach_a_submit_command_family() -> None:
         assert decision.family != "submit"
 
 
-def test_verify_and_submit_phase_permits_only_shell() -> None:
-    """VERIFY_AND_SUBMIT allows only the shell family (PR22 invariant).
+def test_removed_phases_fail_closed() -> None:
+    """V01 (docs/adr/0008): the removed phases are unknown to the gate.
 
-    The submission coordinator, not any command family, owns submission:
-    even in the submission phase a model can only reach generic shell
-    commands, and ``halctl submit`` itself is privilege-guarded at the
-    wire (HalPrivilegeError), so no model path can submit a flag.
+    FLAG_HUNT and VERIFY_AND_SUBMIT left the generic kernel, so the
+    policy gate no longer has phase entries for them — an unknown phase
+    fails closed (:class:`PhasePermissionError`) rather than guessing a
+    family set. The submission coordinator, not any command family,
+    owns submission: no phase permits a submission family, and
+    ``halctl submit`` itself is privilege-guarded at the wire
+    (HalPrivilegeError), so no model path can submit a flag.
     """
     policy = _policy()
-    # A read-only halctl command is fine in the phase ...
-    decision = policy.check("halctl status --json", phase="VERIFY_AND_SUBMIT")
+    assert "FLAG_HUNT" not in PHASES
+    assert "VERIFY_AND_SUBMIT" not in PHASES
+    for removed in ("FLAG_HUNT", "VERIFY_AND_SUBMIT"):
+        with pytest.raises(PhasePermissionError, match="unknown phase"):
+            policy.check("halctl status --json", phase=removed)
+    # A read-only halctl command still works in a real phase ...
+    decision = policy.check("halctl status --json", phase="POST_EXPLOITATION")
     assert decision.family == "shell"
-    # ... but a submit attempt never classifies into a submission family.
+    # ... and a submit attempt never classifies into a submission family.
     with pytest.raises(ScopeViolationError):
         policy.check("halctl submit --flag 'flag{x}' --json", phase="DONE")

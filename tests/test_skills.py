@@ -14,7 +14,6 @@ import pytest
 from pydantic import ValidationError
 
 from ozzgraph.observations import (
-    HALCTL_JSON_PARSER,
     PARSERS,
     SHELL_TEXT_PARSER,
     Parser,
@@ -36,7 +35,11 @@ from ozzgraph.skills import (
 
 
 def test_phase_enum_order_matches_architecture() -> None:
-    """Member order is exactly the canonical ARCHITECTURE.md phase order."""
+    """Member order is exactly the canonical ARCHITECTURE.md phase order.
+
+    V01 (docs/adr/0008): FLAG_HUNT / VERIFY_AND_SUBMIT are removed from
+    the generic kernel.
+    """
     assert list(Phase) == [
         Phase.BOOTSTRAP,
         Phase.RECON,
@@ -44,11 +47,21 @@ def test_phase_enum_order_matches_architecture() -> None:
         Phase.EXPLOITATION,
         Phase.POST_EXPLOITATION,
         Phase.PIVOT,
-        Phase.FLAG_HUNT,
-        Phase.VERIFY_AND_SUBMIT,
         Phase.REPLAN,
         Phase.DONE,
     ]
+    assert {phase.value for phase in Phase} == {
+        "BOOTSTRAP",
+        "RECON",
+        "ENUMERATION",
+        "EXPLOITATION",
+        "POST_EXPLOITATION",
+        "PIVOT",
+        "REPLAN",
+        "DONE",
+    }
+    assert "FLAG_HUNT" not in {phase.value for phase in Phase}
+    assert "VERIFY_AND_SUBMIT" not in {phase.value for phase in Phase}
 
 
 def test_phase_values_match_policy_gate() -> None:
@@ -81,10 +94,16 @@ def test_list_summaries_filters_by_phase() -> None:
 
 
 def test_initial_packs_cover_the_required_phases() -> None:
-    """RECON, ENUMERATION, EXPLOITATION, and FLAG_HUNT each have skills."""
+    """RECON, ENUMERATION, and EXPLOITATION each have skills (V01:
+
+    the FLAG_HUNT packs left with the removed phases).
+    """
     registry = SkillRegistry()
-    for phase in (Phase.RECON, Phase.ENUMERATION, Phase.EXPLOITATION, Phase.FLAG_HUNT):
+    for phase in (Phase.RECON, Phase.ENUMERATION, Phase.EXPLOITATION):
         assert registry.list_summaries(phase)
+    # The removed phases advertise no skills.
+    assert "FLAG_HUNT" not in {p.value for p in Phase}
+    assert "VERIFY_AND_SUBMIT" not in {p.value for p in Phase}
 
 
 def test_list_summaries_is_deterministic() -> None:
@@ -165,8 +184,9 @@ def test_parsers_for_resolves_real_parser_instances() -> None:
             assert parser.source == source
             assert parser.kind == kind
             assert PARSERS[(source, kind)] is parser
-    assert registry.parsers_for("flag_hunt_submit") == [HALCTL_JSON_PARSER]
     assert registry.parsers_for("recon_dns_enum") == [SHELL_TEXT_PARSER]
+    with pytest.raises(SkillRegistryError, match="flag_hunt_submit"):
+        registry.parsers_for("flag_hunt_submit")  # removed with FLAG_HUNT (V01)
 
 
 def test_parsers_for_skill_without_mappings_returns_empty() -> None:
@@ -215,8 +235,8 @@ def test_timeout_for_returns_per_skill_values() -> None:
     registry = SkillRegistry()
     for skill_id, skill in SKILLS.items():
         assert registry.timeout_for(skill_id) == skill.timeout_seconds
-    assert registry.timeout_for("flag_hunt_submit") == 30
-    assert registry.timeout_for("flag_hunt_submit") != registry.timeout_for("recon_dns_enum")
+    with pytest.raises(SkillRegistryError, match="flag_hunt_submit"):
+        registry.timeout_for("flag_hunt_submit")  # removed with FLAG_HUNT (V01)
 
 
 def test_timeout_for_unknown_skill_raises() -> None:
@@ -326,10 +346,10 @@ def test_skill_phases_are_normalized_to_canonical_order() -> None:
     skill = Skill(
         skill_id="multi",
         name="Multi",
-        phases=(Phase.FLAG_HUNT, Phase.RECON, Phase.FLAG_HUNT),
+        phases=(Phase.PIVOT, Phase.RECON, Phase.PIVOT),
         description="covers multiple phases",
         card="card",
         timeout_seconds=30,
     )
-    assert skill.phases == (Phase.RECON, Phase.FLAG_HUNT)
-    assert skill.summary().phases == (Phase.RECON, Phase.FLAG_HUNT)
+    assert skill.phases == (Phase.RECON, Phase.PIVOT)
+    assert skill.summary().phases == (Phase.RECON, Phase.PIVOT)

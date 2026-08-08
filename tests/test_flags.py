@@ -677,10 +677,10 @@ async def test_rejected_flag_is_never_resubmitted() -> None:
         with pytest.raises(MissingRequiredStateError):
             await coordinator.submit_verified_candidate(graph)
 
-        # The router re-routes away from VERIFY_AND_SUBMIT.
+        # The kernel no longer routes on flag candidates (V01,
+        # docs/adr/0008): the graph replans instead of VERIFY_AND_SUBMIT.
         route = await PhaseRouter().route(graph)
-        assert route.phase != Phase.VERIFY_AND_SUBMIT
-        assert route.predicate != "has_verified_flag"
+        assert route.phase.value not in ("FLAG_HUNT", "VERIFY_AND_SUBMIT")
 
         # The extractor never resurrects the flag either.
         extractor = FlagCandidateExtractor()
@@ -689,8 +689,9 @@ async def test_rejected_flag_is_never_resubmitted() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rejected_flag_does_not_block_a_fresh_flag_hunt() -> None:
-    """A rejected candidate leaves the graph free to hunt another flag."""
+async def test_rejected_flag_does_not_block_the_generic_run() -> None:
+    """A rejected candidate leaves the graph free (V01: no FLAG_HUNT phase;
+    the halctf environment owns flag hunting in V09)."""
     async with StateGraph(":memory:") as graph:
         await _seed_verified_candidate(graph)
         # Router baseline: recon + enumeration complete, explored access.
@@ -707,8 +708,9 @@ async def test_rejected_flag_does_not_block_a_fresh_flag_hunt() -> None:
             await coordinator.submit_verified_candidate(graph)
 
         route = await PhaseRouter().route(graph)
-        assert route.phase == Phase.FLAG_HUNT
-        assert route.predicate == "has_access_but_no_flag"
+        assert route.phase == Phase.REPLAN
+        assert route.predicate == "default_replan"
+        assert route.phase.value not in ("FLAG_HUNT", "VERIFY_AND_SUBMIT")
 
 
 # ---------------------------------------------------------------------------
