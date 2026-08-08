@@ -76,6 +76,19 @@ Design rules:
   violation raised from :meth:`SpecialistWorker.run_task` becomes a
   structured failed worker run when driven through the scheduler
   (never silent, never retried).
+
+V07 (docs/CHANGES_v2.md milestone 7): genuine narrow micro-agents.
+:class:`SpecialistMicroAgent` runs a bounded, deterministic
+hypothesis-test loop for a :class:`MicroAgentTask` — at most
+:data:`MAX_MICRO_ITERATIONS` bounded experiments through the existing
+:meth:`SpecialistWorker._execute` (per-experiment family/policy gates),
+each parsed with :func:`ozzgraph.observations.parser_for_command` over
+its stored artifact, then a deterministic decide concludes with a
+structured :class:`Verdict` (``confirmed`` / ``refuted`` /
+``inconclusive``) whose evidence references are the succeeded
+experiments' content-addressed artifacts (AGENTS.md rule #3). ZERO
+model calls; the only context is the hypothesis objective and the
+prior observations.
 """
 
 from __future__ import annotations
@@ -83,11 +96,16 @@ from __future__ import annotations
 import ipaddress
 from abc import ABC
 from pathlib import Path
-from typing import ClassVar, Self
+from typing import ClassVar, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from ozzgraph.artifacts import ArtifactStore
+from ozzgraph.artifacts import (
+    ArtifactIndexError,
+    ArtifactNotFoundError,
+    ArtifactStore,
+)
+from ozzgraph.observations import Observation, parser_for_command
 from ozzgraph.phases import Phase
 from ozzgraph.policy import (
     COMMAND_FAMILIES,
@@ -120,6 +138,11 @@ DEFAULT_TIMEOUT_SECONDS = 30
 #: Default per-stream output cap for one worker action, in characters
 #: (mirrors the executor's default output limit).
 DEFAULT_OUTPUT_LIMIT = 65536
+
+#: Maximum bounded experiments one micro agent runs per task (V07). The
+#: micro-agent loop is bounded: at most this many experiments execute,
+#: in declared order, then the deterministic decide concludes.
+MAX_MICRO_ITERATIONS = 3
 
 
 class WorkerError(RuntimeError):
@@ -404,6 +427,136 @@ class WorkerTask(BaseModel):
                 f"required scope's phases "
                 f"{[phase.value for phase in self.required_scope.phases]}"
             )
+        return self
+
+
+#: Default scope for a micro agent constructed without an explicit
+#: instance scope (V07): read-only recon/shell evidence gathering across
+#: the generic investigate phases — the same safe-parallel partition as
+#: :class:`ReconWorker`. Instances should declare their own narrower
+#: scope; this is the fail-closed fallback, never a wider permission set.
+DEFAULT_MICRO_AGENT_SCOPE = WorkerScope(
+    name="micro-agent",
+    command_families=("recon", "shell"),
+    phases=(
+        Phase.BOOTSTRAP,
+        Phase.RECON,
+        Phase.ENUMERATION,
+        Phase.POST_EXPLOITATION,
+        Phase.PIVOT,
+    ),
+    mutating=False,
+)
+
+
+class Verdict(BaseModel):
+    """The structured conclusion of one bounded micro-agent run (V07).
+
+    A verdict is the deterministic conclusion of a
+    :class:`SpecialistMicroAgent`'s bounded experiment loop: a typed
+    ``confirmed`` / ``refuted`` / ``inconclusive`` decision whose
+    evidence references (AGENTS.md rule #3) are the content-addressed
+    artifacts of the experiments that produced captured observations.
+    A verdict without evidence is model prose and is rejected loudly at
+    validation time, exactly like a :class:`~ozzgraph.scheduler.Finding`.
+
+    Attributes:
+        verdict: The typed conclusion: ``confirmed`` (a clean probe
+            found supporting signal), ``refuted`` (a clean probe found
+            no signal), or ``inconclusive`` (a captured artifact could
+            not be normalized).
+        evidence_ids: Evidence/artifact ids backing the conclusion;
+            must be non-empty (rule #3).
+        impact: The deterministic impact payload: ``cwe`` (None or a
+            non-empty string), ``assets`` (a sequence of non-empty
+            strings), and ``confidence`` (a number in [0.0, 1.0]).
+        summary: Bounded deterministic summary of the conclusion.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    verdict: Literal["confirmed", "refuted", "inconclusive"]
+    evidence_ids: tuple[str, ...]
+    impact: dict[str, object]
+    summary: str = Field(min_length=1, max_length=512)
+
+    @field_validator("evidence_ids")
+    @classmethod
+    def _evidence_required(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        """Reject empty or blank evidence references (rule #3)."""
+        for item in value:
+            if not item or not item.strip():
+                raise ValueError("evidence ids must be non-empty strings")
+        if not value:
+            raise ValueError(
+                "a verdict must reference at least one evidence/artifact id; "
+                "a conclusion without evidence is model prose, not a verdict"
+            )
+        return value
+
+    @field_validator("impact")
+    @classmethod
+    def _impact_shape(cls, value: dict[str, object]) -> dict[str, object]:
+        """Require the CWE/assets/confidence payload with valid types."""
+        missing = {"cwe", "assets", "confidence"} - set(value)
+        if missing:
+            raise ValueError(
+                f"impact must carry exactly cwe/assets/confidence; missing {sorted(missing)}"
+            )
+        cwe = value.get("cwe")
+        if cwe is not None and (not isinstance(cwe, str) or not cwe.strip()):
+            raise ValueError("impact cwe must be None or a non-empty string")
+        assets = value.get("assets")
+        if not isinstance(assets, (tuple, list)) or any(
+            not isinstance(asset, str) or not asset.strip() for asset in assets
+        ):
+            raise ValueError("impact assets must be a sequence of non-empty strings")
+        confidence = value.get("confidence")
+        if (
+            isinstance(confidence, bool)
+            or not isinstance(confidence, (int, float))
+            or not 0.0 <= confidence <= 1.0
+        ):
+            raise ValueError("impact confidence must be a number in [0.0, 1.0]")
+        return value
+
+
+class MicroAgentTask(WorkerTask):
+    """One micro-agent task: a bounded bundle of experiments (V07).
+
+    A micro agent performs a bounded hypothesis test: the task carries
+    up to :data:`MAX_MICRO_ITERATIONS` bounded experiments instead of
+    one command. The inherited ``command`` is deliberately unused —
+    ``Field(default="", max_length=0)`` — so a micro task can never
+    smuggle an unbounded action; the experiments carry the bounded
+    actions, and each experiment is gated through the worker's family
+    and policy gates before it executes.
+
+    Attributes:
+        command: Unused; always the empty string (``max_length=0``).
+            The experiments carry the bounded actions.
+        experiments: The bounded experiments (one :class:`WorkerTask`
+            per bounded action), non-empty. Every experiment must carry
+            the same task id as the micro task, so the findings its run
+            produces stay attributed to the scheduled DAG node (the
+            AGENTS.md data invariant: a worker cannot mutate state
+            outside its declared task scope).
+    """
+
+    command: str = Field(default="", max_length=0)
+    experiments: tuple[WorkerTask, ...]
+
+    @model_validator(mode="after")
+    def _experiments_bounded_and_attributed(self) -> Self:
+        """Experiments are non-empty and attributed to the micro task."""
+        if not self.experiments:
+            raise ValueError("a micro agent task must carry at least one bounded experiment")
+        for experiment in self.experiments:
+            if experiment.task.id != self.task.id:
+                raise ValueError(
+                    f"experiment task {experiment.task.id!r} must carry the micro task's "
+                    f"task id {self.task.id!r}; findings stay attributed to the DAG node"
+                )
         return self
 
 
@@ -784,6 +937,279 @@ class SubmissionWorker(SpecialistWorker):
                 f"{SERIALIZED_CONFLICT_KEY!r} conflict key (use "
                 "ozzgraph.scheduler.serialized_task)"
             )
+
+
+class SpecialistMicroAgent(SpecialistWorker):
+    """Genuine narrow micro agent: bounded deterministic hypothesis tests (V07).
+
+    The micro agent runs a bounded loop of deterministic experiments
+    (at most :data:`MAX_MICRO_ITERATIONS`) for one
+    :class:`MicroAgentTask`, then concludes with a structured
+    :class:`Verdict` — ZERO model calls. The only context is the
+    hypothesis objective (the task's ``hypothesis_id``) and the prior
+    observations (each experiment's parsed output): no transcripts, no
+    strategic state, no hidden globals.
+
+    The scope is an INSTANCE scope: ``scope`` is passed per instance
+    (defaulting to :data:`DEFAULT_MICRO_AGENT_SCOPE`), so one micro
+    agent class serves many narrow specializations. The instance scope
+    shadows the class default for every base-method access (assignment
+    coverage, family gates, the narrowed policy), while the class-level
+    default satisfies the base constructor's loud declaration check.
+
+    Loop (per experiment, in declared order, at most
+    :data:`MAX_MICRO_ITERATIONS`):
+
+    1. derive the experiment from the task's bounded tuple;
+    2. gate and run it through the existing
+       :meth:`SpecialistWorker._execute` — per-experiment family gate
+       (:meth:`SpecialistWorker._check_action`) plus the policy gate,
+       fingerprint, bounded shell run, and content-addressed artifact
+       evidence;
+    3. parse the observation with
+       :func:`ozzgraph.observations.parser_for_command` over the stored
+       raw artifact.
+
+    Then the deterministic :meth:`_decide` concludes over ALL gathered
+    observations:
+
+    - ``confirmed`` — at least one experiment succeeded (exit 0) and
+      its parsed observation carries at least one truthy structured
+      value (a clean probe found supporting signal);
+    - ``refuted`` — at least one experiment succeeded but every
+      succeeded observation is empty (clean probes found no signal);
+    - ``inconclusive`` — no clean supporting observation, but a captured
+      artifact could not be normalized (malformed);
+    - FAILED — no experiment succeeded at all: no evidence was gathered,
+      so there is nothing to conclude (AGENTS.md rule #3 — a conclusion
+      without evidence is prose). The run fails loudly instead and the
+      hypothesis stays open.
+
+    Evidence: the verdict references the content-addressed artifacts of
+    the experiments that produced captured observations, so every
+    conclusion is evidence-backed and the reducer can merge it into
+    graph facts unchanged (replay-compatible: verdicts add no new graph
+    entity shapes).
+    """
+
+    scope: ClassVar[WorkerScope] = DEFAULT_MICRO_AGENT_SCOPE
+    worker_id: ClassVar[str] = "micro-agent"
+    default_confidence: ClassVar[float] = 0.7
+
+    def __init__(
+        self,
+        *,
+        scope: WorkerScope | None = None,
+        artifacts: ArtifactStore,
+        policy: ScopePolicy | None = None,
+        runner: ShellRunner | None = None,
+        store: FingerprintStore | None = None,
+    ) -> None:
+        """Construct the micro agent with an instance scope.
+
+        Args:
+            scope: The instance scope the worker runs under; defaults to
+                :data:`DEFAULT_MICRO_AGENT_SCOPE`. The instance scope is
+                set BEFORE the base constructor runs, so the base builds
+                its narrowed policy from the instance scope, and every
+                later ``self.scope`` access resolves to it.
+        """
+        self._scope = scope if scope is not None else DEFAULT_MICRO_AGENT_SCOPE
+        # The instance scope shadows the ClassVar default for every
+        # base-method access (the class default satisfies the base
+        # constructor's loud declaration check).
+        self.scope = self._scope  # type: ignore[misc]
+        super().__init__(artifacts=artifacts, policy=policy, runner=runner, store=store)
+
+    def assign(self, work: WorkerTask) -> None:
+        """Assign one task; a micro task's experiments must also be covered.
+
+        Beyond the base gate (the micro task's own required scope), every
+        experiment's required scope must be covered by the instance
+        scope, or the assignment is rejected loudly BEFORE anything is
+        recorded (fail closed, AGENTS.md rule #9).
+        """
+        if isinstance(work, MicroAgentTask):
+            for experiment in work.experiments:
+                gaps = self.scope.gaps(experiment.required_scope)
+                if gaps:
+                    raise TaskOutOfScopeError(
+                        f"worker {self.worker_id!r} scope {self.scope.name!r} cannot run "
+                        f"experiment of task {work.task.id!r}: {'; '.join(gaps)}"
+                    )
+        super().assign(work)
+
+    async def run_task(self, task: Task) -> TaskOutcome:
+        """Run one assigned task: micro tasks take the bounded loop.
+
+        A :class:`MicroAgentTask` runs through :meth:`run_micro_agent`
+        (its experiments carry the bounded actions); any other
+        :class:`WorkerTask` runs through the standard single-action
+        path unchanged. Every rejection raises BEFORE any execution.
+        """
+        work = self._assignments.get(task.id)
+        if work is None:
+            raise TaskOutOfScopeError(
+                f"worker {self.worker_id!r} has no assignment for task {task.id!r}; "
+                "a worker cannot run a task outside its declared assignments"
+            )
+        self._task_gate(task)
+        self._enforce_assignment(work)
+        if isinstance(work, MicroAgentTask):
+            return await self.run_micro_agent(work)
+        self._check_action(work.command)
+        return await self._execute(work)
+
+    async def run_micro_agent(self, work: MicroAgentTask) -> TaskOutcome:
+        """The bounded, deterministic micro-agent experiment loop (V07).
+
+        Runs at most :data:`MAX_MICRO_ITERATIONS` experiments in
+        declared order, then concludes. A run that gathered no evidence
+        returns a structured FAILED outcome (rule #3); otherwise the
+        conclusion is one evidence-backed finding derived from the
+        :class:`Verdict`.
+        """
+        observations: list[Observation] = []
+        for experiment in work.experiments[:MAX_MICRO_ITERATIONS]:
+            gaps = self.scope.gaps(experiment.required_scope)
+            if gaps:
+                raise TaskOutOfScopeError(
+                    f"worker {self.worker_id!r} scope {self.scope.name!r} cannot run "
+                    f"experiment of task {work.task.id!r}: {'; '.join(gaps)}"
+                )
+            self._check_action(experiment.command)  # per-experiment family gate
+            outcome = await self._execute(experiment)  # policy gate + bounded execution
+            observations.append(await self._observe(experiment, outcome))
+        verdict = self._decide(work, observations)
+        if verdict is None:
+            return TaskOutcome(
+                task_id=work.task.id,
+                status=WorkerRunStatus.FAILED,
+                error=(
+                    f"micro agent {self.worker_id!r} gathered no evidence for task "
+                    f"{work.task.id!r}: none of the {len(observations)} experiment(s) "
+                    "produced a captured observation; the hypothesis stays open"
+                ),
+            )
+        return self._conclude(work, verdict)
+
+    async def _observe(self, experiment: WorkerTask, outcome: TaskOutcome) -> Observation:
+        """One parsed observation per experiment outcome.
+
+        A succeeded experiment's raw output artifact is read from the
+        artifact store and parsed with the parser matching the producing
+        command (:func:`ozzgraph.observations.parser_for_command`); the
+        observation is stamped with the run's success metadata (exit 0,
+        ok) and the artifact evidence ids. A failed experiment yields a
+        structural observation with no evidence — nothing was captured.
+        """
+        parser = parser_for_command(experiment.command)
+        if outcome.status is not WorkerRunStatus.SUCCEEDED or not outcome.findings:
+            return Observation(
+                source=parser.source,
+                kind=parser.kind,
+                summary=f"experiment {experiment.command!r} failed: {outcome.error or 'unknown'}",
+                ok=False,
+                exit_code=None,
+            )
+        evidence_ids = outcome.findings[0].evidence_ids
+        try:
+            raw = self._artifact_text(evidence_ids[0])
+        except (ArtifactNotFoundError, ArtifactIndexError, OSError):
+            return Observation(
+                source=parser.source,
+                kind=parser.kind,
+                summary=(
+                    f"experiment {experiment.command!r} succeeded but its artifact "
+                    "could not be read"
+                ),
+                ok=None,
+                malformed=True,
+                artifact_ids=list(evidence_ids),
+            )
+        observation = parser.parse(raw)
+        observation.exit_code = 0
+        if not observation.malformed:
+            observation.ok = True
+        observation.artifact_ids = list(evidence_ids)
+        return observation
+
+    def _artifact_text(self, artifact_id: str) -> str:
+        """The raw artifact content as text (the observation source)."""
+        content = self._artifacts.path_for(artifact_id).read_bytes()
+        return content.decode("utf-8", errors="replace")
+
+    def _decide(self, work: MicroAgentTask, observations: list[Observation]) -> Verdict | None:
+        """The deterministic conclusion over the gathered observations.
+
+        Returns None when no experiment produced captured evidence —
+        the run fails loudly (rule #3) instead of concluding from prose.
+        """
+        succeeded = [obs for obs in observations if obs.ok is True and not obs.malformed]
+        with_data = [obs for obs in succeeded if any(obs.data.values())]
+        if with_data:
+            return self._verdict(work, "confirmed", with_data, observations)
+        if succeeded:
+            return self._verdict(work, "refuted", succeeded, observations)
+        ambiguous = [obs for obs in observations if obs.malformed or obs.ok is None]
+        if ambiguous:
+            return self._verdict(work, "inconclusive", ambiguous, observations)
+        return None
+
+    def _verdict(
+        self,
+        work: MicroAgentTask,
+        kind: Literal["confirmed", "refuted", "inconclusive"],
+        evidence_observations: list[Observation],
+        observations: list[Observation],
+    ) -> Verdict:
+        """One evidence-backed verdict over the supporting observations."""
+        evidence_ids = tuple(
+            dict.fromkeys(
+                evidence_id
+                for observation in evidence_observations
+                for evidence_id in observation.artifact_ids
+            )
+        )
+        assets = tuple(
+            sorted(
+                {
+                    target
+                    for experiment in work.experiments[:MAX_MICRO_ITERATIONS]
+                    for target in experiment.required_scope.target_allowlist
+                }
+            )
+        )
+        hypothesis = f" for hypothesis {work.task.hypothesis_id}" if work.task.hypothesis_id else ""
+        return Verdict(
+            verdict=kind,
+            evidence_ids=evidence_ids,
+            impact={
+                "cwe": None,
+                "assets": assets,
+                "confidence": self.default_confidence,
+            },
+            summary=_bounded(
+                f"micro agent {kind}: {len(observations)} experiment(s), evidence: "
+                f"{', '.join(evidence_ids)}{hypothesis}",
+                512,
+            ),
+        )
+
+    def _conclude(self, work: MicroAgentTask, verdict: Verdict) -> TaskOutcome:
+        """One evidence-backed finding from the verdict (rule #3)."""
+        finding = Finding(
+            task_id=work.task.id,
+            source=self.worker_id,
+            evidence_ids=verdict.evidence_ids,
+            summary=verdict.summary,
+            confidence=self.default_confidence,
+        )
+        return TaskOutcome(
+            task_id=work.task.id,
+            status=WorkerRunStatus.SUCCEEDED,
+            findings=(finding,),
+        )
 
 
 def _target_covered(destination: str, entries: tuple[str, ...]) -> bool:
