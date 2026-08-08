@@ -21,6 +21,25 @@ edit). Content landed in 06c5ab1 (concurrent repo-owner commit absorbed staged
 docs; worker marker commit d3d74cf) — guards PASS, judge PASS 1913c392, Tier-1
 lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classification.
 
+## v2 Active — General Autonomous Security-Research Harness (per docs/CHANGES_v2.md)
+
+> v2 milestone: pivot from "HalCTF agent" to "general vuln-research harness with
+> HalCTF as one adapter." Vertical-first. Read docs/CHANGES_v2.md before
+> starting. Phases V01-V10; work strictly in order (FIFO), each a judged commit.
+
+| ID | Task | Pri | Cpx | Deps | Tags | Model | Reasoning | Fallback |
+|----|------|-----|-----|------|------|-------|-----------|----------|
+| V01 | generic-runtime: EnvironmentAdapter protocol (discover_scope/targets/objectives/capabilities), Scope/Target/Objective types, LocalEnvironment + HalCTFEnvironment; REMOVE FLAG_HUNT + VERIFY_AND_SUBMIT from generic kernel; supervisor drives a real AutonomousRunner (not sleep loop) | Critical | 5±1 | — | +++python, ++architecture, ++security | DS-V4-Pro | High | DS-V4-Flash |
+| V02 | autonomous-vertical-slice: make `ozzgraph run <target>` work end-to-end (discover → model → tool → parse → graph → hypothesis → validate → Finding → exit) against one deliberately vulnerable app, NO test code manually driving components; process-level E2E | Critical | 5±1 | V01 | +++python, ++e2e, ++security | DS-V4-Pro | High | DS-V4-Flash |
+| V03 | tool-runtime: lean default assessment image + separate `:max` Kali `kali-linux-everything` image; ToolCatalog/ToolInventory/CapabilityRegistry/ToolProvider; startup inventories every tool (path, version, capabilities); model NEVER hears of a nonexistent tool; skills declare capabilities not binaries | Critical | 5±1 | V02 | +++docker, ++python, ++infra | DS-V4-Pro | High | DS-V4-Flash |
+| V04 | semantic-observations: typed parsers/projectors for high-value tools (curl/nmap/ffuf/feroxbuster/nuclei/netexec/smbmap/ldap/semgrep/CodeQL/trivy/gitleaks/file/readelf/checksec/exiftool/binwalk) using machine-readable output (JSON/XML/SARIF/JSONL); ALWAYS persist raw output to ArtifactStore FIRST, then parse → evidence → graph | Critical | 5±1 | V02 | +++python, ++parsing, ++graph | DS-V4-Pro | High | DS-V4-Flash |
+| V05 | model-harness-matrix: empirical per-model profiles (TOML: protocol, output tokens, benchmarks) via GET /v1/models + capability probe; benchmark format compliance/tool selection/repetition/evidence grounding/solve rates; pick protocols from data not family assumptions | High | 4±1 | V02 | +++python, ++benchmark, ++models | DS-V4-Flash | Medium | Kimi-K3 |
+| V06 | security-brain: replace round-robin planner with OpportunityGenerator + StrategicPlanner (LLM only when >1 viable path), TaskBuilder, HypothesisManager, ProgressEvaluator; deterministic single-obvious-action path avoids extra LLM calls | Critical | 5±1 | V02 | +++python, ++planner, ++reasoning | DS-V4-Pro | High | DS-V4-Flash |
+| V07 | specialists: turn workers into genuine narrow micro-agents (bounded objectives, tiny context, hypothesis→experiment→observation→conclusion loop, structured verdict+evidence_ids+impact); parallelize independent hypotheses, serialize global strategy, merge via reducer | High | 4±1 | V06 | +++python, ++agents, ++parallel | DS-V4-Pro | High | DS-V4-Flash |
+| V08 | local-assessment: URL/network/repository/Docker-Compose/hybrid modes, credentials + scope files, rich Finding model (CWE, assets, preconditions, evidence, reproduction, impact CIA, confidence), reporting (report.md/json/sarif + evidence/ + graph.sqlite + events.jsonl); make local the DEFAULT experience | High | 5±1 | V02,V04 | +++python, ++cli, ++reporting | DS-V4-Pro | High | DS-V4-Flash |
+| V09 | halctf-adapter: HAL_* / OPENAI_BASE_URL / MCP_ENDPOINT discovery, official tool set (list_ctfs/challenges/status/submit_flag/request_hint/scoreboard), smoke flag, scoring, hint costs, graceful completion; move hint-policy/submission/scoreboard/flag-candidate-extractor OUT of generic kernel into ozzgraph.environments.halctf | High | 4±1 | V01,V02 | +++python, ++integration, ++ctf | DS-V4-Flash | Medium | Kimi-K3 |
+| V10 | full-regression: real benchmark suite across model matrix (web/api/source/network/ad/pwn/reverse/forensics/stego/cloud/halctf) incl. deliberate dead ends + tool-contract test (every skill's required capability has a working installed provider); prove OzzGraph+model beats plain ReAct | High | 5±1 | V03-V09 | +++python, ++testing, ++benchmark | DS-V4-Pro | High | DS-V4-Flash |
+
 ## Completed
 
 | ID | Task | Pri | Cpx | Commit | Model |
