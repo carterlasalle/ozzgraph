@@ -89,6 +89,17 @@ independently implemented components.
    choose protocols from data.
 6. `v2/security-brain` — OpportunityGenerator, StrategicPlanner, TaskBuilder,
    HypothesisManager, ProgressEvaluator.
+   > V06 (2026-08-08): implemented — `src/ozzgraph/security_brain.py` replaces
+   > the round-robin plan call in the runner's investigate loop with the
+   > opportunity-driven flow: exactly one obvious action (a single
+   > uncharacterized service) executes deterministically with ZERO LLM calls;
+   > more than one viable path invokes the StrategicPlanner (the model, with
+   > the ranked opportunities in context); zero or one non-obvious paths keep
+   > the standard model-propose path. The HypothesisManager owns the
+   > hypothesis lifecycle (create -> evidence -> promote/abandon, `status`
+   > payload field), and the ProgressEvaluator decides continue/pivot/finish
+   > each loop iteration. The public `Planner` API is unchanged (executor and
+   > evaluator still consume it).
 7. `v2/specialists` — genuine narrow micro-agents; parallelize independent
    hypotheses, serialize global strategy, merge through reducer.
 8. `v2/local-assessment` — URL/network/repository/Docker-Compose/hybrid modes,

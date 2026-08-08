@@ -19,6 +19,17 @@ compiler, :class:`~ozzgraph.adapters` model adapters,
 :class:`~ozzgraph.shell.ShellRunner`, and the
 :class:`~ozzgraph.artifacts.ArtifactStore`. NOTHING is rewritten here.
 
+V06 (docs/CHANGES_v2.md milestone 6): the per-turn decision is the
+security brain's (:class:`~ozzgraph.security_brain.SecurityBrain`) —
+opportunities are derived from the graph, exactly one obvious action
+executes deterministically with ZERO LLM calls, more than one viable
+path invokes the StrategicPlanner (the model, with the ranked
+opportunities in context), and zero or one non-obvious paths keep the
+standard model-propose path. The hypothesis lifecycle is owned by the
+brain's :class:`~ozzgraph.security_brain.HypothesisManager`, and the
+brain's :class:`~ozzgraph.security_brain.ProgressEvaluator` decides
+continue / pivot / finish each loop iteration.
+
 Design rules:
 
 - Real work, never sleep-wait (docs/CHANGES_v2.md): each iteration
@@ -124,21 +135,23 @@ from ozzgraph.model_client import (
 )
 from ozzgraph.observations import observation_for_result
 from ozzgraph.phases import Phase
-from ozzgraph.planner import (
-    EDGE_EVIDENCE_CONTRADICTS_HYPOTHESIS,
-    NoPlanDecision,
-    Plan,
-    Planner,
-)
+from ozzgraph.planner import NoPlanDecision, Plan, Planner
 from ozzgraph.policy import ScopePolicy, ScopeViolationError
 from ozzgraph.profiles import ModelProfile, probe_protocol, profile_for_model_id
 from ozzgraph.router import (
-    EDGE_EVIDENCE_SUPPORTS_HYPOTHESIS,
-    ENTITY_HYPOTHESIS,
     ENTITY_OBJECTIVE,
     FIELD_COMPLETED,
     PhaseRoute,
     PhaseRouter,
+)
+from ozzgraph.security_brain import (
+    BRAIN_DETERMINISTIC_ACTION,
+    BRAIN_PROGRESS_EVALUATED,
+    DeterministicActionDecision,
+    ProgressEvaluation,
+    ProgressVerdict,
+    SecurityBrain,
+    StrategicDecision,
 )
 from ozzgraph.shell import ShellRunner, ToolResult
 from ozzgraph.skills import SkillRegistry
@@ -313,6 +326,12 @@ class AutonomousRunner:
         router: Graph-driven phase router; defaults to a
             :class:`PhaseRouter`.
         planner: Deterministic planner; defaults to a :class:`Planner`.
+        brain: The V06 security brain (docs/CHANGES_v2.md milestone 6)
+            consulted each turn for the opportunity-driven decision;
+            defaults to a :class:`SecurityBrain` wired over
+            ``planner``, the event log, and the run id. Its hypothesis
+            manager replaces the runner's inline hypothesis wiring,
+            and its progress evaluator decides continue/pivot/finish.
         executor: One-action-per-turn executor; defaults to an
             :class:`Executor` wired over the injected router/planner/
             policy/budgets/event log.
@@ -346,6 +365,7 @@ class AutonomousRunner:
         model_service: ModelService | None = None,
         router: PhaseRouter | None = None,
         planner: Planner | None = None,
+        brain: SecurityBrain | None = None,
         executor: Executor | None = None,
         evaluator: Evaluator | None = None,
         policy: ScopePolicy | None = None,
@@ -377,6 +397,19 @@ class AutonomousRunner:
         self._inventory.run()
         self._router = router if router is not None else PhaseRouter()
         self._planner = planner if planner is not None else Planner()
+        # V06 security brain: opportunity-driven decisions each turn.
+        # The strategic planner shares the runner's deterministic
+        # planner so its binding plan always matches the plan the
+        # executor derives internally (executor parity).
+        self._brain = (
+            brain
+            if brain is not None
+            else SecurityBrain(
+                planner=self._planner,
+                event_log=event_log,
+                run_id=self._run_id,
+            )
+        )
         self._evaluator = evaluator
         self._owned_model_service = model_service is None
         self._model_service = (
@@ -434,8 +467,14 @@ class AutonomousRunner:
                 return self._terminate(RunnerStatus.STOPPED, "supervisor stop event set")
             if self._budgets.is_exhausted():
                 return self._terminate(RunnerStatus.BUDGET_EXHAUSTED, "budget exhausted")
-            if await self._objectives_complete():
-                return self._terminate(RunnerStatus.COMPLETED, "all objectives completed")
+            # V06: the progress evaluator decides continue / pivot /
+            # finish from graph predicates (the generic DONE path is
+            # "every objective completed", docs/adr/0008).
+            progress = await self._evaluate_progress()
+            if progress.verdict is ProgressVerdict.FINISH:
+                return self._terminate(RunnerStatus.COMPLETED, progress.reason)
+            if progress.verdict is ProgressVerdict.PIVOT:
+                self._append(BRAIN_PROGRESS_EVALUATED, progress.model_dump())
             outcome = await self._one_turn()
             if outcome is not None:
                 return outcome
@@ -455,6 +494,14 @@ class AutonomousRunner:
 
     async def _one_turn(self) -> RunnerStatus | None:
         """One full investigate iteration; None means continue.
+
+        The V06 security-brain flow (docs/CHANGES_v2.md milestone 6):
+        the brain derives the ranked opportunities, then the turn
+        splits — exactly one obvious action executes deterministically
+        with ZERO LLM calls; more than one viable path invokes the
+        StrategicPlanner (the model, with the ranked opportunities in
+        context); zero or one non-obvious paths keep the standard
+        model-propose path.
 
         Returns:
             A terminal :class:`RunnerStatus` when this turn ended the
@@ -477,8 +524,182 @@ class AutonomousRunner:
                 f"router reached DONE via {route.predicate}",
             )
 
-        plan_decision = await self._planner.plan(self._graph, route)
+        try:
+            decision = await self._brain.decide(
+                self._graph, route, failed_actions=self._failed_actions
+            )
+        except Exception as exc:  # noqa: BLE001 - structured failure, rule #9
+            return self._record_turn_failure("brain", exc, phase=route.phase.value)
+
+        if isinstance(decision, DeterministicActionDecision):
+            return await self._run_deterministic_turn(route, decision)
+        if isinstance(decision, StrategicDecision):
+            return await self._run_strategic_turn(route, decision)
+        return await self._run_model_turn(route)
+
+    async def _run_deterministic_turn(
+        self, route: PhaseRoute, decision: DeterministicActionDecision
+    ) -> RunnerStatus | None:
+        """Execute the single obvious action with zero LLM calls.
+
+        The task's command and skill come from the opportunity; the
+        executor's strict contract (one bounded action, policy gate,
+        fingerprint, plan binding) is unchanged. No model completion is
+        requested anywhere on this path.
+        """
+        task = decision.task
+        self._append(
+            RUNNER_TURN,
+            {
+                "phase": route.phase.value,
+                "predicate": route.predicate,
+                "plan_id": None,
+                "action_kind": "run",
+                "rationale": _bounded(decision.reason, 500),
+                "executed": False,
+                "reason": "deterministic single-obvious action; no LLM call",
+            },
+        )
+        turn = await self._executor_turn(
+            route,
+            {"action": task.command, "skill_id": task.skill_id},
+            None,
+        )
+        if turn is None:
+            return None
+        if isinstance(turn, RunnerStatus):
+            return turn
+        executed = await self._execute_action(turn)
+        if executed is None:
+            return None
+        if isinstance(executed, RunnerStatus):
+            return executed
+        await self._persist_execution(turn, executed)
+        self._append(
+            BRAIN_DETERMINISTIC_ACTION,
+            {
+                "phase": route.phase.value,
+                "opportunity_id": decision.opportunity.id,
+                "action": _bounded(task.command, 256),
+            },
+        )
+        await self._evaluate(route, None)
+        return None
+
+    async def _run_strategic_turn(
+        self, route: PhaseRoute, decision: StrategicDecision
+    ) -> RunnerStatus | None:
+        """Invoke the StrategicPlanner (LLM) and execute its choice.
+
+        The model is called exactly once with the ranked opportunities
+        in context (the strategic plan); the parsed action becomes the
+        bounded task, bound to the deterministic plan the executor
+        will persist (executor parity).
+        """
+        plan_decision: Plan | NoPlanDecision
+        if decision.plan is not None:
+            plan_decision = decision.plan
+        else:
+            plan_decision = NoPlanDecision(
+                phase=route.phase,
+                reason="mixed-path graph without a binding plan",
+            )
         plan_id = plan_decision.id if isinstance(plan_decision, Plan) else None
+
+        compiled = await self._compile_context(route)
+        if compiled is None:
+            # Context compilation failed loudly; the failure is already
+            # recorded. Continue — the budget bounds the loop.
+            return None
+
+        parsed = await self._propose_action(
+            compiled, route.phase, strategic_context=decision.strategy_prompt
+        )
+        if parsed is None:
+            return None
+
+        if parsed.kind != "run":
+            # The model reasoned or proposed a privileged/unknown kind.
+            # Privileged kinds (submit/hint/exit) are supervisor-owned
+            # (AGENTS.md rule #5) and are NEVER executed by the runner.
+            self._append(
+                RUNNER_TURN,
+                {
+                    "phase": route.phase.value,
+                    "predicate": route.predicate,
+                    "plan_id": plan_id,
+                    "action_kind": parsed.kind,
+                    "rationale": _bounded(parsed.rationale or "", 500),
+                    "executed": False,
+                    "reason": (
+                        "privileged or non-action kind; supervisor-owned, not executed"
+                        if parsed.kind not in ("think",)
+                        else "reasoning only"
+                    ),
+                },
+            )
+            return None
+        if not (parsed.payload or "").strip():
+            self._append(
+                RUNNER_MODEL_FAILURE,
+                {
+                    "phase": route.phase.value,
+                    "reason": "run action with an empty payload",
+                },
+            )
+            return None
+
+        task = await self._brain.tasks.build_strategic(
+            route, decision.plan, parsed, self._failed_actions
+        )
+        if task is None:
+            self._append(
+                RUNNER_TURN,
+                {
+                    "phase": route.phase.value,
+                    "predicate": route.predicate,
+                    "plan_id": plan_id,
+                    "action_kind": parsed.kind,
+                    "executed": False,
+                    "reason": "no skill available for the routed phase; turn skipped",
+                },
+            )
+            return None
+
+        turn = await self._executor_turn(
+            route,
+            {"action": task.command, "skill_id": task.skill_id},
+            plan_id,
+        )
+        if turn is None:
+            return None
+        if isinstance(turn, RunnerStatus):
+            return turn
+
+        executed = await self._execute_action(turn)
+        if executed is None:
+            return None
+        if isinstance(executed, RunnerStatus):
+            return executed
+        await self._persist_execution(turn, executed)
+        await self._evaluate(route, plan_id)
+        return None
+
+    async def _run_model_turn(self, route: PhaseRoute) -> RunnerStatus | None:
+        """The standard model-propose turn (fallback path).
+
+        Used when the brain returned :class:`FallbackDecision`: zero
+        viable opportunities (a fresh graph needs a model-chosen
+        direction) or exactly one non-obvious path (a lone hypothesis
+        needs judgment to test). The graph is not branching on open
+        opportunities, so no plan binds the turn — mirroring the
+        executor's own non-branching derivation.
+        """
+        plan_decision: Plan | NoPlanDecision = NoPlanDecision(
+            phase=route.phase,
+            reason="no strategic plan for this graph state",
+        )
+        plan_id = None
 
         compiled = await self._compile_context(route)
         if compiled is None:
@@ -536,7 +757,11 @@ class AutonomousRunner:
             )
             return None
 
-        turn = await self._executor_turn(route, parsed, proposed_skill, plan_id)
+        turn = await self._executor_turn(
+            route,
+            {"action": parsed.payload or "", "skill_id": proposed_skill},
+            plan_id,
+        )
         if turn is None:
             return None
         if isinstance(turn, RunnerStatus):
@@ -551,24 +776,50 @@ class AutonomousRunner:
         await self._evaluate(route, plan_id)
         return None
 
+    async def _evaluate_progress(self) -> ProgressEvaluation:
+        """The V06 progress decision for this loop iteration.
+
+        A progress-evaluation failure is recorded loudly and the loop
+        continues under the budget (the turn's own routing will fail
+        loudly on the same corrupt state).
+        """
+        try:
+            return await self._brain.progress.evaluate(self._graph)
+        except Exception as exc:  # noqa: BLE001 - recorded, never silent
+            self._append(
+                RUNNER_MODEL_FAILURE,
+                {
+                    "phase": "",
+                    "reason": f"progress evaluation failed: {type(exc).__name__}: {exc}",
+                },
+            )
+            return ProgressEvaluation(
+                verdict=ProgressVerdict.CONTINUE,
+                reason="progress evaluation failed; continuing under budget",
+                open_hypotheses=0,
+                promoted_hypotheses=0,
+                abandoned_hypotheses=0,
+                evidence_count=0,
+                completed_objectives=0,
+                total_objectives=0,
+            )
+
     async def _executor_turn(
         self,
         route: PhaseRoute,
-        parsed: ParsedAction,
-        proposed_skill: str,
+        model_output: dict[str, str],
         plan_id: str | None,
     ) -> ExecutorTurn | RunnerStatus | None:
-        """Feed the parsed action through the executor's strict contract.
+        """Feed the synthesized model output through the executor's strict contract.
 
-        Returns an :class:`ExecutorTurn` on success, a terminal
-        :class:`RunnerStatus` on budget exhaustion or an unexpected
-        error, or None when the refusal was recorded and the loop
-        should continue.
+        ``model_output`` mirrors the model's strict output contract
+        (``action`` + ``skill_id``) — from a parsed model completion
+        (strategic/fallback paths) or from a deterministic task (the
+        zero-LLM path). Returns an :class:`ExecutorTurn` on success, a
+        terminal :class:`RunnerStatus` on budget exhaustion or an
+        unexpected error, or None when the refusal was recorded and
+        the loop should continue.
         """
-        model_output: dict[str, str] = {
-            "action": parsed.payload or "",
-            "skill_id": proposed_skill,
-        }
         try:
             return await self._executor.turn(
                 self._graph, model_output, failed_actions=self._failed_actions
@@ -746,6 +997,10 @@ class AutonomousRunner:
         completion: a COMPLETE verdict marks every objective completed
         (the generic DONE path). No plan -> nothing to evaluate;
         evaluator failures are recorded and the loop continues.
+
+        V06: the hypothesis manager owns the lifecycle — a REFUTED
+        hypothesis is abandoned (never re-opportunized), a CONFIRMED
+        one is promoted (terminal; a finding backs it).
         """
         if self._evaluator is None:
             return
@@ -771,6 +1026,20 @@ class AutonomousRunner:
                 "reason": _bounded(evaluation.reason, 500),
             },
         )
+        at = datetime.now(UTC)
+        for outcome in evaluation.hypothesis_outcomes:
+            if outcome.verdict is HypothesisVerdict.REFUTED:
+                await self._brain.hypotheses.abandon(
+                    self._graph,
+                    hypothesis_id=outcome.hypothesis_id,
+                    at=at,
+                )
+            elif outcome.verdict is HypothesisVerdict.CONFIRMED:
+                await self._brain.hypotheses.promote(
+                    self._graph,
+                    hypothesis_id=outcome.hypothesis_id,
+                    at=at,
+                )
         if evaluation.verdict is PlanVerdict.COMPLETE:
             await self._complete_objectives()
             # V02: a COMPLETE verdict means a ranked hypothesis was
@@ -790,14 +1059,17 @@ class AutonomousRunner:
     ) -> None:
         """Form or link hypotheses from one new evidence entity.
 
-        Two deterministic cases:
+        V06: the hypothesis lifecycle is owned by the security brain's
+        :class:`~ozzgraph.security_brain.HypothesisManager` — this
+        method only translates the turn into the manager's typed
+        operations. Two deterministic cases:
 
         - The turn served a plan step (``request.hypothesis_id`` set):
           the new evidence is linked to that hypothesis — ``EVIDENCE
           SUPPORTS HYPOTHESIS`` when the action succeeded, ``EVIDENCE
           CONTRADICTS HYPOTHESIS`` when it failed. The evaluator reads
           exactly these edges to confirm/refute hypotheses and complete
-          plan steps (its \"new supporting evidence\" signal).
+          plan steps (its "new supporting evidence" signal).
         - No plan step (pre-branching graph): a successful observation
           FORMS a new hypothesis — a deterministic ``hypothesis``
           entity derived from the action's fingerprint, stamped with a
@@ -809,46 +1081,35 @@ class AutonomousRunner:
         """
         request = turn.action
         ok = result.exit_code == 0 and not result.timeout_state
-        edge_type = (
-            EDGE_EVIDENCE_SUPPORTS_HYPOTHESIS if ok else EDGE_EVIDENCE_CONTRADICTS_HYPOTHESIS
-        )
         if request.hypothesis_id is not None:
-            hypothesis_id = request.hypothesis_id
-            direction = "supports" if ok else "contradicts"
-            edge_id = f"{evidence_id}-{direction}-{hypothesis_id}"
-            if await self._graph.get_edge(edge_id) is None:
-                await self._create_edge(edge_id, edge_type, evidence_id, hypothesis_id, at=at)
+            await self._brain.hypotheses.attach_evidence(
+                self._graph,
+                hypothesis_id=request.hypothesis_id,
+                evidence_id=evidence_id,
+                supports=ok,
+                at=at,
+            )
             return
 
         if not ok:
             # A failed probe forms no hypothesis — there is nothing to
             # claim yet (AGENTS.md rule #3).
             return
+        flag_matched = self._flag_matches(result)
         hypothesis_id = f"hypothesis-{request.fingerprint[:12]}"
-        if await self._graph.get_entity(hypothesis_id) is None:
-            flag_matched = self._flag_matches(result)
-            payload: dict[str, object] = {
-                "confidence": (
-                    HYPOTHESIS_FLAG_CONFIDENCE if flag_matched else HYPOTHESIS_CONFIDENCE
-                ),
-                "objective": _bounded(
-                    f"{request.action} -> {_summarize(result)}",
-                    300,
-                ),
-                "exploitation_direction": _bounded(request.action, 200),
-            }
-            if flag_matched:
-                payload["cwe"] = DEFAULT_FINDING_CWE
-            await self._create_entity(hypothesis_id, ENTITY_HYPOTHESIS, payload, at=at)
-        edge_id = f"{evidence_id}-supports-{hypothesis_id}"
-        if await self._graph.get_edge(edge_id) is None:
-            await self._create_edge(
-                edge_id,
-                EDGE_EVIDENCE_SUPPORTS_HYPOTHESIS,
-                evidence_id,
-                hypothesis_id,
-                at=at,
-            )
+        await self._brain.hypotheses.create(
+            self._graph,
+            hypothesis_id=hypothesis_id,
+            objective=_bounded(
+                f"{request.action} -> {_summarize(result)}",
+                300,
+            ),
+            exploitation_direction=_bounded(request.action, 200),
+            confidence=(HYPOTHESIS_FLAG_CONFIDENCE if flag_matched else HYPOTHESIS_CONFIDENCE),
+            evidence_id=evidence_id,
+            cwe=DEFAULT_FINDING_CWE if flag_matched else None,
+            at=at,
+        )
 
     def _flag_matches(self, result: ToolResult) -> bool:
         """True when the raw action output matched the flag pattern.
@@ -1048,13 +1309,22 @@ class AutonomousRunner:
             )
             return None
 
-    async def _propose_action(self, compiled: CompiledContext, phase: Phase) -> ParsedAction | None:
+    async def _propose_action(
+        self,
+        compiled: CompiledContext,
+        phase: Phase,
+        *,
+        strategic_context: str = "",
+    ) -> ParsedAction | None:
         """One bounded model completion parsed through the adapters.
 
         The model is called once per turn with the compiled context;
-        the completion is probed and parsed with the adapter matching
-        the profile's protocols (one repair attempt on parse failure,
-        per the adapter failure policy). Failures are recorded as
+        when ``strategic_context`` is set (the V06 StrategicPlanner
+        path), the ranked opportunities are appended to the prompt so
+        the completion is a strategy-informed action choice. The
+        completion is probed and parsed with the adapter matching the
+        profile's protocols (one repair attempt on parse failure, per
+        the adapter failure policy). Failures are recorded as
         ``runner.model_failure`` events and return None (continue).
         """
         adapter = self._adapter_for_prompt()
@@ -1065,6 +1335,8 @@ class AutonomousRunner:
             skills=compiled.skills,
             output_contract=compiled.output_contract,
         )
+        if strategic_context:
+            prompt = f"{prompt}\n\n{strategic_context}"
         request = ModelRequest(
             model=self._model_id,
             messages=[ModelMessage(role="user", content=prompt)],
@@ -1227,18 +1499,6 @@ class AutonomousRunner:
                     },
                     at=at,
                 )
-
-    async def _objectives_complete(self) -> bool:
-        """True when every seeded objective entity is completed.
-
-        Authoritative state is the graph (AGENTS.md rule #1); a graph
-        with no objectives is never "complete" (a run without
-        objectives is not a completed run).
-        """
-        objectives = await self._graph.list_entities(ENTITY_OBJECTIVE)
-        if not objectives:
-            return False
-        return all(_payload_bool(record, FIELD_COMPLETED) for record in objectives)
 
     async def _complete_objectives(self) -> None:
         """Mark every objective completed (deterministic DONE path).
