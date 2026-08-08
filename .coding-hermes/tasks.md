@@ -23,7 +23,7 @@ synced (2 tick entries), gitignore complete, wiring OK ([project.scripts] halctl
 E2E-001 ran today, GitReins judge config correctly sized (60 iter/1M in).
 Cooldown set 43200s. Counter: 1/7.
 
-## [ ] DOCS-000 — documentation gate pass (missing CONTRIBUTING.md + SECURITY.md)
+## [ ] DOCS-000 — documentation gate pass (missing CONTRIBUTING.md + SECURITY.md + repo metadata)
 
 Per coding-hermes-board documentation gate: the project must complete the docs
 pass before E2E/NEVER-DONE idle. README.md, AGENTS.md, and docs/ exist but
@@ -35,6 +35,8 @@ CONTRIBUTING.md and SECURITY.md are MISSING. Add:
   supervisor-only privileged ops), threat boundaries, secrets handling.
 - Refresh README.md to the launchpad formatting bar (title+badges+nav+
   diagram+tables, skimmable at a glance) if it doesn't already meet it.
+- GitHub repo description + topics/tags set via `gh repo edit` (one-line
+  mission + 3-8 discoverable tags; e.g. ctf, agent, harness, cli, go).
 Judge via GitReins; commit; mark [x].
 
 ## Completed

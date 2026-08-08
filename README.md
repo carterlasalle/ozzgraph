@@ -1,5 +1,9 @@
 # OzzGraph
 
+[![CI](https://github.com/carterlasalle/ozzgraph/actions/workflows/ci.yml/badge.svg)](https://github.com/carterlasalle/ozzgraph/actions/workflows/ci.yml)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue)](https://docs.python.org/3.12/)
+[![uv](https://img.shields.io/badge/uv-managed-blue)](https://docs.astral.sh/uv/)
+
 OzzGraph is a model-adaptive autonomous CTF agent harness for authorized,
 isolated security challenges. It wraps a small deterministic kernel around a
 planner–executor–evaluator loop so even modest models behave like disciplined
@@ -10,6 +14,17 @@ The core principle:
 > The model supplies judgment when the next action is uncertain. The harness
 > supplies memory, discipline, tools, safety boundaries, execution, evidence,
 > and recovery.
+
+```text
+Supervisor Kernel
+  └─ State & Work Graph (SQLite) + append-only JSONL events + artifact store
+       └─ Phase Router — graph predicates, never action counts
+            ├─ Planner / Scheduler — bounded plans, task DAG, conflict keys
+            ├─ Context Compiler → Model Adapter → [model: bounded judgment only]
+            ├─ Policy & Tool Plane — allowlists, fingerprints, timeouts, limits
+            ├─ Observation & Artifact Pipeline — raw output stays outside context
+            └─ Evaluator & Reducer — provenance-validated facts ──▶ loop
+```
 
 **Status: spec-complete — all 32 PRs of the implementation plan are merged and
 this is the v1.0 release candidate (`1.0.0`).** Every Definition of Done item
@@ -98,25 +113,17 @@ walkthrough.
 
 ## Documentation
 
-- **Usage guide** — [docs/USAGE.md](docs/USAGE.md): install, configuration,
-  running a capture, artifact store + event log + replay, executor semantics,
-  budgets/heartbeat/lifecycle, scheduling.
-- **Customization** — [docs/CUSTOMIZATION.md](docs/CUSTOMIZATION.md): model
-  profiles + adapters, skill registry, scope policy, hint policy, specialist
-  workers, reducer, phase routing.
-- [Product Requirements](docs/PRD.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [Technical Requirements](docs/TECHNICAL_REQUIREMENTS.md)
-- [Data Strategy](docs/DATA_STRATEGY.md)
-- [API and Integrations](docs/API_AND_INTEGRATIONS.md)
-- [Testing and Quality Assurance](docs/TESTING_AND_QA.md)
-- [Golden Traces](docs/GOLDEN_TRACES.md)
-- [Synthetic Lab](docs/SYNTHETIC_LAB.md)
-- [Image Hardening](docs/IMAGE_HARDENING.md)
-- [Release and Operations](docs/RELEASE.md)
-- [Implementation Plan](docs/IMPLEMENTATION_PLAN.md)
-- [Architecture Decision Records](docs/adr/)
-- [Agent Instructions](AGENTS.md)
+| Document | Purpose |
+| --- | --- |
+| [docs/USAGE.md](docs/USAGE.md) | install, configuration, running a capture, replay, lifecycle |
+| [docs/CUSTOMIZATION.md](docs/CUSTOMIZATION.md) | model profiles + adapters, skills, policies, workers |
+| [docs/PRD.md](docs/PRD.md) · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/TECHNICAL_REQUIREMENTS.md](docs/TECHNICAL_REQUIREMENTS.md) | product, architecture, technical requirements |
+| [docs/DATA_STRATEGY.md](docs/DATA_STRATEGY.md) · [docs/API_AND_INTEGRATIONS.md](docs/API_AND_INTEGRATIONS.md) | data strategy, API and integrations |
+| [docs/TESTING_AND_QA.md](docs/TESTING_AND_QA.md) · [docs/GOLDEN_TRACES.md](docs/GOLDEN_TRACES.md) | testing/QA gates, golden traces |
+| [docs/SYNTHETIC_LAB.md](docs/SYNTHETIC_LAB.md) · [docs/IMAGE_HARDENING.md](docs/IMAGE_HARDENING.md) | synthetic lab, container hardening |
+| [docs/RELEASE.md](docs/RELEASE.md) · [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) | release ops, implementation plan |
+| [docs/adr/](docs/adr/) | architecture decision records |
+| [AGENTS.md](AGENTS.md) · [CONTRIBUTING.md](CONTRIBUTING.md) · [SECURITY.md](SECURITY.md) | agent governance, contribution workflow, security policy |
 
 ## Repository Layout
 
@@ -127,6 +134,8 @@ ozzgraph/
 ├── Dockerfile              # immutable competition image (see docs/IMAGE_HARDENING.md)
 ├── README.md
 ├── AGENTS.md               # coding-agent governance for this repo
+├── CONTRIBUTING.md         # build/test/lint/PR workflow
+├── SECURITY.md             # vulnerability reporting + security model
 ├── .github/workflows/ci.yml
 ├── docs/                   # PRD, architecture, API, ADRs, usage, customization, ...
 ├── scripts/                # e.g. SBOM generation
@@ -137,13 +146,13 @@ ozzgraph/
 
 ## Development Commands
 
-```bash
-uv sync
-uv run ruff check .          # lint
-uv run ruff format --check . # format (also checks Python blocks inside docs/)
-uv run mypy src              # strict typing
-uv run pytest                # full test suite
-```
+| Command | Purpose |
+| --- | --- |
+| `uv sync` | install dependencies into `.venv` |
+| `uv run ruff check .` | lint |
+| `uv run ruff format --check .` | format check (also checks Python blocks inside `docs/`) |
+| `uv run mypy src` | strict typing |
+| `uv run pytest` | full test suite (880 tests) |
 
 The optional dashboard (setup and endpoints: [API_AND_INTEGRATIONS.md](docs/API_AND_INTEGRATIONS.md)
 § Optional Dashboard API) lives in `dashboard/`:
