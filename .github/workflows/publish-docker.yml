@@ -57,8 +57,11 @@ jobs:
           fi
           echo "ghcr_tags=$ghcr_tags" >> "$GITHUB_OUTPUT"
           echo "dh_tags=$dh_tags" >> "$GITHUB_OUTPUT"
-          # If Docker Hub is configured, publish both; else GHCR only.
-          if [ -n "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
+          # Publish to Docker Hub only when the repo variable DOCKERHUB_PUBLISH
+          # is 'true' (set alongside the DOCKERHUB_USERNAME/TOKEN secrets).
+          # GitHub forbids referencing `secrets` in if:/expression contexts,
+          # so the gate is a variables flag; secrets are used only in with:.
+          if [ "${{ vars.DOCKERHUB_PUBLISH }}" = "true" ]; then
             echo "all_tags=${ghcr_tags},${dh_tags}" >> "$GITHUB_OUTPUT"
             echo "publish_dh=yes" >> "$GITHUB_OUTPUT"
           else
@@ -74,9 +77,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # ----- Docker Hub auth (only when secrets exist) -----
+      # ----- Docker Hub auth (only when DOCKERHUB_PUBLISH=true) -----
       - name: Log in to Docker Hub
-        if: ${{ secrets.DOCKERHUB_USERNAME != '' }}
+        if: ${{ vars.DOCKERHUB_PUBLISH == 'true' }}
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
