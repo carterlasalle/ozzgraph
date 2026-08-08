@@ -1,0 +1,68 @@
+# syntax=docker/dockerfile:1
+
+# OzzGraph :max assessment image (V03 — docs/IMAGE_HARDENING.md "Max Image").
+#
+# The DEFAULT competition image (Dockerfile, ADR-0007) stays lean and
+# immutable; THIS image is the opt-in full-toolkit research image: Kali
+# rolling with the `kali-linux-everything` metapackage (the entire Kali
+# toolset — nmap, ffuf, nuclei, netexec, semgrep, trivy, gitleaks,
+# binwalk, exiftool, ...) plus the same uv-installed OzzGraph app the
+# default image ships.
+#
+# Differences vs the default image (intentional, documented):
+#   * runs as root — Kali assessment tooling (packet capture, raw
+#     sockets, /etc/shadow-adjacent forensics) needs it; pair with
+#     `--cap-add=NET_RAW --cap-add=NET_ADMIN` (or --privileged) for
+#     scan/capture features
+#   * mutable rootfs — a tool image, not the immutable competition
+#     image; no pip removal, no read-only guarantee
+#   * huge — kali-linux-everything is tens of GB installed; this image
+#     is for authorized research hosts, never the competition runtime
+#
+# The app install is identical to the default image's builder stage:
+# `uv sync --frozen --no-dev --no-editable` produces a self-contained
+# venv, so the V03 tool inventory finds the real toolset at startup.
+
+FROM kalilinux/kali-rolling
+
+# Noninteractive apt: tzdata and friends must not prompt during build.
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Full Kali toolset + the packages uv and the kernel need at runtime.
+# `kali-linux-everything` is the superset metapackage (depends on
+# kali-linux-large + desktop + every tool category); no
+# --no-install-recommends, so tool functionality is never starved.
+RUN apt-get update \
+    && apt-get install -y kali-linux-everything curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# uv pinned to the version used to maintain uv.lock (0.12.1), exactly
+# like the default image's builder stage.
+COPY --from=ghcr.io/astral-sh/uv:0.12.1 /uv /uvx /bin/
+
+ENV UV_LINK_MODE=copy
+
+WORKDIR /app
+
+# Metadata + lockfile first (cached layer); the source comes after.
+COPY pyproject.toml uv.lock README.md ./
+COPY src ./src
+
+# The same self-contained install as the default image.
+RUN uv sync --frozen --no-dev --no-editable
+
+# `ozzgraph` console script on PATH; deterministic Python behavior;
+# state lives outside the rootfs on the declared volume.
+ENV PATH="/app/.venv/bin:${PATH}" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    OZZGRAPH_STATE_DIR=/var/lib/ozzgraph/state \
+    OZZGRAPH_ARTIFACT_DIR=/var/lib/ozzgraph/state/artifacts
+
+RUN mkdir -p /var/lib/ozzgraph/state
+
+# Writable state/artifact mount point (anonymous volume unless overridden).
+VOLUME ["/var/lib/ozzgraph/state"]
+
+# Same kernel entry as the default image.
+ENTRYPOINT ["python", "-m", "ozzgraph"]

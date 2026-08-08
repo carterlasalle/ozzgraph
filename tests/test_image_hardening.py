@@ -27,6 +27,7 @@ SIZE_BUDGET_BYTES = 1500 * 1024 * 1024
 FORBIDDEN_TERMS = ("cuda", "pytorch", "torch", "vllm", "tensorflow")
 
 DOCKERFILE = REPO_ROOT / "Dockerfile"
+KALI_DOCKERFILE = REPO_ROOT / "docker" / "Dockerfile.kali"
 DOCKERIGNORE = REPO_ROOT / ".dockerignore"
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 SBOM_SCRIPT = REPO_ROOT / "scripts" / "gen-sbom.sh"
@@ -216,6 +217,39 @@ def test_runtime_stage_has_no_installer_and_no_index_downloads() -> None:
         assert "pip install" not in line
         assert "apt-get" not in line and "apk add" not in line and "dnf " not in line
     assert any("pip uninstall -y pip" in line for line in runtime)
+
+
+# ---------------------------------------------------------------------------
+# :max Kali image (V03, docker/Dockerfile.kali)
+# ---------------------------------------------------------------------------
+
+
+def test_kali_dockerfile_builds_the_max_image() -> None:
+    """The opt-in :max image: Kali rolling + kali-linux-everything + the app.
+
+    V03 (docs/CHANGES_v2.md milestone 3) adds a second, opt-in tool
+    image; the default competition image (and its hardening) is
+    untouched. This shape test guards the :max contract without needing
+    Docker: the Kali base, the full toolset metapackage, and the same
+    uv-installed app as the default image.
+    """
+    text = _read(KALI_DOCKERFILE)
+    lines = _instructions(text)
+    assert any(line.startswith("FROM kalilinux/kali-rolling") for line in lines)
+    assert any("apt-get install" in line and "kali-linux-everything" in line for line in lines)
+    # The same self-contained app install as the default builder stage.
+    assert any("uv sync --frozen --no-dev --no-editable" in line for line in lines)
+    assert any("COPY --from=ghcr.io/astral-sh/uv:0.12.1" in line for line in lines)
+    assert any(line.startswith("ENTRYPOINT") and "ozzgraph" in line for line in lines)
+    assert any("OZZGRAPH_STATE_DIR=/var/lib/ozzgraph/state" in line for line in lines)
+
+
+def test_image_hardening_doc_covers_the_max_image() -> None:
+    """The image doc documents the :max build/run story (V03)."""
+    doc = _read(IMAGE_DOC)
+    assert "## Max Image (Kali, `:max`)" in doc
+    assert "docker/Dockerfile.kali" in doc
+    assert "ozzgraph:max" in doc
 
 
 # ---------------------------------------------------------------------------

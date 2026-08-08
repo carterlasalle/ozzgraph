@@ -49,6 +49,51 @@ The Dockerfile is multi-stage:
    non-root operator (`ozzgraph`, uid 10001), sets env, declares the state
    volume, and drops pip.
 
+## Max Image (Kali, `:max`)
+
+V03 (tool-runtime) adds a second, opt-in image for full-toolkit research:
+`docker/Dockerfile.kali` builds `ozzgraph:max` from `kalilinux/kali-rolling`
+with the `kali-linux-everything` metapackage (the entire Kali toolset) plus
+the same uv-installed app the default image ships. The V03 tool inventory
+(`src/ozzgraph/toolplane.py`) then finds the real toolset at startup —
+nmap, ffuf, nuclei, netexec, semgrep, trivy, gitleaks, binwalk, exiftool,
+searchsploit, and everything else `kali-linux-everything` installs.
+
+```bash
+# Build (from the repository root; same context as the default image):
+docker build -f docker/Dockerfile.kali -t ozzgraph:max .
+
+# Sanity checks (same contract as the default image):
+docker run --rm ozzgraph:max --version
+docker run --rm --entrypoint nmap ozzgraph:max --version
+docker run --rm --entrypoint python ozzgraph:max -c \
+  "from ozzgraph.toolplane import ToolInventory; i = ToolInventory().run(); print(len(i.capabilities.available()), 'capabilities')"
+
+# A local assessment run with the full toolset:
+docker run --rm -v /var/lib/ozzgraph/state \
+  -e OZZGRAPH_TARGET=http://127.0.0.1:3000 \
+  -e OZZGRAPH_MODEL_BASE_URL=http://host.docker.internal:8000/v1 \
+  ozzgraph:max
+```
+
+Deliberate differences vs the default image (ADR-0007 hardening is NOT
+regressed — this is a separate, opt-in tool image):
+
+| Aspect | Default image | `:max` (Kali) |
+| --- | --- | --- |
+| Base | `python:3.12-slim` (digest-pinned) | `kalilinux/kali-rolling` (rolling — latest toolset by design) |
+| Toolset | none beyond the Python runtime | `kali-linux-everything` (tens of GB installed) |
+| User | non-root `ozzgraph` (uid 10001) | root (Kali tooling needs raw sockets/packet capture; add `--cap-add=NET_RAW --cap-add=NET_ADMIN` or `--privileged` for scans) |
+| Rootfs | immutable, `--read-only` safe | mutable (a tool image, not the competition runtime) |
+| Package installer | pip removed | kept (apt/uv stay for tool updates) |
+| Size budget | < 1.5 GiB (CI tripwire) | NOT budget-bound (kali-linux-everything is intentionally huge) |
+
+Both images share the same kernel entrypoint (`python -m ozzgraph`), the
+same venv install (`uv sync --frozen --no-dev --no-editable`), the same
+state volume, and the same env-driven configuration — a run configured for
+the default image behaves identically on `:max` except for the tools the
+inventory finds.
+
 ## Minimization Choices
 
 | Choice | Effect |

@@ -36,6 +36,7 @@ from ozzgraph.runner import (
 )
 from ozzgraph.shell import ShellRunner
 from ozzgraph.state_graph import StateGraph
+from ozzgraph.toolplane import ToolInventory
 
 RUN = "run-test-1"
 
@@ -136,6 +137,7 @@ def _runner(
     model_service: ModelService | None = None,
     stop_event=None,
     budgets: Budgets | None = None,
+    inventory: ToolInventory | None = None,
 ) -> AutonomousRunner:
     state = tmp_path / "state"
     state.mkdir(parents=True, exist_ok=True)
@@ -155,6 +157,10 @@ def _runner(
         model_service=model_service,
         policy=ScopePolicy(target_allowlist=("127.0.0.1",)),
         shell=ShellRunner(),
+        # Hermetic tool plane: an empty search path finds no tools, so
+        # the model context advertises no capabilities and no version
+        # probe ever spawns a subprocess (deterministic, fast).
+        inventory=inventory if inventory is not None else ToolInventory(paths=()),
     )
 
 
@@ -421,3 +427,60 @@ async def test_existing_objectives_complete_returns_completed(tmp_path: Path) ->
         status = await runner.run()
         assert status is RunnerStatus.COMPLETED
         assert await graph.list_entities("action") == []
+
+
+# ---------------------------------------------------------------------------
+# V03 tool plane wiring (docs/CHANGES_v2.md milestone 3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_context_advertises_only_installed_capabilities(tmp_path: Path) -> None:
+    """The startup inventory bounds the model context.
+
+    With exactly one fake tool (curl) on the search path, the compiled
+    prompt advertises ``http.request`` and nothing else — the model
+    NEVER hears about a capability (or a skill requirement) that no
+    installed tool backs.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    curl = bin_dir / "curl"
+    curl.write_text("#!/bin/sh\necho 'curl 8.5.0'\n", encoding="utf-8")
+    curl.chmod(0o755)
+
+    captured: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content)["messages"][0]["content"])
+        return httpx.Response(
+            200, json=_completion('{"kind": "run", "payload": "echo runner-turn-1"}')
+        )
+
+    service = ModelService(
+        transport=httpx.MockTransport(handler),
+        max_retries=0,
+        event_log=EventLog.for_run(tmp_path / "state"),
+        run_id=RUN,
+    )
+    budgets = _budgets(max_model_calls=1, max_tool_calls=1)
+    async with StateGraph(":memory:") as graph:
+        runner = _runner(
+            tmp_path,
+            graph,
+            model_service=service,
+            budgets=budgets,
+            inventory=ToolInventory(paths=[str(bin_dir)]),
+        )
+        try:
+            status = await runner.run()
+        finally:
+            await runner.aclose()
+        assert status is RunnerStatus.BUDGET_EXHAUSTED
+    assert captured, "the model was called at least once"
+    prompt = captured[0]
+    assert "AVAILABLE CAPABILITIES" in prompt
+    assert "- http.request" in prompt
+    # Absent tools' capabilities never reach the model.
+    assert "network.port_scan" not in prompt
+    assert "web.content_discovery" not in prompt

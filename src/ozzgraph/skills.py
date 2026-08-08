@@ -47,7 +47,7 @@ are HalCTF environment behaviors arriving with the full adapter in V09.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -104,6 +104,12 @@ class Skill(BaseModel):
     :class:`~ozzgraph.observations.Parser` instances by
     :meth:`SkillRegistry.parsers_for` against
     :data:`ozzgraph.observations.PARSERS`.
+    ``required_capabilities`` (V03, docs/CHANGES_v2.md milestone 3) is
+    the tool-plane contract: the first-class capability ids this skill
+    needs from the environment (e.g. ``("http.request",)``) instead of
+    binary names embedded in prompt text. :meth:`SkillRegistry.list_available`
+    filters advertised skills against the capabilities an inventory
+    actually provides.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -115,6 +121,7 @@ class Skill(BaseModel):
     card: str = Field(min_length=1)
     timeout_seconds: int = Field(ge=1)
     parsers: tuple[tuple[str, str], ...] = ()
+    required_capabilities: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def _normalize_phases(self) -> Self:
@@ -125,6 +132,7 @@ class Skill(BaseModel):
         ARCHITECTURE.md phase order), and duplicates are dropped.
         """
         self.phases = tuple(phase for phase in Phase if phase in self.phases)
+        self.required_capabilities = tuple(sorted(set(self.required_capabilities)))
         return self
 
     def summary(self) -> SkillSummary:
@@ -176,6 +184,24 @@ class SkillRegistry:
             skill.summary()
             for skill in sorted(self._skills.values(), key=lambda skill: skill.skill_id)
             if phase in skill.phases
+        ]
+
+    def list_available(self, capabilities: Collection[str]) -> list[SkillSummary]:
+        """Summaries of skills whose requirements the capabilities satisfy.
+
+        The V03 tool-contract bridge (docs/CHANGES_v2.md milestone 3):
+        a skill is advertised only when EVERY capability it requires
+        (``Skill.required_capabilities``) is provided by the given set
+        (typically the inventory's available capabilities). A skill
+        declaring no required capabilities is always available.
+        Deterministic: sorted by ``skill_id``, never advertised when a
+        required capability is missing.
+        """
+        provided = set(capabilities)
+        return [
+            skill.summary()
+            for skill in sorted(self._skills.values(), key=lambda skill: skill.skill_id)
+            if provided.issuperset(skill.required_capabilities)
         ]
 
     def load(self, skill_id: str) -> Skill:
@@ -250,6 +276,7 @@ def _skill(
     card: str,
     timeout_seconds: int,
     parsers: Sequence[tuple[str, str]] = (("shell", "text"),),
+    required_capabilities: Sequence[str] = (),
 ) -> Skill:
     """Convenience constructor for initial-pack skills.
 
@@ -265,6 +292,7 @@ def _skill(
         card=card,
         timeout_seconds=timeout_seconds,
         parsers=tuple(parsers),
+        required_capabilities=tuple(required_capabilities),
     )
 
 
@@ -291,6 +319,7 @@ RECON_DNS_ENUM = _skill(
         "one action, or query addresses outside the target allowlist."
     ),
     timeout_seconds=60,
+    required_capabilities=("dns.lookup", "web.content_discovery"),
 )
 
 #: HTTP service fingerprinting: headers, methods, TLS certificate, and
@@ -313,6 +342,7 @@ RECON_HTTP_FINGERPRINT = _skill(
         "hosts, or scan ports from this skill (use recon_port_probe)."
     ),
     timeout_seconds=60,
+    required_capabilities=("http.request", "network.tls_probe"),
 )
 
 #: Bounded TCP connect probes and banner grabs.
@@ -333,6 +363,7 @@ RECON_PORT_PROBE = _skill(
         "paste banner content verbatim into context."
     ),
     timeout_seconds=90,
+    required_capabilities=("network.probe", "network.listener"),
 )
 
 
@@ -358,6 +389,7 @@ ENUM_WEB_CONTENT = _skill(
         "recursively, or dump discovered files into model context."
     ),
     timeout_seconds=90,
+    required_capabilities=("web.content_discovery", "http.request"),
 )
 
 #: Service version and banner extraction for known-vulnerability matching.
@@ -380,6 +412,7 @@ ENUM_SERVICE_VERSION = _skill(
         "CVE databases (no public internet)."
     ),
     timeout_seconds=60,
+    required_capabilities=("http.request", "dns.lookup", "network.probe", "exploit.search"),
 )
 
 #: HTTP application analysis: auth scheme, cookies, API endpoints.
@@ -400,6 +433,7 @@ ENUM_HTTP_APPLICATION = _skill(
         "action, or attempt auth bypass here (that is exploitation)."
     ),
     timeout_seconds=90,
+    required_capabilities=("http.request", "file.search"),
 )
 
 
@@ -425,6 +459,7 @@ EXPLOIT_PARAMETER_INJECTION = _skill(
         "batch many parameters at once, or retry identical probes."
     ),
     timeout_seconds=90,
+    required_capabilities=("http.request", "web.sql_injection"),
 )
 
 #: Command injection detection with visible and blind markers.
@@ -445,6 +480,7 @@ EXPLOIT_COMMAND_INJECTION = _skill(
         "payloads that modify target state without a hypothesis."
     ),
     timeout_seconds=90,
+    required_capabilities=("http.request",),
 )
 
 #: Authentication bypass checks: default credentials, cookie tampering,
@@ -469,6 +505,7 @@ EXPLOIT_AUTH_BYPASS = _skill(
         "target other users' sessions, or reuse altered credentials as facts."
     ),
     timeout_seconds=60,
+    required_capabilities=("http.request", "crypto.decode"),
 )
 
 register_skill(RECON_DNS_ENUM)

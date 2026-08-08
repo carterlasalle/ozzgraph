@@ -142,6 +142,7 @@ from ozzgraph.router import (
 from ozzgraph.shell import ShellRunner, ToolResult
 from ozzgraph.skills import SkillRegistry
 from ozzgraph.state_graph import EntityRecord, StateGraph
+from ozzgraph.toolplane import ToolInventory
 
 #: Producer name on every runner event.
 RUNNER_PRODUCER = "runner"
@@ -321,6 +322,11 @@ class AutonomousRunner:
             fail-closed :class:`ScopePolicy`.
         shell: Bounded shell runner for execution; defaults to a
             :class:`ShellRunner`.
+        inventory: The V03 tool-plane inventory (docs/CHANGES_v2.md
+            milestone 3); defaults to a fresh :class:`ToolInventory`
+            probed against the environment's PATH at startup. Its
+            available capabilities bound the model context: the model
+            only hears about capabilities backed by installed tools.
     """
 
     def __init__(
@@ -343,6 +349,7 @@ class AutonomousRunner:
         evaluator: Evaluator | None = None,
         policy: ScopePolicy | None = None,
         shell: ShellRunner | None = None,
+        inventory: ToolInventory | None = None,
     ) -> None:
         self._config = config
         self._graph = graph
@@ -360,6 +367,13 @@ class AutonomousRunner:
         self._profile = profile if profile is not None else profile_for_model_id(self._model_id)
         self._policy = policy if policy is not None else ScopePolicy()
         self._shell = shell if shell is not None else ShellRunner()
+        # V03 tool plane: the startup inventory runs HERE, before any
+        # turn, so the model context can only ever advertise
+        # capabilities backed by installed tools (docs/CHANGES_v2.md
+        # milestone 3). Probing is deterministic and failure-tolerant
+        # (a probe failure records version=None, never raises).
+        self._inventory = inventory if inventory is not None else ToolInventory()
+        self._inventory.run()
         self._router = router if router is not None else PhaseRouter()
         self._planner = planner if planner is not None else Planner()
         self._evaluator = evaluator
@@ -369,7 +383,7 @@ class AutonomousRunner:
             if model_service is not None
             else ModelService(event_log=event_log, run_id=self._run_id)
         )
-        registry = SkillRegistry()
+        self._registry = SkillRegistry()
         self._executor = (
             executor
             if executor is not None
@@ -377,7 +391,7 @@ class AutonomousRunner:
                 budgets=budgets,
                 run_id=self._run_id,
                 event_log=event_log,
-                registry=registry,
+                registry=self._registry,
                 router=self._router,
                 planner=self._planner,
                 policy=self._policy,
@@ -969,12 +983,15 @@ class AutonomousRunner:
         The mission layer is the environment's authorized scope plus
         its objectives — the immutable mission context (context layer
         1). Anchors are the seeded target entities; the phase sweep
-        pulls the routed phase's tagged entities.
+        pulls the routed phase's tagged entities. The V03 tool plane
+        bounds the advertisement: the compiled context lists ONLY the
+        capabilities the startup inventory found installed, and only
+        skills whose required capabilities are all available reach the
+        model (docs/CHANGES_v2.md milestone 3).
         """
         try:
             scope = await self._environment.discover_scope()
             objectives = await self._environment.discover_objectives()
-            capabilities = await self._environment.discover_capabilities()
         except Exception as exc:  # noqa: BLE001 - recorded, never silent
             self._append(
                 RUNNER_MODEL_FAILURE,
@@ -984,16 +1001,23 @@ class AutonomousRunner:
                 },
             )
             return None
-        mission = self._mission_text(scope, objectives, capabilities)
+        capabilities = tuple(sorted(self._inventory.capabilities.available()))
+        mission = self._mission_text(scope, objectives)
         target_records = await self._graph.list_entities(ENTITY_TARGET)
         target_ids = tuple(record.id for record in target_records)
-        skills = tuple(summary.skill_id for summary in route.skills)
+        available_skill_ids = frozenset(
+            summary.skill_id for summary in self._registry.list_available(capabilities)
+        )
+        skills = tuple(
+            summary.skill_id for summary in route.skills if summary.skill_id in available_skill_ids
+        )
         request = ContextRequest(
             mission=mission,
             target_ids=target_ids,
             phase=route.phase.value,
             transcript_tail=self._transcript_tail(),
             skills=skills,
+            capabilities=capabilities,
             output_contract=OUTPUT_CONTRACT,
         )
         try:
@@ -1237,10 +1261,14 @@ class AutonomousRunner:
     # helpers
     # ------------------------------------------------------------------
 
-    def _mission_text(
-        self, scope: Scope, objectives: Sequence[Objective], capabilities: set[str]
-    ) -> str:
-        """The bounded immutable mission layer for model context."""
+    def _mission_text(self, scope: Scope, objectives: Sequence[Objective]) -> str:
+        """The bounded immutable mission layer for model context.
+
+        Scope surface and objectives only: capability advertisement is
+        the V03 tool plane's job (``compile_context`` renders the
+        ``AVAILABLE CAPABILITIES`` block from the inventory), so the
+        mission never lists a capability that no installed tool backs.
+        """
         lines = [
             f"Authorized assessment scope: {scope.name}",
         ]
@@ -1255,7 +1283,6 @@ class AutonomousRunner:
         lines.append("Objectives:")
         for objective in objectives:
             lines.append(f"- {objective.id}: {objective.description}")
-        lines.append(f"Capabilities: {', '.join(sorted(capabilities))}")
         return _bounded("\n".join(lines), _MISSION_LIMIT)
 
     def _transcript_tail(self) -> str:

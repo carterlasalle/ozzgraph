@@ -28,6 +28,7 @@ from ozzgraph.skills import (
     SkillSummary,
     register_skill,
 )
+from ozzgraph.toolplane import ToolCatalog
 
 # ---------------------------------------------------------------------------
 # Phase enum
@@ -353,3 +354,52 @@ def test_skill_phases_are_normalized_to_canonical_order() -> None:
     )
     assert skill.phases == (Phase.RECON, Phase.PIVOT)
     assert skill.summary().phases == (Phase.RECON, Phase.PIVOT)
+
+
+# ---------------------------------------------------------------------------
+# required_capabilities (V03 tool plane, docs/CHANGES_v2.md milestone 3)
+# ---------------------------------------------------------------------------
+
+
+def test_every_skill_declares_registered_capabilities() -> None:
+    """The tool-contract seed: requirements are catalog capability ids.
+
+    Every registered skill's ``required_capabilities`` must be part of
+    the tool-plane vocabulary (docs/CHANGES_v2.md milestone 3) — a
+    skill requiring an unknown capability could never be satisfied by
+    the inventory.
+    """
+    vocabulary = ToolCatalog().capabilities()
+    for skill in SKILLS.values():
+        unknown = set(skill.required_capabilities) - vocabulary
+        assert not unknown, f"skill {skill.skill_id!r} requires unknown capabilities: {unknown}"
+
+
+def test_required_capabilities_round_trip_through_load() -> None:
+    """load() exposes the skill's declared capability requirements."""
+    skill = SkillRegistry().load("recon_http_fingerprint")
+    assert skill.required_capabilities == ("http.request", "network.tls_probe")
+    assert "curl" not in skill.required_capabilities  # capabilities, not binaries
+
+
+def test_required_capabilities_default_empty() -> None:
+    """A skill without declared requirements is valid (always available)."""
+    skill = SKILLS["recon_dns_enum"].model_copy(update={"required_capabilities": ()})
+    assert skill.required_capabilities == ()
+    assert [s.skill_id for s in SkillRegistry().list_available(())] == []
+
+
+def test_list_available_filters_by_required_capabilities() -> None:
+    """A skill is advertised only when every requirement is provided."""
+    registry = SkillRegistry()
+    # recon_http_fingerprint requires http.request + network.tls_probe:
+    # it is available only when BOTH capabilities are provided.
+    assert "recon_http_fingerprint" not in {
+        s.skill_id for s in registry.list_available(("http.request",))
+    }
+    available = registry.list_available(("http.request", "network.tls_probe"))
+    assert "recon_http_fingerprint" in {s.skill_id for s in available}
+    # Listings stay sorted and are plain SkillSummary advertisements.
+    ids = [s.skill_id for s in available]
+    assert ids == sorted(ids)
+    assert all(isinstance(s, SkillSummary) for s in available)

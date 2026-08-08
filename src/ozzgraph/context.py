@@ -19,6 +19,11 @@ consumes:
    :attr:`ModelProfile.max_advertised_skills`)
 6. output contract -> ``output_contract``
 
+Plus the V03 tool-plane layer (docs/CHANGES_v2.md milestone 3):
+``request.capabilities`` renders the deterministic ``AVAILABLE
+CAPABILITIES`` block at the head of ``graph_summary`` — the model only
+hears about capabilities backed by installed tools.
+
 Relevance (docs/DATA_STRATEGY.md): the projection starts from the
 explicitly referenced anchor entities (active task, targets, services,
 hypotheses, artifacts), expands each anchor ONE hop through its typed
@@ -134,9 +139,11 @@ class ContextRequest(BaseModel):
 
     Carries every query dimension from docs/DATA_STRATEGY.md
     ("Context Retrieval") plus the pass-through layers: mission (layer
-    1), transcript tail (layer 4), skill summaries (layer 5), and
-    output contract (layer 6). Anchors are explicit entity IDs; each
-    must exist in the graph or compilation raises
+    1), transcript tail (layer 4), skill summaries (layer 5), output
+    contract (layer 6), and the V03 tool-plane capability
+    advertisement (``capabilities`` — only capabilities backed by
+    installed tools, per the inventory). Anchors are explicit entity
+    IDs; each must exist in the graph or compilation raises
     :class:`ContextReferenceError`.
     """
 
@@ -155,6 +162,7 @@ class ContextRequest(BaseModel):
     transcript_tail: str = ""
     skills: tuple[str, ...] = ()
     output_contract: str = ""
+    capabilities: tuple[str, ...] = ()
 
 
 class CompiledContext(BaseModel):
@@ -176,6 +184,7 @@ class CompiledContext(BaseModel):
     transcript_tail: str
     skills: tuple[str, ...]
     output_contract: str
+    capabilities: tuple[str, ...]
     truncated: bool
     entities_included: int = Field(ge=0)
     edges_included: int = Field(ge=0)
@@ -324,6 +333,24 @@ def _edge_line(record: EdgeRecord) -> str:
     return f"- {record.src_id} --[{record.type}]--> {record.dst_id}"
 
 
+def _render_capabilities(capabilities: Sequence[str]) -> str:
+    """The tool-plane layer: available capabilities, or "" when none.
+
+    Renders the deterministic ``AVAILABLE CAPABILITIES`` section (the
+    V03 tool-plane advertisement, docs/CHANGES_v2.md milestone 3) into
+    the head of ``graph_summary``: only capabilities the inventory
+    actually provides are ever listed. Sorted and deduplicated so the
+    render is independent of the caller's input order; empty input
+    renders nothing (an environment with no installed tool advertises
+    no capabilities).
+    """
+    if not capabilities:
+        return ""
+    lines = ["AVAILABLE CAPABILITIES"]
+    lines.extend(f"- {capability}" for capability in sorted(set(capabilities)))
+    return "\n".join(lines) + "\n"
+
+
 def _render_active_context(request: ContextRequest, anchors: Mapping[str, EntityRecord]) -> str:
     """Layer 2: the active task context, or "" when nothing is named.
 
@@ -360,22 +387,28 @@ def _render_projection(
     entities: Sequence[EntityRecord],
     edges: Sequence[EdgeRecord],
     graph_budget: int,
+    *,
+    capabilities_section: str = "",
 ) -> _ProjectionRender:
     """Render the projection under a deterministic char budget.
 
     Section headers and ``(none)`` placeholders are fixed overhead;
     entity lines (anchors first, by relevance tier) are greedy-added
     before edge lines, each reserved against the truncation marker.
-    The result always satisfies ``len(text) <= graph_budget``: when
-    every line fits no marker is emitted, otherwise the fixed marker
-    closes the projection and the omitted counts are reported through
-    the returned struct.
+    ``capabilities_section`` (the V03 tool-plane advertisement) is
+    fixed overhead like the active-context section — never truncated
+    itself, but counted against the budget. The result always satisfies
+    ``len(text) <= graph_budget``: when every line fits no marker is
+    emitted, otherwise the fixed marker closes the projection and the
+    omitted counts are reported through the returned struct.
     """
     entity_lines = [_entity_line(record) for record in entities]
     edge_lines = [_edge_line(record) for record in edges]
     overhead_parts: list[str] = []
     if active_section:
         overhead_parts.append(active_section)
+    if capabilities_section:
+        overhead_parts.append(capabilities_section)
     overhead_parts.append("PROJECTED ENTITIES\n")
     if not entity_lines:
         overhead_parts.append("(none)\n")
@@ -538,8 +571,12 @@ async def compile_context(
     and never truncated; the transcript tail is capped at a quarter of
     the remaining budget (keeping its END); the graph projection gets
     the rest and truncates deterministically with a marker when it
-    cannot fit. The invariant ``CompiledContext.used_chars <=
-    profile.context_soft_limit`` always holds.
+    cannot fit. ``request.capabilities`` (the V03 tool-plane
+    advertisement, docs/CHANGES_v2.md milestone 3) renders as fixed
+    overhead inside the projection — sorted, deduplicated, and empty
+    when no capability is advertised. The invariant
+    ``CompiledContext.used_chars <= profile.context_soft_limit`` always
+    holds.
 
     Determinism: identical graph state, request, and ``now`` yield
     byte-identical output. When ``request.recency_window`` is set,
@@ -608,7 +645,14 @@ async def compile_context(
     edges = await _projection_edges(graph, set(selected), request.include_contradictions)
 
     active_section = _render_active_context(request, anchors)
-    render = _render_projection(active_section, ordered_entities, edges, graph_budget)
+    capabilities = tuple(sorted(set(request.capabilities)))
+    render = _render_projection(
+        active_section,
+        ordered_entities,
+        edges,
+        graph_budget,
+        capabilities_section=_render_capabilities(capabilities),
+    )
     used_chars = (
         len(request.mission)
         + len(render.text)
@@ -622,6 +666,7 @@ async def compile_context(
         transcript_tail=transcript_tail,
         skills=capped_skills,
         output_contract=request.output_contract,
+        capabilities=capabilities,
         truncated=render.truncated or tail_truncated,
         entities_included=render.entities_included,
         edges_included=render.edges_included,
