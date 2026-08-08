@@ -1,0 +1,49 @@
+# OzzGraph model profile: Llama family (V05 data-driven profiles).
+# A wide family spanning local deployments, so limits are conservative
+# and confidence lower. ``model_ids`` lists concrete ids this family
+# profile covers; family-prefix matching covers the rest of the line.
+# Benchmarks are placeholders — all-zero means "not yet measured";
+# ProfileStore.update_benchmarks() persists measured harness metrics here.
+family = "llama"
+model_ids = ["llama-3.1-8b", "llama-3.1-70b", "llama-3-8b", "llama3.1:8b"]
+protocols = ["json", "terminal", "three_line"]
+context_soft_limit = 32000
+output_token_limit = 2048
+temperature = 0.2
+supported_roles = ["system", "user", "assistant"]
+max_advertised_skills = 4
+failure_behavior = "repair_retry"
+confidence = 0.8
+
+[benchmarks.json]
+valid_output_rate = 0.0
+correct_tool_selection = 0.0
+repetition_rate = 0.0
+recovery_rate = 0.0
+output_tokens_per_decision = 0.0
+steps_per_objective = 0.0
+solve_rate = 0.0
+unsupported_fact_rate = 0.0
+unsupported_flag_rate = 0.0
+
+[benchmarks.terminal]
+valid_output_rate = 0.0
+correct_tool_selection = 0.0
+repetition_rate = 0.0
+recovery_rate = 0.0
+output_tokens_per_decision = 0.0
+steps_per_objective = 0.0
+solve_rate = 0.0
+unsupported_fact_rate = 0.0
+unsupported_flag_rate = 0.0
+
+[benchmarks.three_line]
+valid_output_rate = 0.0
+correct_tool_selection = 0.0
+repetition_rate = 0.0
+recovery_rate = 0.0
+output_tokens_per_decision = 0.0
+steps_per_objective = 0.0
+solve_rate = 0.0
+unsupported_fact_rate = 0.0
+unsupported_flag_rate = 0.0

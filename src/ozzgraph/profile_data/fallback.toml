@@ -1,0 +1,27 @@
+# OzzGraph model profile: conservative unknown-model fallback (V05).
+# Confidence is below PROBE_CONFIDENCE_THRESHOLD so discovery always
+# probes unknown models rather than assuming capabilities: terminal text
+# only, no function-call assumption, no system-role assumption, no
+# advertised skills, no temperature override, and abort_turn failure
+# behavior (an unknown model's repair semantics are unknown).
+# Benchmarks are placeholders — all-zero means "not yet measured";
+# ProfileStore.update_benchmarks() persists measured harness metrics here.
+family = "fallback"
+protocols = ["terminal"]
+context_soft_limit = 8000
+output_token_limit = 1024
+supported_roles = ["user", "assistant"]
+max_advertised_skills = 0
+failure_behavior = "abort_turn"
+confidence = 0.3
+
+[benchmarks.terminal]
+valid_output_rate = 0.0
+correct_tool_selection = 0.0
+repetition_rate = 0.0
+recovery_rate = 0.0
+output_tokens_per_decision = 0.0
+steps_per_objective = 0.0
+solve_rate = 0.0
+unsupported_fact_rate = 0.0
+unsupported_flag_rate = 0.0

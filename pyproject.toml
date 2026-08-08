@@ -29,6 +29,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ozzgraph"]
+# V05: the per-model profile TOML files under src/ozzgraph/profile_data/
+# ship with the wheel (hatchling includes all files under `packages`),
+# so a wheel install resolves them exactly like an editable checkout
+# (profiles.default_profile_dir()).
 
 [tool.ruff]
 line-length = 100

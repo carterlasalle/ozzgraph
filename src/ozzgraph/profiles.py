@@ -27,20 +27,34 @@ Design rules (AGENTS.md):
   evidenced registration and is never assumed from a text sample
   (AGENTS.md rule: "never assume function-call support").
   :func:`discover_profile` can therefore never add ``function_call``.
-- The registry (:data:`BUILTIN_PROFILES`) is a plain deterministic
-  dict keyed by family, populated at import. It is explicitly not a
-  plugin system (AGENTS.md rule #10): adding a profile means adding
-  one dict entry.
+- The registry (:data:`BUILTIN_PROFILES`) is data, not code: profiles
+  ship as per-model TOML files under ``profile_data/`` (declared as
+  wheel package data) and are loaded through the deterministic
+  :class:`~ozzgraph.profile_store.ProfileStore` (or the pure
+  :func:`load_profiles_from_dir` loader at import time). Adding a
+  profile means adding a TOML file — the kernel stays small (AGENTS.md
+  rule #10), and the family assumptions that used to be hardcoded are
+  now empirical, data-driven entries (docs/CHANGES_v2.md milestone 5).
+- Benchmarks are measured data: a profile carries per-protocol
+  :class:`~ozzgraph.traces.TraceMetrics` (``benchmarks``), persisted by
+  :meth:`~ozzgraph.profile_store.ProfileStore.update_benchmarks` from
+  model-harness matrix runs (format compliance, tool selection,
+  repetition, evidence grounding, solve rates). Shipped placeholder
+  entries are all-zero, meaning "not yet measured".
 """
 
 from __future__ import annotations
 
 import json
 import re
+import tomllib
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
+
+from ozzgraph.traces import TraceMetrics
 
 #: Protocol family names (docs/ARCHITECTURE.md, "Model Adapters").
 PROTOCOL_TERMINAL = "terminal"
@@ -101,6 +115,11 @@ class ModelProfile(BaseModel):
     themselves land in PR15, this field only names the policy
     (``"repair_retry"`` for known families, ``"abort_turn"`` for the
     unknown-model fallback).
+
+    ``model_ids`` lists concrete model ids the family profile covers
+    (exact-id discovery evidence, V05); ``benchmarks`` holds per-protocol
+    measured harness metrics (:class:`~ozzgraph.traces.TraceMetrics`),
+    persisted by the profile store — ``None`` means nothing measured yet.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -114,6 +133,8 @@ class ModelProfile(BaseModel):
     max_advertised_skills: int = Field(ge=0)
     failure_behavior: FailureBehavior
     confidence: float = Field(ge=0.0, le=1.0)
+    model_ids: list[str] = Field(default_factory=list)
+    benchmarks: dict[str, TraceMetrics] | None = None
 
     @field_serializer("protocols")
     def _serialize_protocols(self, protocols: frozenset[str]) -> list[str]:
@@ -255,17 +276,19 @@ def _model_id_listed(model_id: str, models: Sequence[str]) -> bool:
     )
 
 
-def discover_profile(
+def refine_profile(
+    base: ModelProfile,
     model_id: str,
     *,
     sample: str | None = None,
     models: Sequence[str] | None = None,
 ) -> ModelProfile:
-    """Map ``model_id`` to a profile, refining it with any evidence.
+    """Refine ``base`` with any evidence (models list, one completion).
 
-    Starts from :func:`profile_for_model_id`. When the base mapping is
-    low-confidence (below ``PROBE_CONFIDENCE_THRESHOLD``) and evidence
-    is available, the profile is refined:
+    The refinement half of discovery, factored out so callers with a
+    pre-resolved base profile (e.g. the profile store's exact per-model
+    lookup) apply exactly the same evidence rules as
+    :func:`discover_profile`:
 
     - ``models`` (the provider's advertised list): a match for
       ``model_id`` adds ``MODELS_MATCH_CONFIDENCE`` (the model
@@ -276,12 +299,11 @@ def discover_profile(
     - ``function_call`` is never added: it is not detectable from a
       text sample and is never assumed (AGENTS.md).
 
-    Returns a copy of the base profile — the built-ins are never
-    mutated — whose confidence reflects the evidence: no evidence
-    means the base confidence stands, which for unknown families is
-    low and keeps protocol probing in the loop.
+    Refinement only applies while the base confidence is below
+    :data:`PROBE_CONFIDENCE_THRESHOLD` (unknown models stay in the
+    probe loop; known families stand as shipped). Returns a copy — the
+    base profile is never mutated.
     """
-    base = profile_for_model_id(model_id)
     protocols = base.protocols
     confidence = base.confidence
     if confidence < PROBE_CONFIDENCE_THRESHOLD:
@@ -297,107 +319,104 @@ def discover_profile(
     return base.model_copy(update={"protocols": protocols, "confidence": confidence})
 
 
-def _builtin(
+def discover_profile(
+    model_id: str,
     *,
-    family: str,
-    protocols: frozenset[str],
-    context_soft_limit: int,
-    output_token_limit: int,
-    max_advertised_skills: int,
-    confidence: float,
-    temperature: float | None = 0.2,
-    supported_roles: list[str] | None = None,
-    failure_behavior: FailureBehavior = "repair_retry",
+    sample: str | None = None,
+    models: Sequence[str] | None = None,
 ) -> ModelProfile:
-    """Convenience constructor for built-in family profiles.
+    """Map ``model_id`` to a profile, refining it with any evidence.
 
-    Conservative defaults: temperature ``0.2`` (a mild determinism
-    bias; adapters may override), the full ``system`` / ``user`` /
-    ``assistant`` role set, and ``repair_retry`` failure behavior. No
-    built-in profile ever declares ``function_call`` (never assume
-    function-call support, AGENTS.md).
+    Starts from :func:`profile_for_model_id`. When the base mapping is
+    low-confidence (below ``PROBE_CONFIDENCE_THRESHOLD``) and evidence
+    is available, the profile is refined — see
+    :func:`refine_profile` for the evidence rules (advertised model
+    list, one completion sample; ``function_call`` is never added).
+
+    Returns a copy of the base profile — the built-ins are never
+    mutated — whose confidence reflects the evidence: no evidence
+    means the base confidence stands, which for unknown families is
+    low and keeps protocol probing in the loop.
     """
-    return ModelProfile(
-        family=family,
-        protocols=protocols,
-        context_soft_limit=context_soft_limit,
-        output_token_limit=output_token_limit,
-        temperature=temperature,
-        supported_roles=supported_roles or ["system", "user", "assistant"],
-        max_advertised_skills=max_advertised_skills,
-        failure_behavior=failure_behavior,
-        confidence=confidence,
-    )
+    return refine_profile(profile_for_model_id(model_id), model_id, sample=sample, models=models)
 
 
-#: GPT-family profile (e.g. ``gpt-4o``): text + three-line + JSON
-#: protocols, 128k context, 4096 output tokens.
-GPT_PROFILE = _builtin(
-    family="gpt",
-    protocols=frozenset({PROTOCOL_TERMINAL, PROTOCOL_THREE_LINE, PROTOCOL_JSON}),
-    context_soft_limit=128_000,
-    output_token_limit=4_096,
-    max_advertised_skills=8,
-    confidence=0.9,
-)
+def profile_from_toml_mapping(data: Mapping[str, object]) -> ModelProfile:
+    """Parse one profile TOML file's contents into a :class:`ModelProfile`.
 
-#: Claude-family profile (e.g. ``claude-3``): 100k context, 4096
-#: output tokens.
-CLAUDE_PROFILE = _builtin(
-    family="claude",
-    protocols=frozenset({PROTOCOL_TERMINAL, PROTOCOL_THREE_LINE, PROTOCOL_JSON}),
-    context_soft_limit=100_000,
-    output_token_limit=4_096,
-    max_advertised_skills=8,
-    confidence=0.9,
-)
+    Pure and deterministic (V05): the TOML document is a single table
+    of profile fields (``family``, ``protocols``,
+    ``output_token_limit``, ``model_ids``, ...) with optional nested
+    ``[benchmarks.<protocol>]`` tables of measured
+    :class:`~ozzgraph.traces.TraceMetrics`. ``model_ids`` lists the
+    concrete model ids the family profile covers — exact-id discovery
+    evidence. Invalid data fails loudly through pydantic validation.
+    """
+    return ModelProfile.model_validate(dict(data))
 
-#: DeepSeek-family profile (e.g. ``deepseek-v4``): 64k context, 4096
-#: output tokens.
-DEEPSEEK_PROFILE = _builtin(
-    family="deepseek",
-    protocols=frozenset({PROTOCOL_TERMINAL, PROTOCOL_THREE_LINE, PROTOCOL_JSON}),
-    context_soft_limit=64_000,
-    output_token_limit=4_096,
-    max_advertised_skills=8,
-    confidence=0.9,
-)
 
-#: Llama-family profile (e.g. ``llama-3``): a wide family spanning
-#: local deployments, so limits are conservative and confidence lower.
-LLAMA_PROFILE = _builtin(
-    family="llama",
-    protocols=frozenset({PROTOCOL_TERMINAL, PROTOCOL_THREE_LINE, PROTOCOL_JSON}),
-    context_soft_limit=32_000,
-    output_token_limit=2_048,
-    max_advertised_skills=4,
-    confidence=0.8,
-)
+def load_profiles_from_dir(data_dir: Path) -> dict[str, ModelProfile]:
+    """Deterministically load every ``*.toml`` in ``data_dir``.
 
-#: Conservative plain-text fallback for unknown models: terminal text
-#: only, no function-call assumption, no system-role assumption, no
-#: advertised skills, no temperature override, and ``abort_turn``
-#: failure behavior (an unknown model's repair semantics are unknown).
-FALLBACK_PROFILE = ModelProfile(
-    family=FALLBACK_FAMILY,
-    protocols=frozenset({PROTOCOL_TERMINAL}),
-    context_soft_limit=8_000,
-    output_token_limit=1_024,
-    temperature=None,
-    supported_roles=["user", "assistant"],
-    max_advertised_skills=0,
-    failure_behavior="abort_turn",
-    confidence=0.3,
-)
+    Files are read in sorted filename order; each file must declare a
+    distinct family (a duplicate family fails loudly — a store whose
+    data is ambiguous must never silently pick one). A missing
+    directory raises :class:`FileNotFoundError`, so a vanished data
+    source never degrades silently to the fallback profile.
+    """
+    if not data_dir.is_dir():
+        raise FileNotFoundError(f"profile data dir does not exist: {data_dir}")
+    profiles: dict[str, ModelProfile] = {}
+    for path in sorted(data_dir.glob("*.toml")):
+        profile = profile_from_toml_mapping(tomllib.loads(path.read_text()))
+        if profile.family in profiles:
+            raise ValueError(f"duplicate profile family {profile.family!r} in {path}")
+        profiles[profile.family] = profile
+    return profiles
 
-#: Deterministic registry: family -> profile. Populated at import with
-#: the built-ins; explicitly not a plugin system (AGENTS.md rule #10).
-#: The fallback family entry is :data:`FALLBACK_PROFILE` itself, so an
-#: unknown id resolves to it through the same lookup path.
-BUILTIN_PROFILES: dict[str, ModelProfile] = {
-    "gpt": GPT_PROFILE,
-    "claude": CLAUDE_PROFILE,
-    "deepseek": DEEPSEEK_PROFILE,
-    "llama": LLAMA_PROFILE,
-    FALLBACK_FAMILY: FALLBACK_PROFILE,
-}
+
+def default_profile_dir() -> Path:
+    """The package data directory shipping the initial TOML profiles.
+
+    ``profile_data/`` sits next to this module, so it resolves the
+    same in editable checkouts and installed wheels (the directory is
+    declared as wheel package data in ``pyproject.toml``).
+    """
+    return Path(__file__).resolve().parent / "profile_data"
+
+
+#: Deterministic registry: family -> profile, loaded from the shipped
+#: TOML profiles under ``profile_data/``. The registry is data, not
+#: code (V05): adding a profile means adding a TOML file, and the
+#: family assumptions that used to be hardcoded here are now empirical,
+#: data-driven entries. The fallback family entry is
+#: :data:`FALLBACK_PROFILE` itself, so an unknown id resolves to it
+#: through the same lookup path.
+BUILTIN_PROFILES: dict[str, ModelProfile] = load_profiles_from_dir(default_profile_dir())
+
+#: GPT-family profile (e.g. ``gpt-4o``) from ``profile_data/gpt.toml``:
+#: text + three-line + JSON protocols, 128k context, 4096 output
+#: tokens. Backward-compatible alias for the registry entry.
+GPT_PROFILE = BUILTIN_PROFILES["gpt"]
+
+#: Claude-family profile (e.g. ``claude-3``) from
+#: ``profile_data/claude.toml``: 100k context, 4096 output tokens.
+CLAUDE_PROFILE = BUILTIN_PROFILES["claude"]
+
+#: DeepSeek-family profile (e.g. ``deepseek-v4``) from
+#: ``profile_data/deepseek.toml``: 64k context, 4096 output tokens.
+DEEPSEEK_PROFILE = BUILTIN_PROFILES["deepseek"]
+
+#: Llama-family profile (e.g. ``llama-3``) from
+#: ``profile_data/llama.toml``: a wide family spanning local
+#: deployments, so limits are conservative and confidence lower.
+LLAMA_PROFILE = BUILTIN_PROFILES["llama"]
+
+#: Conservative plain-text fallback for unknown models (shipped as
+#: ``profile_data/fallback.toml``): terminal text only, no
+#: function-call assumption, no system-role assumption, no advertised
+#: skills, no temperature override, and ``abort_turn`` failure behavior
+#: (an unknown model's repair semantics are unknown). Confidence sits
+#: below :data:`PROBE_CONFIDENCE_THRESHOLD`, keeping protocol probing
+#: in the discovery loop.
+FALLBACK_PROFILE = BUILTIN_PROFILES[FALLBACK_FAMILY]

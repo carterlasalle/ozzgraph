@@ -1,0 +1,48 @@
+# OzzGraph model profile: Claude family (V05 data-driven profiles).
+# ``model_ids`` lists concrete ids this family profile covers (exact-id
+# discovery evidence); family-prefix matching covers the rest of the line.
+# Benchmarks are placeholders — all-zero means "not yet measured";
+# ProfileStore.update_benchmarks() persists measured harness metrics here.
+family = "claude"
+model_ids = ["claude-3-opus-20240229", "claude-3-sonnet-20240229", "claude-3-haiku-20240307"]
+protocols = ["json", "terminal", "three_line"]
+context_soft_limit = 100000
+output_token_limit = 4096
+temperature = 0.2
+supported_roles = ["system", "user", "assistant"]
+max_advertised_skills = 8
+failure_behavior = "repair_retry"
+confidence = 0.9
+
+[benchmarks.json]
+valid_output_rate = 0.0
+correct_tool_selection = 0.0
+repetition_rate = 0.0
+recovery_rate = 0.0
+output_tokens_per_decision = 0.0
+steps_per_objective = 0.0
+solve_rate = 0.0
+unsupported_fact_rate = 0.0
+unsupported_flag_rate = 0.0
+
+[benchmarks.terminal]
+valid_output_rate = 0.0
+correct_tool_selection = 0.0
+repetition_rate = 0.0
+recovery_rate = 0.0
+output_tokens_per_decision = 0.0
+steps_per_objective = 0.0
+solve_rate = 0.0
+unsupported_fact_rate = 0.0
+unsupported_flag_rate = 0.0
+
+[benchmarks.three_line]
+valid_output_rate = 0.0
+correct_tool_selection = 0.0
+repetition_rate = 0.0
+recovery_rate = 0.0
+output_tokens_per_decision = 0.0
+steps_per_objective = 0.0
+solve_rate = 0.0
+unsupported_fact_rate = 0.0
+unsupported_flag_rate = 0.0
