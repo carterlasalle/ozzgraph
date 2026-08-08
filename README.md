@@ -1,13 +1,19 @@
+<div align="center">
+
 # OzzGraph
+
+**A model-adaptive autonomous CTF agent harness for authorized, isolated security challenges.**
 
 [![CI](https://github.com/carterlasalle/ozzgraph/actions/workflows/ci.yml/badge.svg)](https://github.com/carterlasalle/ozzgraph/actions/workflows/ci.yml)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue)](https://docs.python.org/3.12/)
 [![uv](https://img.shields.io/badge/uv-managed-blue)](https://docs.astral.sh/uv/)
 
-OzzGraph is a model-adaptive autonomous CTF agent harness for authorized,
-isolated security challenges. It wraps a small deterministic kernel around a
-planner–executor–evaluator loop so even modest models behave like disciplined
-security operators.
+[Quick start](#quick-start) · [Documentation](#documentation) · [Repository layout](#repository-layout) · [Development](#development-commands) · [Container image](#container-image) · [Safety model](#safety-model)
+
+</div>
+
+OzzGraph wraps a small deterministic kernel around a planner–executor–evaluator
+loop so even modest models behave like disciplined security operators.
 
 The core principle:
 
@@ -26,43 +32,57 @@ Supervisor Kernel
             └─ Evaluator & Reducer — provenance-validated facts ──▶ loop
 ```
 
-**Status: spec-complete — all 32 PRs of the implementation plan are merged and
-this is the v1.0 release candidate (`1.0.0`).** Every Definition of Done item
-passed the PR32 rehearsal (19/19, see [docs/RELEASE.md](docs/RELEASE.md)).
+**Release status: v1.0.0 — all 32 PRs of the implementation plan are merged;
+every Definition of Done item passed the PR32 rehearsal (19/19, see
+[docs/RELEASE.md](docs/RELEASE.md)).** The codebase is the release candidate;
+a versioned GitHub release/tag has not yet been cut (no `v1.0.0` tag or
+GitHub Release exists).
 
 ## What the harness does
 
-- **Ozz-style security phases** — BOOTSTRAP, RECON, ENUMERATION,
-  EXPLOITATION, POST_EXPLOITATION, PIVOT, FLAG_HUNT, VERIFY_AND_SUBMIT,
-  REPLAN, DONE — driven by **graph-state predicates, never action counts**.
-- **Authoritative state outside model context** — a SQLite state graph
-  (`graph.db`), an append-only JSONL event log (`actions.jsonl`), and a
-  content-addressed artifact store. Replaying the event log reconstructs the
-  identical graph hash.
-- **One bounded action per executor turn** — every action carries a timeout,
-  an output limit, and a normalized fingerprint; duplicates and failed
-  fingerprints are never retried (loop prevention).
-- **Lazy skill registry** — compact per-phase summaries are advertised to the
-  model; full skill cards load only when a skill is selected.
-- **Model profiles + three adapter protocols** — terminal-native free text,
-  strict three-line, and structured JSON, each with its own prompt compiler,
-  parser, and deterministic repair strategy.
-- **Planner–Executor–Evaluator** — bounded ranked plans only when the graph
-  branches; deterministic evaluation with replanning, abandonment, and loop
-  recovery.
-- **Safety boundaries** — command-length limits, target allowlists, platform
-  and public-internet blocking, per-phase command families, and
-  supervisor-only flag submission and paid hints (models never call raw MCP;
-  `halctl` is the only adapter surface).
-- **Bounded parallel workers** — a task DAG scheduler with conflict keys,
-  scope-limited specialist workers, and a reducer that merges validated
-  findings into authoritative facts.
-- **Deterministic bootstrap** — parses targets, retrieves challenge status,
-  submits a smoke flag, requests the free hint, and probes reachability before
-  the main loop.
-- **Optional local dashboard** — a strict-TypeScript, zero-runtime-dependency
-  read-only viewer for runs, graph, events, artifacts, metrics, and replay
-  (outside the competition image).
+| Area | What OzzGraph provides |
+| --- | --- |
+| Security phases | Ozz-style BOOTSTRAP → RECON → ENUMERATION → EXPLOITATION → POST_EXPLOITATION → PIVOT → FLAG_HUNT → VERIFY_AND_SUBMIT → REPLAN → DONE, driven by **graph-state predicates, never action counts** |
+| Authoritative state | SQLite state graph (`graph.db`), append-only JSONL event log (`actions.jsonl`), content-addressed artifact store — replaying the log reconstructs the identical graph hash |
+| Bounded actions | One action per executor turn with a timeout, output limit, and normalized fingerprint; duplicates/failed fingerprints never retried |
+| Lazy skills | Compact per-phase summaries advertised to the model; full skill cards load only when selected |
+| Model adapters | Three protocols — terminal-native free text, strict three-line, structured JSON — each with its own prompt compiler, parser, and deterministic repair |
+| Planner–Executor–Evaluator | Bounded ranked plans only when the graph branches; deterministic evaluation with replanning, abandonment, loop recovery |
+| Safety boundaries | Command-length limits, target allowlists, platform/internet blocking, per-phase command families, supervisor-only flag submission + paid hints (`halctl` only adapter) |
+| Parallel workers | Task DAG scheduler with conflict keys, scope-limited specialists, reducer that merges validated findings into facts |
+| Deterministic bootstrap | Parses targets, retrieves status, submits smoke flag, requests free hint, probes reachability before the main loop |
+| Optional dashboard | Strict-TypeScript, zero-runtime-dependency read-only viewer (runs, graph, events, artifacts, metrics, replay) outside the image |
+
+## Safety model
+
+OzzGraph is a security harness: it intentionally makes dangerous or
+unverifiable paths hard or impossible. The model is **untrusted**; the harness
+owns all safety boundaries.
+
+- **State lives outside model context.** SQLite graph, append-only JSONL
+  events, and a content-addressed artifact store are authoritative. A model
+  claim is a hypothesis, never confirmed state; facts require deterministic
+  evidence.
+- **One bounded action per turn.** Every action has a timeout, an output
+  limit, and a normalized fingerprint. Duplicates and failed fingerprints are
+  never retried (loop prevention). No multi-command plans disguised as one
+  action.
+- **No raw MCP.** Models never call MCP directly; `halctl` is the only adapter
+  surface, and only the supervisor may submit flags, buy paid hints, or exit
+  the run (`OZZGRAPH_HAL_PRIVILEGED`).
+- **Command and target allowlists.** Command-length limits, target allowlists,
+  and platform / public-internet destination blocking are enforced before
+  execution. Per-phase command families gate what a worker may run.
+- **Deterministic, provenance-validated facts.** Every `Fact` references
+  evidence; every evidence references an observation or artifact; replaying
+  the event log reconstructs the identical graph hash.
+- **Authorized, isolated environments only.** OzzGraph is designed for
+  sanctioned CTF challenges, never production or public-internet targets.
+
+What OzzGraph does **not** guarantee: it does not sandbox a hostile model's
+*output* from influencing a run beyond the above controls, and it is not a
+general-purpose automation framework. See [SECURITY.md](SECURITY.md) for
+vulnerability reporting and the full threat model.
 
 ## Quick start
 
