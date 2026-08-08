@@ -212,6 +212,30 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 | T01 | PR1: init uv project + CI skeleton (lint, format, type, test gates) | Critical | 2±1 | e4deda1 | DS-V4-Flash |
 | T02 | PR2: runtime configuration + supervisor skeleton | Critical | 4±1 | 02711ad | DS-V4-Flash |
 
+## [ ] DOCS-000 — Documentation pass re-run for completed v2 milestone (V01–V10)
+
+The v2 milestone (V01–V10) is complete but the README is stale — it was last
+touched at v1.0.0 and documents only the HalCTF-era harness (0 mentions of the
+v2 modules). Re-run the documentation pass from the diff since the last docs
+pass. Required (per the fleet Documentation Gate standard):
+
+1. **README.md** — reflect the completed v2 milestone:
+   - Release status: v1.0.0 shipped **+ v2 (V01–V10) complete** (general
+     vuln-research harness, HalCTF as one adapter)
+   - New v2 modules in the capabilities/layout: `environments/`,
+     `findings.py`, `observations.py`, `security_brain.py`, `specialists.py`,
+     `profile_store.py`/`profile_data/`, `matrix.py`, `benchmarks/`, `lab/`
+   - Add the newer v2 docs to the Documentation table: `CHANGES_v2.md`,
+     `OBSERVATIONS.md`, `BENCHMARKS.md`, `SYNTHETIC_LAB.md`
+2. **docs/ index** — ensure `docs/README.md` or the table references the v2 docs.
+3. **GitHub repo description + topics** — confirm they still match
+   (`gh repo edit`; desc + 3–8 topics).
+4. Pass the formatting bar: centered title + badges + nav-row + diagram +
+   tables, skimmable at a glance (cover-the-text test).
+
+Verify `uv run ruff check .` and `uv run ruff format --check .` pass (they lint
+README/docs Python blocks), then judge + commit + push.
+
 ## [ ] E2E-001 — E2E Testing Tick (self-improving loop)
 
 Spawn Luna (browser/screenshots) or Step 3.7 Flash (CLI/API). Deploy/build,
