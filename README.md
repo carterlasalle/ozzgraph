@@ -42,15 +42,15 @@ flowchart TB
     ER -->|loop| P
 ```
 
-**Release status: v1.0.0 shipped + v2 (V01–V10) complete.** The v1.0.0 release
-is cut (32-PR implementation plan; all 19/19 Definition of Done rehearsal
-items passed) and the [v2 milestone](docs/CHANGES_v2.md) is fully implemented
-and judged. OzzGraph is now a **general autonomous security-research harness**
-— scope → assets → observations → evidence → hypotheses → validated findings →
-report — with HalCTF as **one optional environment adapter** among several
-(local assessment, Docker Compose, git repository, network scope, synthetic
-lab). See [docs/CHANGES_v2.md](docs/CHANGES_v2.md) for the V01–V10 milestone
-notes, and [docs/RELEASE.md](docs/RELEASE.md) for v1 release ops.
+**Release status: v2.0.0 shipped.** OzzGraph is a **general autonomous
+security-research harness** — scope → assets → observations → evidence →
+hypotheses → validated findings → report — with HalCTF as **one optional
+environment adapter** among several (local assessment, Docker Compose, git
+repository, network scope, synthetic lab). v1.0.0 (the 32-PR implementation
+plan, 19/19 DoD rehearsal) and the v2 milestone (V01–V10) are both released;
+see the [v2.0.0 release](https://github.com/carterlasalle/ozzgraph/releases/tag/v2.0.0),
+[CHANGELOG.md](CHANGELOG.md), [docs/CHANGES_v2.md](docs/CHANGES_v2.md) for the
+V01–V10 milestone notes, and [docs/RELEASE.md](docs/RELEASE.md) for release ops.
 
 ## What the harness does
 
