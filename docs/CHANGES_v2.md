@@ -129,6 +129,34 @@ independently implemented components.
    > deterministic single-obvious-action path are unchanged.
 8. `v2/local-assessment` — URL/network/repository/Docker-Compose/hybrid modes,
    credentials, scope files, reporting, SARIF; default OzzGraph experience.
+   > V08 (2026-08-08): implemented — `src/ozzgraph/reporting.py` renders the
+   > deterministic report bundle into the run's `state_dir` at COMPLETED
+   > termination: `report.md` (per-finding writeups: id, CWE, severity from
+   > the impact CIA, assets, preconditions, evidence ids, reproduction,
+   > confidence), `report.json` (the same finding payloads as the V02
+   > `findings.json` plus graph metadata: run id, environment, model,
+   > targets, scope, termination reason, entity counts), `report.sarif`
+   > (SARIF 2.1.0, results mapped to CWE rules with locations from the
+   > materialized evidence artifacts, driver `ozzgraph`), an `evidence/`
+   > directory (copies of every finding-referenced artifact from the
+   > authoritative store), and `graph.sqlite` + `events.jsonl` snapshots of
+   > the authoritative `graph.db` / `actions.jsonl` — replay compatibility
+   > preserved (the bundle is derived output; render failures record a
+   > `runner.report_failed` event loudly). `src/ozzgraph/environments/local.py`
+   > classifies `OZZGRAPH_TARGET` / scope entries into url / network / host /
+   > repository / docker-compose / hybrid modes (a path containing `.git` ->
+   > repository, a path containing a compose file -> docker-compose, URL ->
+   > url, CIDR -> network, host/IP -> host; mixed types -> hybrid scope;
+   > invalid repo/compose paths raise `ConfigError` loudly), with the mode on
+   > each `Target`'s metadata and on the scope's constraints.
+   > `src/ozzgraph/config.py` adds the optional scope file
+   > (`OZZGRAPH_SCOPE_FILE`: JSON/YAML/TOML allowlist entries merged
+   > deterministically into `target_allowlist`) and the optional credentials
+   > file (`OZZGRAPH_CREDENTIALS_FILE`: `{name, kind, username?, secret_env?}`
+   > records — the secret is read from the named env var at runtime and never
+   > stored in the file or config; malformed files raise `ConfigError`).
+   > Local remains the default experience: with no `HAL_*` configuration the
+   > run uses `LocalEnvironment` (docs/adr/0010).
 9. `v2/halctf-adapter` — HAL_* discovery, official tool set, smoke flag,
    scoring, hint costs, graceful completion; no kernel contamination.
 10. `v2/full-regression` — real benchmark suite across the model matrix.

@@ -58,6 +58,8 @@ constructor-injected with environment fallback in `ozzgraph.model_client` and
 | `OZZGRAPH_ALLOWED_COMMAND_FAMILIES` | `shell,recon,exploit` | Command families permitted at the policy level; phases and worker scopes narrow this per call. |
 | `OZZGRAPH_FLAG_PATTERN` | `flag\{[^{}\s]+\}` | Regex the flag candidate extractor scans observations/artifacts with. |
 | `OZZGRAPH_MAX_SUBMISSIONS` | `3` | Attempt cap — per flag candidate and in total. |
+| `OZZGRAPH_SCOPE_FILE` | — | Optional scope file (JSON/YAML/TOML): allowlist entries merged deterministically into `OZZGRAPH_TARGET_ALLOWLIST` (V08, docs/adr/0010). |
+| `OZZGRAPH_CREDENTIALS_FILE` | — | Optional credentials file (JSON/YAML/TOML): `{name, kind, username?, secret_env?}` references; secrets are read from the named env vars at runtime and never stored in the file (V08). |
 
 ### 2.2 Challenge platform (HalCTF MCP)
 
