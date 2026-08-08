@@ -12,38 +12,21 @@ commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
 > E2E-001 tick ran 2026-08-07: 65P/1F/1U, finding FLAGLEAK-001 fixed (a667733, judge PASS) — see Completed.
 
-**Idle tick #1 (2026-08-07) — NEVER-DONE 14-point audit: ALL PASS, zero gaps.**
-Spec alignment OK (all 6 halctl subcommands + challenge show in code; docs match),
-doc coverage OK (DOC-001 judge PASS), 880 tests pass, deps OK (only pydantic-core
-2.48.0 BLOCKED by pydantic pin — known; ast-serialize/librt transitive), no
-TODOs/stubs (NotImplementedError is caught), gitleaks allowlist narrowed, no
-benchmarks (N/A for CLI harness), halctl clean-state CLI OK, CI green (latest 2
-runs success; earlier E2E-board-commit failure resolved by 5560311), DuckBrain
-synced (2 tick entries), gitignore complete, wiring OK ([project.scripts] halctl),
-E2E-001 ran today, GitReins judge config correctly sized (60 iter/1M in).
-Cooldown set 43200s. Counter: 1/7.
-
-## [ ] DOCS-000 — documentation gate pass (missing CONTRIBUTING.md + SECURITY.md + repo metadata)
-
-Per coding-hermes-board documentation gate: the project must complete the docs
-pass before E2E/NEVER-DONE idle. README.md, AGENTS.md, and docs/ exist but
-CONTRIBUTING.md and SECURITY.md are MISSING. Add:
-- CONTRIBUTING.md — build/test/lint/PR workflow, toolchain (uv, pytest,
-  ruff, mypy), quality gates.
-- SECURITY.md — vulnerability reporting, security model (agent-isolated CTF
-  harness: state outside model context, provenance, flag isolation,
-  supervisor-only privileged ops), threat boundaries, secrets handling.
-- Refresh README.md to the launchpad formatting bar (title+badges+nav+
-  diagram+tables, skimmable at a glance) if it doesn't already meet it.
-- GitHub repo description + topics/tags set via `gh repo edit` (one-line
-  mission + 3-8 discoverable tags; e.g. ctf, agent, harness, cli, go).
-Judge via GitReins; commit; mark [x].
+**Tick 2026-08-07: DOCS-000 done — documentation gate PASS (judge 1913c392).**
+CONTRIBUTING.md (149 lines: toolchain, gates, PR workflow) + SECURITY.md (187
+lines: vuln reporting, agent-isolated security model, flag hashing FLAGLEAK-001,
+container hardening) created; README.md refreshed to launchpad bar (badges, ASCII
+diagram, nav tables). Repo metadata set (description + 6 topics via gh repo
+edit). Content landed in 06c5ab1 (concurrent repo-owner commit absorbed staged
+docs; worker marker commit d3d74cf) — guards PASS, judge PASS 1913c392, Tier-1
+lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classification.
 
 ## Completed
 
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
 | FLAGLEAK-001 | Redact/hash flag material in run-only event-log events (flags.candidate_found/submission.attempted/submission.accepted/submission.rejected now carry flag_sha256+flag_length digests; graph.entity_created keeps raw flag — replay-required) (judge PASS, all 4 criteria) | High | 3±1 | a667733 | DS-V4-Flash |
+| DOCS-000 | Documentation gate pass — CONTRIBUTING.md + SECURITY.md + README refresh + repo metadata (judge PASS 1913c392, all 3 criteria) | High | 3±1 | 06c5ab1 | DS-V4-Flash |
 | DOC-001 | Full documentation pass — polished README + docs/USAGE.md + docs/CUSTOMIZATION.md (judge PASS 8cee566d) | High | 3±1 | 2a0daa3 | DS-V4-Flash |
 | DEPS-001 | ruff 0.16.1→0.16.2 (direct dev dep patch bump; pydantic-core 2.48.0 BLOCKED by pydantic==2.46.4 pin) | Low | 1±0 | a70f3f7 | DS-V4-Flash |
 
