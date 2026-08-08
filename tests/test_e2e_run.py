@@ -308,6 +308,21 @@ def test_run_target_end_to_end_completes_with_finding(tmp_path: Path) -> None:
     assert event_types[-1] == "termination"
     assert events[-1]["payload"] == {"reason": "completed"}
 
+    # V08: a completed run renders the full report bundle (docs/adr/0010).
+    report_path = state_dir / "report.json"
+    assert report_path.is_file()
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["run"]["id"] == events[0]["run_id"]  # the run's own id
+    assert report["run"]["environment"] == "local"
+    assert report["termination"]["status"] == "completed"
+    assert report["counts"]["finding"] == 1
+    assert report["findings"][0]["id"] == finding_id
+    assert (state_dir / "report.md").is_file()
+    assert (state_dir / "report.sarif").is_file()
+    assert (state_dir / "evidence").is_dir()
+    assert (state_dir / "graph.sqlite").is_file()
+    assert (state_dir / "events.jsonl").is_file()
+
 
 def test_run_target_rejects_whitespace_target(tmp_path: Path) -> None:
     """A whitespace target is a configuration error: exit 1, loud stderr."""

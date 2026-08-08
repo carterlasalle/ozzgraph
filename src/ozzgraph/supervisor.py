@@ -277,6 +277,9 @@ class Supervisor:
         objectives = await environment.discover_objectives()
         capabilities = await environment.discover_capabilities()
         print(f"SCOPE: {scope.name}", flush=True)
+        raw_mode = scope.constraints.get("mode")
+        if isinstance(raw_mode, str) and raw_mode:
+            print(f"  mode: {raw_mode}", flush=True)
         if scope.hosts:
             print(f"  hosts: {', '.join(scope.hosts)}", flush=True)
         if scope.urls:

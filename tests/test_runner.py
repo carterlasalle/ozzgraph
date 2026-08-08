@@ -440,6 +440,63 @@ async def test_existing_objectives_complete_returns_completed(tmp_path: Path) ->
         assert await graph.list_entities("action") == []
 
 
+@pytest.mark.asyncio
+async def test_completed_run_renders_report_bundle(tmp_path: Path) -> None:
+    """A COMPLETED run materializes the full V08 report bundle in state_dir."""
+    stop_event = __import__("asyncio").Event()
+    state = tmp_path / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    async with StateGraph(state / "graph.db") as graph:
+        await graph.create_entity(
+            "objective-fake-1", "objective", {"completed": True, "description": "x"}
+        )
+        status = await _runner(tmp_path, graph, stop_event=stop_event).run()
+        assert status is RunnerStatus.COMPLETED
+
+    # The bundle: report.md / report.json / report.sarif alongside
+    # evidence/ + graph.sqlite + events.jsonl (docs/adr/0010).
+    assert (state / "report.md").is_file()
+    assert (state / "report.json").is_file()
+    assert (state / "report.sarif").is_file()
+    assert (state / "evidence").is_dir()
+    assert (state / "graph.sqlite").is_file()
+    assert (state / "events.jsonl").is_file()
+
+    report = json.loads((state / "report.json").read_text(encoding="utf-8"))
+    assert report["run"]["id"] == RUN
+    assert report["run"]["environment"] == "fake"
+    assert report["termination"]["status"] == "completed"
+    assert report["counts"]["finding"] == 0
+    assert report["findings"] == []
+
+    sarif = json.loads((state / "report.sarif").read_text(encoding="utf-8"))
+    assert sarif["version"] == "2.1.0"
+    assert sarif["runs"][0]["tool"]["driver"]["name"] == "ozzgraph"
+    assert sarif["runs"][0]["results"] == []
+
+    # The authoritative event log is untouched by the bundle render.
+    events = _read_events(tmp_path)
+    terminated = events[-1]
+    assert terminated["event_type"] == RUNNER_TERMINATED
+    payload = terminated["payload"]
+    assert isinstance(payload, dict) and payload.get("status") == "completed"
+    assert not any(e["event_type"] == "runner.report_failed" for e in events)
+
+
+@pytest.mark.asyncio
+async def test_stopped_run_renders_no_report_bundle(tmp_path: Path) -> None:
+    """Only a COMPLETED termination renders the report bundle."""
+    stop_event = __import__("asyncio").Event()
+    stop_event.set()
+    state = tmp_path / "state"
+    async with StateGraph(":memory:") as graph:
+        status = await _runner(tmp_path, graph, stop_event=stop_event).run()
+        assert status is RunnerStatus.STOPPED
+    assert not (state / "report.md").exists()
+    assert not (state / "report.json").exists()
+    assert not (state / "report.sarif").exists()
+
+
 # ---------------------------------------------------------------------------
 # V03 tool plane wiring (docs/CHANGES_v2.md milestone 3)
 # ---------------------------------------------------------------------------

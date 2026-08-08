@@ -153,6 +153,7 @@ from ozzgraph.phases import Phase
 from ozzgraph.planner import NoPlanDecision, Plan, Planner
 from ozzgraph.policy import ScopePolicy, ScopeViolationError
 from ozzgraph.profiles import ModelProfile, probe_protocol, profile_for_model_id
+from ozzgraph.reporting import ReportError, render_report_bundle
 from ozzgraph.router import (
     ENTITY_OBJECTIVE,
     FIELD_COMPLETED,
@@ -191,6 +192,9 @@ RUNNER_FINDING_CREATED = "runner.finding_created"
 #: Run-log event emitted when a V07 specialist batch is dispatched and
 #: when it completes (the verdict counts).
 RUNNER_SPECIALIST_BATCH = "runner.specialist_batch"
+#: Run-log event emitted when the V08 report bundle render fails loudly
+#: (the terminal status is still returned; the failure is recorded).
+RUNNER_REPORT_FAILED = "runner.report_failed"
 
 #: Entity types the runner seeds (docs/DATA_STRATEGY.md, lowercase by
 #: convention).
@@ -497,15 +501,15 @@ class AutonomousRunner:
         )
         while True:
             if self._stop_event.is_set():
-                return self._terminate(RunnerStatus.STOPPED, "supervisor stop event set")
+                return await self._terminate(RunnerStatus.STOPPED, "supervisor stop event set")
             if self._budgets.is_exhausted():
-                return self._terminate(RunnerStatus.BUDGET_EXHAUSTED, "budget exhausted")
+                return await self._terminate(RunnerStatus.BUDGET_EXHAUSTED, "budget exhausted")
             # V06: the progress evaluator decides continue / pivot /
             # finish from graph predicates (the generic DONE path is
             # "every objective completed", docs/adr/0008).
             progress = await self._evaluate_progress()
             if progress.verdict is ProgressVerdict.FINISH:
-                return self._terminate(RunnerStatus.COMPLETED, progress.reason)
+                return await self._terminate(RunnerStatus.COMPLETED, progress.reason)
             if progress.verdict is ProgressVerdict.PIVOT:
                 self._append(BRAIN_PROGRESS_EVALUATED, progress.model_dump())
             outcome = await self._one_turn()
@@ -552,7 +556,7 @@ class AutonomousRunner:
             # or all objectives completed. Mark any stragglers complete
             # so the graph agrees with the terminal signal.
             await self._complete_objectives()
-            return self._terminate(
+            return await self._terminate(
                 RunnerStatus.COMPLETED,
                 f"router reached DONE via {route.predicate}",
             )
@@ -919,7 +923,7 @@ class AutonomousRunner:
                 self._graph, model_output, failed_actions=self._failed_actions
             )
         except BudgetExceeded as exc:
-            return self._terminate(RunnerStatus.BUDGET_EXHAUSTED, f"budget exhausted: {exc}")
+            return await self._terminate(RunnerStatus.BUDGET_EXHAUSTED, f"budget exhausted: {exc}")
         except (
             ExecutorError,
             ScopeViolationError,
@@ -1565,6 +1569,11 @@ class AutonomousRunner:
                     "networks": list(scope.networks),
                     "credentials": list(scope.credentials),
                     "capabilities": sorted(capabilities),
+                    # V08: the full discovered scope, including the
+                    # assessment mode — the graph mirrors the adapter's
+                    # Scope model so downstream report renders derive
+                    # the mode from authoritative state.
+                    "constraints": scope.constraints,
                 },
                 at=at,
             )
@@ -1688,8 +1697,16 @@ class AutonomousRunner:
             return route.skills[0].skill_id
         return None
 
-    def _terminate(self, status: RunnerStatus, reason: str) -> RunnerStatus:
-        """Record the structured terminal event and return ``status``."""
+    async def _terminate(self, status: RunnerStatus, reason: str) -> RunnerStatus:
+        """Record the structured terminal event and return ``status``.
+
+        A COMPLETED termination additionally renders the V08 report
+        bundle into ``state_dir`` (report.md / report.json /
+        report.sarif / evidence/ / graph.sqlite / events.jsonl,
+        docs/adr/0010). The bundle is derived output: a render failure
+        is recorded loudly as a ``runner.report_failed`` event and the
+        terminal status is still returned — the run itself completed.
+        """
         self._append(
             RUNNER_TERMINATED,
             RunnerStatusEvent(
@@ -1700,7 +1717,36 @@ class AutonomousRunner:
                 reason=reason,
             ).model_dump(),
         )
+        if status is RunnerStatus.COMPLETED:
+            await self._render_report_bundle(status, reason)
         return status
+
+    async def _render_report_bundle(self, status: RunnerStatus, reason: str) -> None:
+        """Render the report bundle for a completed run (V08).
+
+        Everything derives from authoritative graph state; the event
+        log and graph database are never modified (replay
+        compatibility). Failures raise :class:`ReportError` and are
+        recorded as ``runner.report_failed`` events — loud, never
+        silent (AGENTS.md rule #9).
+        """
+        try:
+            await render_report_bundle(
+                state_dir=self._config.state_dir,
+                graph=self._graph,
+                artifacts=self._artifacts,
+                run_id=self._run_id,
+                status=status.value,
+                reason=reason,
+                turns=self._turns,
+                model_calls=self._budgets.model_calls_used(),
+                tool_calls=self._budgets.tool_calls_used(),
+            )
+        except ReportError as exc:
+            self._append(
+                RUNNER_REPORT_FAILED,
+                {"error_type": type(exc).__name__, "message": str(exc)},
+            )
 
     def _record_turn_failure(
         self,
