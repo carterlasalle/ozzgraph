@@ -28,6 +28,18 @@ from pathlib import Path
 
 import pytest
 
+from ozzgraph.environments.halctf import (
+    ENTITY_HINT_PURCHASE,
+    ENTITY_HINT_RECOMMENDATION,
+    RULE_FREE_HINT,
+    HintCoordinator,
+    HintPolicy,
+    HintPolicyDeniedError,
+    HintPrivilegeError,
+    HintStateError,
+    PaidHintRequest,
+    hint_recommendation_id,
+)
 from ozzgraph.evaluator import ENTITY_EVALUATION
 from ozzgraph.events import (
     GRAPH_ENTITY_CREATED,
@@ -43,18 +55,6 @@ from ozzgraph.events import (
 )
 from ozzgraph.executor import ENTITY_ACTION, ENTITY_PLAN, ENTITY_PLAN_STEP
 from ozzgraph.hal_client import HalServiceError, HintResult
-from ozzgraph.hints import (
-    ENTITY_HINT_PURCHASE,
-    ENTITY_HINT_RECOMMENDATION,
-    RULE_FREE_HINT,
-    HintCoordinator,
-    HintPolicy,
-    HintPolicyDeniedError,
-    HintPrivilegeError,
-    HintStateError,
-    PaidHintRequest,
-    hint_recommendation_id,
-)
 from ozzgraph.replay import replay_graph
 from ozzgraph.state_graph import StateGraph
 

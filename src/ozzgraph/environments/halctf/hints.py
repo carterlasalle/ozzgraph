@@ -1,4 +1,4 @@
-"""Deterministic paid-hint policy gate and supervisor-only coordinator (PR23).
+"""Deterministic paid-hint policy gate and supervisor-only coordinator (V09, HalCTF).
 
 Implements the paid-hint policy slice of Phase 8 (docs/
 IMPLEMENTATION_PLAN.md, PR step 23; docs/TECHNICAL_REQUIREMENTS.md,
@@ -8,8 +8,17 @@ deterministic gate over the authoritative graph state passes. The gate
 (:class:`HintPolicy`) never touches the wire; the coordinator
 (:class:`HintCoordinator`) is the ONLY kernel caller of
 ``request_hint`` for ``index > 0`` (AGENTS.md invariant 5), mirroring
-how :class:`~ozzgraph.submissions.SubmissionCoordinator` owns
-``submit_flag``.
+how :class:`~ozzgraph.environments.halctf.submissions.SubmissionCoordinator`
+owns ``submit_flag``.
+
+V09 (v2/halctf-adapter, docs/adr/0011): this module is owned by the
+HalCTF environment — it moved out of the generic kernel
+(``ozzgraph.hints`` was deleted) into ``ozzgraph.environments.halctf``.
+The kernel reaches it only through the ``ozzgraph.environments.halctf``
+shim or the environment's service factories; the paid-hint gate, the
+max-paid-hint-count invariant (the persisted ``hint_purchase`` count
+never exceeds ``config.max_hints``), and the per-hint cost carried by
+:class:`~ozzgraph.hal_client.HintResult` are unchanged.
 
 Design rules:
 

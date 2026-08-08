@@ -23,6 +23,7 @@ import pytest
 from pydantic import ValidationError
 
 from ozzgraph.artifacts import ArtifactStore
+from ozzgraph.entities import ENTITY_EVIDENCE
 from ozzgraph.events import (
     GRAPH_EDGE_CREATED,
     GRAPH_ENTITY_CREATED,
@@ -31,7 +32,6 @@ from ozzgraph.events import (
     GraphEntityCreated,
     graph_event,
 )
-from ozzgraph.flags import ENTITY_EVIDENCE
 from ozzgraph.reducer import (
     EDGE_FACT_DERIVED_FROM_EVIDENCE,
     ENTITY_FACT,

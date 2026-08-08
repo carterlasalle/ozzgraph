@@ -47,7 +47,12 @@ from typing import Protocol
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from ozzgraph.config import TARGET_ALLOWLIST_ENV, ConfigError, OzzGraphConfig
+from ozzgraph.config import (
+    TARGET_ALLOWLIST_ENV,
+    ConfigError,
+    OzzGraphConfig,
+    discover_halctf_challenge_id,
+)
 from ozzgraph.events import (
     BOOTSTRAP_CHALLENGE_STATUS,
     BOOTSTRAP_FAILED,
@@ -61,7 +66,6 @@ from ozzgraph.events import (
     EventLog,
 )
 from ozzgraph.hal_client import HalClient, HalServiceError
-from ozzgraph.halctl import CHALLENGE_ID_ENV
 from ozzgraph.policy import FingerprintStore, ScopePolicy, ScopeViolationError
 from ozzgraph.shell import ShellRunner
 
@@ -453,7 +457,7 @@ class BootstrapRunner:
             {"single": targets.single, "namespaced": dict(targets.namespaced)},
         )
 
-        challenge_id = _env_str(self._environ, CHALLENGE_ID_ENV, "")
+        challenge_id = discover_halctf_challenge_id(self._environ)
 
         if challenge_id:
             await self._retrieve_status(challenge_id)
@@ -462,8 +466,9 @@ class BootstrapRunner:
         if smoke_flag:
             if not challenge_id:
                 message = (
-                    f"{SMOKE_FLAG_ENV} is set but {CHALLENGE_ID_ENV} is not: "
-                    "cannot submit the smoke-test flag"
+                    f"{SMOKE_FLAG_ENV} is set but no challenge id is configured: "
+                    "cannot submit the smoke-test flag (set HAL_CTF_ID, "
+                    "HAL_CHALLENGE_ID, or OZZGRAPH_CHALLENGE_ID)"
                 )
                 self._record(BOOTSTRAP_FAILED, {"error_type": "ConfigError", "message": message})
                 raise ConfigError(message)
@@ -493,6 +498,14 @@ class BootstrapRunner:
                 "attempts": status.attempts,
                 "hints_used": status.hints_used,
                 "points_earned": status.points_earned,
+                # V09 (v2/halctf-adapter): the status carries the
+                # smoke-flag signal and the deterministic scoring
+                # breakdown, so the run log records them without extra
+                # calls.
+                "smoke_flag": status.smoke_flag,
+                "scoring": (
+                    status.scoring.model_dump(mode="json") if status.scoring is not None else None
+                ),
                 "updated_at": status.updated_at,
             },
         )

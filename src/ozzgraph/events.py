@@ -72,6 +72,12 @@ HINT_PURCHASE_SUCCEEDED = "hint.purchase_succeeded"
 HINT_PURCHASE_FAILED = "hint.purchase_failed"
 HINT_RECOMMENDATION_RECORDED = "hint.recommendation_recorded"
 
+# Scoreboard event type (V09, producer ``"scoreboard"``). Run-log event
+# emitted by the HalCTF environment's scoreboard coordinator after a
+# successful scoreboard retrieval; run-only (never replay-required), so
+# it carries only bounded aggregate data, never raw leaderboard dumps.
+SCOREBOARD_RETRIEVED = "scoreboard.retrieved"
+
 
 class Event(BaseModel):
     """One structured event in the append-only run log.

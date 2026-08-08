@@ -68,6 +68,54 @@ ALLOWED_COMMAND_FAMILIES_ENV = "OZZGRAPH_ALLOWED_COMMAND_FAMILIES"
 SCOPE_FILE_ENV = "OZZGRAPH_SCOPE_FILE"
 CREDENTIALS_FILE_ENV = "OZZGRAPH_CREDENTIALS_FILE"
 
+# V09 (v2/halctf-adapter): deterministic env-based discovery of the
+# HalCTF runtime (docs/adr/0011). HalCTF mode is selected by the
+# presence of any HalCTF runtime variable; the MCP endpoint is resolved
+# from the first non-blank of :data:`HALCTF_ENDPOINT_CANDIDATES`. The
+# local default is unchanged: with none of these variables set, the run
+# uses :class:`~ozzgraph.environments.local.LocalEnvironment` and the
+# V08 ``OZZGRAPH_TARGET`` classification stays authoritative.
+# ``HAL_USER_ID`` is operator identity, required for EVERY run (local
+# included) — it is deliberately NOT a mode selector.
+HAL_CTF_ID_ENV = "HAL_CTF_ID"
+HAL_CHALLENGE_ID_ENV = "HAL_CHALLENGE_ID"
+HAL_ENDPOINT_ENV = "HAL_ENDPOINT"
+HAL_MCP_ENDPOINT_ENV = "HAL_MCP_ENDPOINT"
+MCP_ENDPOINT_ENV = "MCP_ENDPOINT"
+OPENAI_BASE_URL_ENV = "OPENAI_BASE_URL"
+
+#: Ordered endpoint candidates for the HalCTF MCP runtime (V09): the
+#: first non-blank wins. ``OZZGRAPH_MCP_BASE_URL`` is the explicit
+#: legacy knob (its literal mirrors ``hal_client.MCP_BASE_URL_ENV`` —
+#: hal_client consults this discovery function, so the two cannot
+#: disagree); the ``HAL_*`` family is the platform-injected shape;
+#: ``MCP_ENDPOINT`` and ``OPENAI_BASE_URL`` are generic platform
+#: variables that may carry the endpoint. ``OPENAI_BASE_URL`` alone
+#: does NOT select HalCTF mode (it is a model endpoint in local mode) —
+#: it only resolves the endpoint once another variable selected the
+#: mode.
+HALCTF_ENDPOINT_CANDIDATES: tuple[str, ...] = (
+    "OZZGRAPH_MCP_BASE_URL",
+    HAL_MCP_ENDPOINT_ENV,
+    HAL_ENDPOINT_ENV,
+    MCP_ENDPOINT_ENV,
+    OPENAI_BASE_URL_ENV,
+)
+
+#: Variables that select HalCTF mode (V09): any non-blank value means
+#: the run targets the HalCTF runtime, not a local assessment.
+HALCTF_CHALLENGE_ID_VARS: tuple[str, ...] = (
+    HAL_CTF_ID_ENV,
+    HAL_CHALLENGE_ID_ENV,
+    "OZZGRAPH_CHALLENGE_ID",
+)
+HALCTF_MODE_VARS: tuple[str, ...] = (
+    *HALCTF_CHALLENGE_ID_VARS,
+    HAL_MCP_ENDPOINT_ENV,
+    HAL_ENDPOINT_ENV,
+    MCP_ENDPOINT_ENV,
+)
+
 #: Accepted document suffixes for scope/credentials files, by format.
 _SCOPE_FILE_SUFFIXES = (".json", ".yaml", ".yml", ".toml")
 
@@ -255,6 +303,69 @@ def _first_nonempty(mapping: Mapping[str, str], *keys: str) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# V09: deterministic HalCTF runtime discovery (docs/adr/0011)
+# ---------------------------------------------------------------------------
+
+
+def halctf_mode_selected(environ: Mapping[str, str]) -> bool:
+    """True when the environment selects the HalCTF runtime (V09).
+
+    HalCTF mode is selected by the presence of any
+    :data:`HALCTF_MODE_VARS` variable (``HAL_CTF_ID``,
+    ``HAL_CHALLENGE_ID``, ``HAL_ENDPOINT``, ``HAL_MCP_ENDPOINT``,
+    ``MCP_ENDPOINT``, or the legacy ``OZZGRAPH_CHALLENGE_ID``).
+    ``HAL_USER_ID`` is identity, required for every run — it never
+    selects HalCTF mode, so the local default (``LocalEnvironment``
+    with the V08 ``OZZGRAPH_TARGET`` classification) is unchanged when
+    no HalCTF runtime variable is set.
+    """
+    return _first_nonempty(environ, *HALCTF_MODE_VARS) is not None
+
+
+def discover_halctf_challenge_id(environ: Mapping[str, str]) -> str:
+    """The configured HalCTF challenge id, or ``""`` when unset.
+
+    Deterministic first-non-blank over :data:`HALCTF_CHALLENGE_ID_VARS`
+    (``HAL_CTF_ID``, ``HAL_CHALLENGE_ID``, legacy
+    ``OZZGRAPH_CHALLENGE_ID``).
+    """
+    return _first_nonempty(environ, *HALCTF_CHALLENGE_ID_VARS) or ""
+
+
+def discover_halctf_endpoint(environ: Mapping[str, str]) -> str | None:
+    """The configured HalCTF MCP endpoint, or None when no candidate is set.
+
+    Deterministic first-non-blank over
+    :data:`HALCTF_ENDPOINT_CANDIDATES` (``OZZGRAPH_MCP_BASE_URL``,
+    ``HAL_MCP_ENDPOINT``, ``HAL_ENDPOINT``, ``MCP_ENDPOINT``,
+    ``OPENAI_BASE_URL``). None means HalCTF mode cannot reach the
+    platform — the caller fails loudly.
+    """
+    return _first_nonempty(environ, *HALCTF_ENDPOINT_CANDIDATES)
+
+
+def require_halctf_endpoint(environ: Mapping[str, str]) -> str:
+    """Resolve the HalCTF MCP endpoint, failing loudly when missing.
+
+    HalCTF mode without a discoverable endpoint is a configuration
+    error (AGENTS.md rule #9): the adapter cannot reach the platform,
+    so the run must not start. The environment adapter calls this at
+    construction; ``load_config`` calls it whenever
+    :func:`halctf_mode_selected` is true, so the CLI fails at startup.
+
+    Raises:
+        ConfigError: If no endpoint candidate is set.
+    """
+    endpoint = discover_halctf_endpoint(environ)
+    if endpoint is None:
+        candidates = ", ".join(HALCTF_ENDPOINT_CANDIDATES)
+        raise ConfigError(
+            f"HalCTF mode is selected but no MCP endpoint is configured: set one of {candidates}"
+        )
+    return endpoint
+
+
 def _env_str(environ: Mapping[str, str], key: str, default: str) -> str:
     """Read a string environment variable, falling back to a default.
 
@@ -417,6 +528,13 @@ def load_config(environ: Mapping[str, str] | None = None) -> OzzGraphConfig:
     user_id = _first_nonempty(env, HAL_USER_ID_ENV)
     if user_id is None:
         raise ConfigError(f"missing required environment variable {HAL_USER_ID_ENV}")
+
+    # V09: HalCTF mode without a discoverable MCP endpoint is a
+    # configuration error (fail loudly at startup, AGENTS.md rule #9).
+    # The local default is untouched: no HalCTF runtime variable means
+    # the run is a local assessment and no endpoint is required.
+    if halctf_mode_selected(env):
+        require_halctf_endpoint(env)
 
     state_dir = Path(env.get(STATE_DIR_ENV, DEFAULT_STATE_DIR))
     artifact_dir = Path(env.get(ARTIFACT_DIR_ENV, str(state_dir / "artifacts")))

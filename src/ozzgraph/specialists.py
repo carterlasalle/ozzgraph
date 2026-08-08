@@ -62,6 +62,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field
 
 from ozzgraph.artifacts import ArtifactStore
+from ozzgraph.entities import ENTITY_EVIDENCE
 from ozzgraph.events import (
     GRAPH_EDGE_CREATED,
     GRAPH_ENTITY_CREATED,
@@ -81,7 +82,6 @@ from ozzgraph.findings import (
     ImpactCIA,
     ImpactLevel,
 )
-from ozzgraph.flags import ENTITY_EVIDENCE
 from ozzgraph.phases import Phase
 from ozzgraph.policy import ScopePolicy, classify_family
 from ozzgraph.reducer import Fact, Reducer

@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from ozzgraph.config import ConfigError, OzzGraphConfig
+from ozzgraph.config import DEFAULT_FLAG_PATTERN, ConfigError, OzzGraphConfig
 from ozzgraph.environments import (
     EnvironmentAdapter,
     HalCTFEnvironment,
@@ -26,7 +26,7 @@ from ozzgraph.environments import (
     Target,
 )
 from ozzgraph.environments.base import EnvironmentAdapter as ProtocolAdapter
-from ozzgraph.environments.halctf import HALCTF_OBJECTIVE_ID
+from ozzgraph.environments.halctf import HALCTF_OBJECTIVE_ID, HALCTF_OBJECTIVE_SUCCESS_HINT
 from ozzgraph.environments.local import (
     DEFAULT_LOCAL_CAPABILITIES,
     LOCAL_OBJECTIVE_ID,
@@ -212,28 +212,46 @@ async def test_local_objectives_and_capabilities() -> None:
 
 
 # ---------------------------------------------------------------------------
-# HalCTFEnvironment (minimal V01 slice)
+# HalCTFEnvironment (V09 full adapter, docs/adr/0011)
 # ---------------------------------------------------------------------------
+
+_HALCTF_ENDPOINT = "http://127.0.0.1:9000/mcp"
+
+
+def _halctf_env(**overrides) -> dict[str, str]:
+    """A minimal HalCTF environment mapping (challenge id + endpoint)."""
+    env = {"OZZGRAPH_CHALLENGE_ID": "web-01", "OZZGRAPH_MCP_BASE_URL": _HALCTF_ENDPOINT}
+    env.update(overrides)
+    return env
+
+
+def test_halctf_requires_endpoint_fails_loudly() -> None:
+    """V09: HalCTF mode without a discoverable MCP endpoint is a loud
+    ConfigError at construction (fail loudly, AGENTS.md rule #9)."""
+    with pytest.raises(ConfigError, match="endpoint"):
+        HalCTFEnvironment(_config(), environ={})
 
 
 def test_halctf_requires_challenge_id() -> None:
-    env = HalCTFEnvironment(_config(), environ={})
-    assert env.challenge_id == ""
+    env = HalCTFEnvironment(_config(), environ=_halctf_env())
+    assert env.challenge_id == "web-01"
+    assert env.endpoint == _HALCTF_ENDPOINT
 
 
 @pytest.mark.asyncio
 async def test_halctf_targets_require_challenge_id() -> None:
-    env = HalCTFEnvironment(_config(), environ={})
-    with pytest.raises(ConfigError, match="OZZGRAPH_CHALLENGE_ID"):
+    env = HalCTFEnvironment(_config(), environ=_halctf_env(OZZGRAPH_CHALLENGE_ID=""))
+    with pytest.raises(ConfigError, match="challenge id"):
         await env.discover_targets()
 
 
 @pytest.mark.asyncio
 async def test_halctf_yields_one_challenge_target() -> None:
-    env = HalCTFEnvironment(_config(), environ={"OZZGRAPH_CHALLENGE_ID": "web-01"})
+    env = HalCTFEnvironment(_config(), environ=_halctf_env())
     scope = await env.discover_scope()
     assert scope.name == "halctf"
     assert scope.constraints["challenge_id"] == "web-01"
+    assert scope.constraints["mode"] == "halctf"
     targets = await env.discover_targets()
     assert len(targets) == 1
     target = targets[0]
@@ -244,6 +262,8 @@ async def test_halctf_yields_one_challenge_target() -> None:
     assert len(objectives) == 1
     assert objectives[0].id == HALCTF_OBJECTIVE_ID
     assert "flag" in objectives[0].description
+    # V09: the objective names its deterministic completion signal.
+    assert objectives[0].success_hint == HALCTF_OBJECTIVE_SUCCESS_HINT
     assert await env.discover_capabilities()
     await env.aclose()  # idempotent no-op
 
@@ -251,9 +271,80 @@ async def test_halctf_yields_one_challenge_target() -> None:
 @pytest.mark.asyncio
 async def test_halctf_uses_os_environ_by_default(monkeypatch) -> None:
     monkeypatch.setenv("OZZGRAPH_CHALLENGE_ID", "pwn-02")
+    monkeypatch.setenv("OZZGRAPH_MCP_BASE_URL", _HALCTF_ENDPOINT)
     env = HalCTFEnvironment(_config())
     targets = await env.discover_targets()
     assert targets[0].address == "pwn-02"
+
+
+def test_halctf_discovery_from_hal_vars() -> None:
+    """V09: HAL_* runtime variables drive discovery (challenge id + endpoint)."""
+    env = HalCTFEnvironment(
+        _config(),
+        environ={
+            "HAL_CTF_ID": "crypto-03",
+            "HAL_MCP_ENDPOINT": "http://halctf:9000/mcp",
+        },
+    )
+    assert env.challenge_id == "crypto-03"
+    assert env.endpoint == "http://halctf:9000/mcp"
+
+
+def test_halctf_endpoint_candidate_priority() -> None:
+    """V09: the first non-blank endpoint candidate wins deterministically."""
+    env = HalCTFEnvironment(
+        _config(),
+        environ={
+            "HAL_CTF_ID": "web-01",
+            "OZZGRAPH_MCP_BASE_URL": "http://explicit:9000/mcp",
+            "HAL_MCP_ENDPOINT": "http://halctf:9000/mcp",
+            "OPENAI_BASE_URL": "http://openai:8000/v1",
+        },
+    )
+    assert env.endpoint == "http://explicit:9000/mcp"
+
+
+def test_halctf_openai_base_url_resolves_endpoint() -> None:
+    """V09: OPENAI_BASE_URL alone resolves the endpoint once another
+    variable selected HalCTF mode, but never selects the mode itself."""
+    env = HalCTFEnvironment(
+        _config(),
+        environ={"HAL_CHALLENGE_ID": "web-01", "OPENAI_BASE_URL": "http://platform:9000/mcp"},
+    )
+    assert env.endpoint == "http://platform:9000/mcp"
+
+
+def test_halctf_environment_service_factories() -> None:
+    """V09: the environment provides the HalCTF-owned services wired to
+    its challenge id and the config's budgets (docs/adr/0011)."""
+    env = HalCTFEnvironment(_config(), environ=_halctf_env())
+
+    class _FakeClient:
+        privileged = True
+
+        async def submit_flag(self, challenge_id: str, flag: str):  # pragma: no cover
+            raise AssertionError("not called")
+
+        async def request_hint(self, challenge_id: str, index: int):  # pragma: no cover
+            raise AssertionError("not called")
+
+        async def get_scoreboard(self):  # pragma: no cover
+            raise AssertionError("not called")
+
+        async def aclose(self) -> None:
+            return None
+
+    client = _FakeClient()
+    submission = env.submission_coordinator(client=client, run_id="run-1")
+    assert submission._challenge_id == "web-01"  # type: ignore[attr-defined]
+    assert submission._max_submissions == 3  # type: ignore[attr-defined]
+    hint = env.hint_coordinator(client=client, run_id="run-1")
+    assert hint._challenge_id == "web-01"  # type: ignore[attr-defined]
+    assert hint._policy._max_hints == 1  # type: ignore[attr-defined]
+    extractor = env.flag_extractor(run_id="run-1")
+    assert extractor._pattern.pattern == DEFAULT_FLAG_PATTERN  # type: ignore[attr-defined]
+    scoreboard = env.scoreboard_coordinator(client=client, run_id="run-1")
+    assert scoreboard._client is client  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------

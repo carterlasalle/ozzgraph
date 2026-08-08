@@ -24,6 +24,30 @@ from pathlib import Path
 import pytest
 
 from ozzgraph.artifacts import ArtifactStore
+from ozzgraph.environments.halctf import (
+    EDGE_EVIDENCE_EXTRACTED_FROM_OBSERVATION,
+    EDGE_FLAG_CANDIDATE_OBSERVED_IN_EVIDENCE,
+    ENTITY_FLAG_CANDIDATE,
+    FIELD_ATTEMPTS,
+    FIELD_EVIDENCE_IDS,
+    FIELD_FLAG,
+    FIELD_REJECTED,
+    FIELD_SOURCE_OBSERVATION_ID,
+    FIELD_VERIFIED,
+    SUBMISSIONS_PRODUCER,
+    FlagCandidate,
+    FlagCandidateExtractor,
+    FlagsError,
+    FlagsStateError,
+    InvalidFlagPatternError,
+    SubmissionCoordinator,
+    SubmissionError,
+    SubmissionLimitError,
+    SubmissionPrivilegeError,
+    SubmissionRejectedError,
+    SubmissionStateError,
+    flag_candidate_id,
+)
 from ozzgraph.events import (
     FLAGS_CANDIDATE_FOUND,
     GRAPH_EDGE_CREATED,
@@ -37,23 +61,6 @@ from ozzgraph.events import (
     GraphEntityCreated,
     graph_event,
 )
-from ozzgraph.flags import (
-    EDGE_EVIDENCE_EXTRACTED_FROM_OBSERVATION,
-    EDGE_FLAG_CANDIDATE_OBSERVED_IN_EVIDENCE,
-    ENTITY_FLAG_CANDIDATE,
-    FIELD_ATTEMPTS,
-    FIELD_EVIDENCE_IDS,
-    FIELD_FLAG,
-    FIELD_REJECTED,
-    FIELD_SOURCE_OBSERVATION_ID,
-    FIELD_VERIFIED,
-    FlagCandidate,
-    FlagCandidateExtractor,
-    FlagsError,
-    FlagsStateError,
-    InvalidFlagPatternError,
-    flag_candidate_id,
-)
 from ozzgraph.hal_client import SubmissionResult
 from ozzgraph.phases import Phase
 from ozzgraph.replay import replay_graph
@@ -65,15 +72,6 @@ from ozzgraph.router import (
     PhaseRouter,
 )
 from ozzgraph.state_graph import StateGraph
-from ozzgraph.submissions import (
-    SUBMISSIONS_PRODUCER,
-    SubmissionCoordinator,
-    SubmissionError,
-    SubmissionLimitError,
-    SubmissionPrivilegeError,
-    SubmissionRejectedError,
-    SubmissionStateError,
-)
 
 CHALLENGE = "ch-1"
 RUN = "run-1"

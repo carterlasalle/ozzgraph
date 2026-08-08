@@ -1,4 +1,4 @@
-"""Supervisor-only flag submission coordinator for OzzGraph (PR22).
+"""Supervisor-only flag submission coordinator (V09, HalCTF).
 
 Implements the submission slice of Phase 8 (docs/IMPLEMENTATION_PLAN.md,
 PR step 22; docs/TECHNICAL_REQUIREMENTS.md, "Flag Submission": only the
@@ -7,6 +7,14 @@ verified flag candidate, validates its observed provenance, enforces the
 attempt budgets, and drives the privileged
 :class:`~ozzgraph.hal_client.HalClient` — the ONLY caller of
 ``submit_flag`` in the kernel (AGENTS.md invariant 5).
+
+V09 (v2/halctf-adapter, docs/adr/0011): this module is owned by the
+HalCTF environment — it moved out of the generic kernel
+(``ozzgraph.submissions`` was deleted) into
+``ozzgraph.environments.halctf``. The kernel reaches it only through
+the ``ozzgraph.environments.halctf`` shim or the environment's service
+factories; the supervisor-only boundary (AGENTS.md rule 5) and the
+attempt budgets are unchanged.
 
 Design rules:
 
@@ -80,14 +88,6 @@ from ozzgraph.events import (
     GraphEntityUpdated,
     graph_event,
 )
-from ozzgraph.flags import (
-    EDGE_FLAG_CANDIDATE_OBSERVED_IN_EVIDENCE,
-    ENTITY_FLAG_CANDIDATE,
-    FIELD_ATTEMPTS,
-    FIELD_FLAG,
-    FIELD_REJECTED,
-    FIELD_VERIFIED,
-)
 from ozzgraph.hal_client import SubmissionResult
 from ozzgraph.router import (
     EDGE_SUBMISSION_SUBMITS_FLAG_CANDIDATE,
@@ -96,6 +96,15 @@ from ozzgraph.router import (
     MissingRequiredStateError,
 )
 from ozzgraph.state_graph import EntityRecord, StateGraph
+
+from .flags import (
+    EDGE_FLAG_CANDIDATE_OBSERVED_IN_EVIDENCE,
+    ENTITY_FLAG_CANDIDATE,
+    FIELD_ATTEMPTS,
+    FIELD_FLAG,
+    FIELD_REJECTED,
+    FIELD_VERIFIED,
+)
 
 #: Producer name on every submission coordinator event.
 SUBMISSIONS_PRODUCER = "submissions"

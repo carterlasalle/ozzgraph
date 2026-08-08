@@ -22,13 +22,7 @@ from pathlib import Path
 import pytest
 
 from ozzgraph.config import DEFAULT_MAX_SUBMISSIONS
-from ozzgraph.events import (
-    SUBMISSION_ACCEPTED,
-    SUBMISSION_ATTEMPTED,
-    SUBMISSION_REJECTED,
-    EventLog,
-)
-from ozzgraph.flags import (
+from ozzgraph.environments.halctf import (
     EDGE_EVIDENCE_EXTRACTED_FROM_OBSERVATION,
     EDGE_FLAG_CANDIDATE_OBSERVED_IN_EVIDENCE,
     ENTITY_FLAG_CANDIDATE,
@@ -37,7 +31,18 @@ from ozzgraph.flags import (
     FIELD_FLAG,
     FIELD_REJECTED,
     FIELD_VERIFIED,
+    SubmissionCoordinator,
+    SubmissionLimitError,
+    SubmissionPrivilegeError,
+    SubmissionRejectedError,
+    SubmissionStateError,
     flag_candidate_id,
+)
+from ozzgraph.events import (
+    SUBMISSION_ACCEPTED,
+    SUBMISSION_ATTEMPTED,
+    SUBMISSION_REJECTED,
+    EventLog,
 )
 from ozzgraph.hal_client import HalClient, SubmissionResult
 from ozzgraph.phases import Phase
@@ -48,13 +53,6 @@ from ozzgraph.router import (
     PhaseRouter,
 )
 from ozzgraph.state_graph import StateGraph
-from ozzgraph.submissions import (
-    SubmissionCoordinator,
-    SubmissionLimitError,
-    SubmissionPrivilegeError,
-    SubmissionRejectedError,
-    SubmissionStateError,
-)
 
 FLAG = "flag{submit-me-4242}"
 CHALLENGE = "web-01"

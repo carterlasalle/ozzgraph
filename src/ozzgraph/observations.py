@@ -367,8 +367,12 @@ def _summarize_shell(
 #: Required field -> expected type per halctl document kind. The shapes
 #: are the ones ``halctl`` emits (model dumps of the hal_client v1
 #: schemas; see src/ozzgraph/halctl.py and src/ozzgraph/hal_client.py).
-#: ``error`` and ``scoreboard`` are validated separately (nested shapes).
+#: ``error`` and ``scoreboard`` are validated separately (nested shapes);
+#: the ``ctfs`` / ``challenges`` list documents (V09, the official tool
+#: set) are validated at the entry level like ``scoreboard``.
 _HALCTL_DOC_SHAPES: dict[str, dict[str, type]] = {
+    "ctfs": {"ctfs": list},
+    "challenges": {"challenges": list},
     "challenge": {
         "id": str,
         "title": str,
@@ -399,6 +403,10 @@ def _classify_halctl_document(doc: Mapping[str, object]) -> str:
     """
     if "error" in doc:
         return "error"
+    if "ctfs" in doc:
+        return "ctfs"
+    if "challenges" in doc:
+        return "challenges"
     if "entries" in doc:
         return "scoreboard"
     if "exited" in doc:
@@ -442,6 +450,22 @@ def _validate_halctl_document(doc: Mapping[str, object], kind: str) -> str | Non
             if not isinstance(first, Mapping):
                 return f"scoreboard entry must be an object, got {_type_name(first)}"
             return _check_fields({"user_id": str, "points": int}, first)
+    if kind == "ctfs":
+        ctfs = doc["ctfs"]
+        assert isinstance(ctfs, list)
+        if ctfs:
+            first = ctfs[0]
+            if not isinstance(first, Mapping):
+                return f"ctf entry must be an object, got {_type_name(first)}"
+            return _check_fields({"id": str, "name": str, "challenge_count": int}, first)
+    if kind == "challenges":
+        challenges = doc["challenges"]
+        assert isinstance(challenges, list)
+        if challenges:
+            first = challenges[0]
+            if not isinstance(first, Mapping):
+                return f"challenge entry must be an object, got {_type_name(first)}"
+            return _check_fields({"id": str, "title": str, "points": int}, first)
     return None
 
 
@@ -564,6 +588,28 @@ def _summarize_halctl(doc: Mapping[str, object], kind: str) -> str:
             first = cast(Mapping[str, object], entries[0])
             bits.append(f"top: {_quote_field(_s(first, 'user_id'))} ({_i(first, 'points')} pts)")
         return "; ".join(bits)
+    if kind == "ctfs":
+        ctfs = doc["ctfs"]
+        assert isinstance(ctfs, list)
+        bits = [f"halctl ctfs: {len(ctfs)} competitions"]
+        if ctfs:
+            first = cast(Mapping[str, object], ctfs[0])
+            bits.append(
+                f"first: {_quote_field(_s(first, 'id'))} "
+                f"({_i(first, 'challenge_count')} challenges)"
+            )
+        return "; ".join(bits)
+    if kind == "challenges":
+        challenges = doc["challenges"]
+        assert isinstance(challenges, list)
+        bits = [f"halctl challenges: {len(challenges)} challenges"]
+        if challenges:
+            first = cast(Mapping[str, object], challenges[0])
+            bits.append(
+                f"first: {_quote_field(_s(first, 'id'))} "
+                f"{_quote_field(_s(first, 'title'))} ({_i(first, 'points')} pts)"
+            )
+        return "; ".join(bits)
     if kind == "exit":
         return f"halctl exit: exited={_b(doc, 'exited')}, reason={_quote_field(_s(doc, 'reason'))}"
     return f"halctl document: {len(doc)} top-level fields"
@@ -624,13 +670,14 @@ def _malformed_halctl(
 class HalctlJsonParser(Parser):
     """Parse halctl's single-JSON-document output into structured data.
 
-    Handles the document shapes emitted by ``halctl`` (challenge show /
-    status / submit / hint / scoreboard / exit / error; see
-    :mod:`ozzgraph.halctl`), classifying each document and validating
-    its shape. Malformed JSON, non-object documents, trailing garbage,
-    and shape violations become observations with ``malformed=True`` and
-    a structured ``parse_error`` — never raised exceptions (fail loudly
-    = a structured result, the pipeline keeps running).
+    Handles the document shapes emitted by ``halctl`` (ctfs /
+    challenges / challenge show / status / submit / hint / scoreboard /
+    exit / error; see :mod:`ozzgraph.halctl`), classifying each document
+    and validating its shape. Malformed JSON, non-object documents,
+    trailing garbage, and shape violations become observations with
+    ``malformed=True`` and a structured ``parse_error`` — never raised
+    exceptions (fail loudly = a structured result, the pipeline keeps
+    running).
     """
 
     source: ClassVar[str] = "halctl"

@@ -23,12 +23,12 @@ from ozzgraph.artifacts import ArtifactStore
 from ozzgraph.bootstrap import BootstrapRunner
 from ozzgraph.budgets import Budgets
 from ozzgraph.config import OzzGraphConfig
-from ozzgraph.events import BOOTSTRAP_REACHABILITY, EventLog
-from ozzgraph.executor import Executor
-from ozzgraph.flags import (
+from ozzgraph.environments.halctf import (
     EDGE_EVIDENCE_EXTRACTED_FROM_OBSERVATION,
     FlagCandidateExtractor,
 )
+from ozzgraph.events import BOOTSTRAP_REACHABILITY, EventLog
+from ozzgraph.executor import Executor
 from ozzgraph.hal_client import HalClient, SubmissionResult
 from ozzgraph.lab import get_target
 from ozzgraph.observations import ShellTextParser

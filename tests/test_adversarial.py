@@ -46,8 +46,14 @@ from adversarial_fixtures import (
 )
 
 from ozzgraph.adapters import AdapterParseError, JsonAdapter, TerminalAdapter, ThreeLineAdapter
+from ozzgraph.environments.halctf import (
+    ENTITY_FLAG_CANDIDATE,
+    FlagCandidateExtractor,
+    SubmissionCoordinator,
+    SubmissionPrivilegeError,
+    flag_candidate_id,
+)
 from ozzgraph.events import EventLog
-from ozzgraph.flags import ENTITY_FLAG_CANDIDATE, FlagCandidateExtractor, flag_candidate_id
 from ozzgraph.observations import HALCTL_JSON_PARSER, SHELL_TEXT_PARSER
 from ozzgraph.policy import (
     AllowlistViolationError,
@@ -58,7 +64,6 @@ from ozzgraph.policy import (
 from ozzgraph.profiles import profile_for_model_id
 from ozzgraph.shell import ToolResult, TruncationState
 from ozzgraph.state_graph import StateGraph
-from ozzgraph.submissions import SubmissionCoordinator, SubmissionPrivilegeError
 
 FALLBACK_MODEL = "unknown-model"
 

@@ -186,7 +186,7 @@ class _PrivilegedSubmitFake:
 
 async def _seed_verified_candidate(graph) -> str:
     """Seed observation + evidence + verified candidate (flag-<hash>)."""
-    from ozzgraph.flags import (
+    from ozzgraph.environments.halctf import (
         EDGE_EVIDENCE_EXTRACTED_FROM_OBSERVATION,
         FIELD_FLAG,
         FIELD_REJECTED,
@@ -277,8 +277,8 @@ async def test_submit_verified_candidate_refuses_non_privileged_client(
     tmp_path,
 ) -> None:
     """Only the supervisor path may submit: a non-privileged client is refused."""
+    from ozzgraph.environments.halctf import SubmissionPrivilegeError
     from ozzgraph.state_graph import StateGraph
-    from ozzgraph.submissions import SubmissionPrivilegeError
 
     supervisor = Supervisor(_config(tmp_path))
     supervisor.start()
@@ -349,9 +349,9 @@ async def _seed_hint_ready_graph(graph, *, recommendations: int = 2) -> None:
     """
     from datetime import UTC, datetime
 
+    from ozzgraph.environments.halctf import HintPolicy
     from ozzgraph.evaluator import ENTITY_EVALUATION
     from ozzgraph.executor import ENTITY_ACTION, ENTITY_PLAN, ENTITY_PLAN_STEP
-    from ozzgraph.hints import HintPolicy
 
     at = datetime(2026, 1, 1, tzinfo=UTC)
     plan = "plan-exp-1"
@@ -415,7 +415,7 @@ async def test_request_paid_hint_drives_privileged_coordinator(tmp_path) -> None
 @pytest.mark.asyncio
 async def test_request_paid_hint_blocked_end_to_end(tmp_path) -> None:
     """TESTING_AND_QA scenario 8: a paid hint the gate denies never reaches the wire."""
-    from ozzgraph.hints import HintPolicyDeniedError
+    from ozzgraph.environments.halctf import HintPolicyDeniedError
     from ozzgraph.state_graph import StateGraph
 
     supervisor = Supervisor(_config(tmp_path))
@@ -441,7 +441,7 @@ async def test_request_paid_hint_blocked_end_to_end(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_request_paid_hint_refuses_non_privileged_client(tmp_path) -> None:
     """Only the supervisor path may buy paid hints: non-privileged is refused."""
-    from ozzgraph.hints import HintPrivilegeError
+    from ozzgraph.environments.halctf import HintPrivilegeError
     from ozzgraph.state_graph import StateGraph
 
     supervisor = Supervisor(_config(tmp_path))
@@ -502,13 +502,62 @@ def test_make_environment_defaults_to_local(tmp_path, monkeypatch) -> None:
 
 
 def test_make_environment_uses_halctf_when_challenge_id_set(tmp_path, monkeypatch) -> None:
-    """With OZZGRAPH_CHALLENGE_ID the HalCTF environment is selected."""
+    """With a HalCTF runtime variable the HalCTF environment is selected."""
     from ozzgraph.environments import HalCTFEnvironment
 
     monkeypatch.setenv("OZZGRAPH_CHALLENGE_ID", "web-01")
+    monkeypatch.setenv("OZZGRAPH_MCP_BASE_URL", "http://127.0.0.1:9000/mcp")
     supervisor = Supervisor(_config(tmp_path))
     environment = supervisor._make_environment()
     assert isinstance(environment, HalCTFEnvironment)
+    assert environment.endpoint == "http://127.0.0.1:9000/mcp"
+
+
+def test_make_environment_uses_halctf_from_hal_vars(tmp_path, monkeypatch) -> None:
+    """V09: HAL_* runtime variables select HalCTF mode (HAL_USER_ID alone
+    never does — it is identity, required for every run)."""
+    from ozzgraph.environments import HalCTFEnvironment, LocalEnvironment
+
+    monkeypatch.delenv("OZZGRAPH_CHALLENGE_ID", raising=False)
+    for var in (
+        "OZZGRAPH_MCP_BASE_URL",
+        "HAL_MCP_ENDPOINT",
+        "HAL_ENDPOINT",
+        "MCP_ENDPOINT",
+        "OPENAI_BASE_URL",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    supervisor = Supervisor(_config(tmp_path))
+    # HAL_USER_ID alone: local assessment (the default experience).
+    monkeypatch.setenv("HAL_USER_ID", "user-42")
+    assert isinstance(supervisor._make_environment(), LocalEnvironment)
+    # A HAL_* runtime variable selects HalCTF mode; the endpoint is
+    # discovered from HAL_ENDPOINT.
+    monkeypatch.setenv("HAL_CTF_ID", "web-01")
+    monkeypatch.setenv("HAL_ENDPOINT", "http://halctf:9000/mcp")
+    environment = supervisor._make_environment()
+    assert isinstance(environment, HalCTFEnvironment)
+    assert environment.endpoint == "http://halctf:9000/mcp"
+
+
+def test_make_environment_fails_loudly_without_endpoint(tmp_path, monkeypatch) -> None:
+    """V09: HalCTF mode without a discoverable MCP endpoint is a loud
+    ConfigError at construction (fail loudly, AGENTS.md rule #9)."""
+    from ozzgraph.config import ConfigError
+
+    monkeypatch.delenv("OZZGRAPH_CHALLENGE_ID", raising=False)
+    monkeypatch.setenv("HAL_CTF_ID", "web-01")
+    for var in (
+        "OZZGRAPH_MCP_BASE_URL",
+        "HAL_MCP_ENDPOINT",
+        "HAL_ENDPOINT",
+        "MCP_ENDPOINT",
+        "OPENAI_BASE_URL",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    supervisor = Supervisor(_config(tmp_path))
+    with pytest.raises(ConfigError, match="endpoint"):
+        supervisor._make_environment()
 
 
 @pytest.mark.asyncio
@@ -529,7 +578,13 @@ async def test_print_local_scope_prints_scope_and_objectives(tmp_path, capsys) -
     from ozzgraph.environments import HalCTFEnvironment
 
     await supervisor._print_local_scope(
-        HalCTFEnvironment(supervisor.config, environ={"OZZGRAPH_CHALLENGE_ID": "web-01"})
+        HalCTFEnvironment(
+            supervisor.config,
+            environ={
+                "OZZGRAPH_CHALLENGE_ID": "web-01",
+                "OZZGRAPH_MCP_BASE_URL": "http://127.0.0.1:9000/mcp",
+            },
+        )
     )
     assert capsys.readouterr().out == ""
 

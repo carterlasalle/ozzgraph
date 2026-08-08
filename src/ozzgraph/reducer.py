@@ -11,7 +11,7 @@ Design rules:
 
 - Validation before merge (AGENTS.md rule #3): every id in a finding's
   ``evidence_ids`` must resolve — to an existing graph entity of type
-  ``evidence`` (:data:`ozzgraph.flags.ENTITY_EVIDENCE`) or to an artifact
+  ``evidence`` (:data:`ozzgraph.entities.ENTITY_EVIDENCE`) or to an artifact
   known to the artifact store's index (when a store is configured). A
   finding with at least one unresolved reference raises
   :class:`UnresolvedEvidenceError` carrying the exact unresolved id(s) in
@@ -75,6 +75,7 @@ from datetime import UTC, datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ozzgraph.artifacts import ArtifactIndexError, ArtifactNotFoundError, ArtifactStore
+from ozzgraph.entities import ENTITY_EVIDENCE
 from ozzgraph.events import (
     GRAPH_EDGE_CREATED,
     GRAPH_ENTITY_CREATED,
@@ -84,7 +85,6 @@ from ozzgraph.events import (
     GraphEntityCreated,
     graph_event,
 )
-from ozzgraph.flags import ENTITY_EVIDENCE
 from ozzgraph.scheduler import (
     Finding,
     WorkerRun,

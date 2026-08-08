@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from ozzgraph.environments.halctf import FlagCandidateExtractor, SubmissionCoordinator
 from ozzgraph.events import (
     BOOTSTRAP,
     GRAPH_EDGE_CREATED,
@@ -32,7 +33,6 @@ from ozzgraph.events import (
     GraphEntityUpdated,
     graph_event,
 )
-from ozzgraph.flags import FlagCandidateExtractor
 from ozzgraph.hal_client import SubmissionResult
 from ozzgraph.replay import (
     GRAPH_EVENT_TYPES,
@@ -41,7 +41,6 @@ from ozzgraph.replay import (
     replay_into,
 )
 from ozzgraph.state_graph import StateGraph
-from ozzgraph.submissions import SubmissionCoordinator
 
 # Stable digest of the canonical empty graph (sha256 of the
 # "schema_version=2" header with no entity or edge lines), matching

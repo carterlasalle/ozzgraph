@@ -13,10 +13,12 @@ runs the deterministic bootstrap reconnaissance
 constructing the supervisor-owned privileged HalClient for it. PR22 adds
 :meth:`Supervisor.submit_verified_candidate` — the supervisor-only
 submission surface that drives
-:class:`~ozzgraph.submissions.SubmissionCoordinator` with a privileged
-client. PR23 adds :meth:`Supervisor.request_paid_hint` — the
+:class:`~ozzgraph.environments.halctf.submissions.SubmissionCoordinator`
+with a privileged client. PR23 adds :meth:`Supervisor.request_paid_hint` — the
 supervisor-only paid-hint surface that drives
-:class:`~ozzgraph.hints.HintCoordinator` with a privileged client.
+:class:`~ozzgraph.environments.halctf.hints.HintCoordinator` with a
+privileged client (V09: both coordinators moved out of the generic
+kernel into ``ozzgraph.environments.halctf``, docs/adr/0011).
 
 V01 (docs/adr/0008): :meth:`Supervisor.run` drives the v2 "most important
 fix" (docs/CHANGES_v2.md) — instead of the idle
@@ -45,22 +47,30 @@ from uuid import uuid4
 from ozzgraph.artifacts import ArtifactStore
 from ozzgraph.bootstrap import BootstrapRunner
 from ozzgraph.budgets import Budgets
-from ozzgraph.config import ConfigError, OzzGraphConfig
+from ozzgraph.config import (
+    ConfigError,
+    OzzGraphConfig,
+    discover_halctf_challenge_id,
+    halctf_mode_selected,
+)
 from ozzgraph.environments import (
     EnvironmentAdapter,
     HalCTFEnvironment,
     LocalEnvironment,
 )
+from ozzgraph.environments.halctf import (
+    HintClient,
+    HintCoordinator,
+    SubmissionClient,
+    SubmissionCoordinator,
+)
 from ozzgraph.evaluator import Evaluator
 from ozzgraph.events import BOOTSTRAP, TERMINATION, Event, EventLog
 from ozzgraph.hal_client import HalClient, HintResult, SubmissionResult
-from ozzgraph.halctl import CHALLENGE_ID_ENV
 from ozzgraph.heartbeat import Heartbeat
-from ozzgraph.hints import HintClient, HintCoordinator
 from ozzgraph.policy import ScopePolicy
 from ozzgraph.runner import AutonomousRunner, RunnerStatus
 from ozzgraph.state_graph import StateGraph
-from ozzgraph.submissions import SubmissionClient, SubmissionCoordinator
 
 
 class TerminationReason(str, Enum):
@@ -86,6 +96,10 @@ class Supervisor:
         self._budgets: Budgets | None = None
         self._event_log: EventLog | None = None
         self._artifact_store: ArtifactStore | None = None
+        # V09: the active environment adapter, set by run() after
+        # deterministic selection. The supervisor routes the
+        # HalCTF-owned coordinators through it when present.
+        self._environment: EnvironmentAdapter | None = None
 
     @property
     def config(self) -> OzzGraphConfig:
@@ -202,7 +216,15 @@ class Supervisor:
             bootstrap_reason = await self._run_bootstrap()
             if bootstrap_reason is not None:
                 return bootstrap_reason
-            environment = self._make_environment()
+            try:
+                environment = self._make_environment()
+            except ConfigError:
+                # V09: HalCTF mode without a discoverable MCP endpoint
+                # fails loudly as a structured FAILED termination (the
+                # environment adapter raises ConfigError at
+                # construction; AGENTS.md rule #9).
+                return self.stop(reason=TerminationReason.FAILED)
+            self._environment = environment
             try:
                 await self._print_local_scope(environment)
                 assert self._event_log is not None  # start() set it
@@ -249,13 +271,19 @@ class Supervisor:
     def _make_environment(self) -> EnvironmentAdapter:
         """Build the runtime environment adapter for this run.
 
-        Deterministic selection (docs/adr/0008): the HalCTF environment
-        is used when ``OZZGRAPH_CHALLENGE_ID`` is configured (bootstrap
-        stays wired for HalCTF); otherwise the run is a local
-        assessment and the :class:`~ozzgraph.environments.local.LocalEnvironment`
-        is used.
+        Deterministic selection (docs/adr/0008 + 0011): the HalCTF
+        environment is used when the environment selects HalCTF mode
+        (any HalCTF runtime variable: ``HAL_CTF_ID``, ``HAL_CHALLENGE_ID``,
+        ``HAL_ENDPOINT``, ``HAL_MCP_ENDPOINT``, ``MCP_ENDPOINT``, or the
+        legacy ``OZZGRAPH_CHALLENGE_ID``); otherwise the run is a local
+        assessment and the
+        :class:`~ozzgraph.environments.local.LocalEnvironment` is used
+        (the V08 ``OZZGRAPH_TARGET`` classification stays
+        authoritative). A missing MCP endpoint in HalCTF mode raises
+        :class:`~ozzgraph.config.ConfigError` loudly at construction
+        (fail loudly, AGENTS.md rule #9).
         """
-        if os.environ.get(CHALLENGE_ID_ENV, "").strip():
+        if halctf_mode_selected(os.environ):
             return HalCTFEnvironment(self._config)
         return LocalEnvironment(self._config)
 
@@ -356,24 +384,27 @@ class Supervisor:
         privileged client. The supervisor constructs the supervisor-owned
         privileged :class:`HalClient` (the ``_run_bootstrap`` pattern,
         AGENTS.md invariant 5) unless a client is injected (tests), and
-        drives the :class:`~ozzgraph.submissions.SubmissionCoordinator`,
-        which enforces the provenance, privilege, and attempt-budget
-        invariants.
+        drives the HalCTF environment's
+        :class:`~ozzgraph.environments.halctf.submissions.SubmissionCoordinator`
+        (V09, docs/adr/0011), which enforces the provenance, privilege,
+        and attempt-budget invariants.
 
         Args:
             graph: The authoritative state graph holding the verified
                 flag candidate.
             challenge_id: The challenge to submit to; defaults to the
-                ``OZZGRAPH_CHALLENGE_ID`` environment variable.
+                environment's discovered challenge id (``HAL_CTF_ID`` /
+                ``HAL_CHALLENGE_ID`` / ``OZZGRAPH_CHALLENGE_ID``).
             client: Optional submission client to drive (must be
                 privileged); when ``None`` the supervisor constructs and
                 closes its own privileged HalClient.
 
         Raises:
             ConfigError: If no challenge id is configured.
-            ozzgraph.submissions.SubmissionError: For every refusal the
-                coordinator raises (privilege, limits, rejection — see
-                :class:`~ozzgraph.submissions.SubmissionCoordinator`).
+            ozzgraph.environments.halctf.submissions.SubmissionError:
+                For every refusal the coordinator raises (privilege,
+                limits, rejection — see
+                :class:`~ozzgraph.environments.halctf.submissions.SubmissionCoordinator`).
             ozzgraph.router.MissingRequiredStateError: If the graph has
                 no verified, provenance-backed flag candidate.
 
@@ -383,9 +414,12 @@ class Supervisor:
             the graph to DONE.
         """
         if challenge_id is None:
-            resolved = os.environ.get(CHALLENGE_ID_ENV, "")
-            if resolved.strip() == "":
-                raise ConfigError(f"missing challenge id for submission: set {CHALLENGE_ID_ENV}")
+            resolved = discover_halctf_challenge_id(os.environ)
+            if resolved == "":
+                raise ConfigError(
+                    "missing challenge id for submission: set HAL_CTF_ID, "
+                    "HAL_CHALLENGE_ID, or OZZGRAPH_CHALLENGE_ID"
+                )
             challenge_id = resolved
         assert self._event_log is not None  # start() sets it before _started
         owned = client is None
@@ -395,13 +429,28 @@ class Supervisor:
             else HalClient(privileged=True, event_log=self._event_log, run_id=self._run_id)
         )
         try:
-            coordinator = SubmissionCoordinator(
-                client=resolved_client,
-                run_id=self._run_id,
-                challenge_id=challenge_id,
-                event_log=self._event_log,
-                max_submissions=self._config.max_submissions,
-            )
+            # V09: the HalCTF environment provides its own submission
+            # coordinator, wired to the discovered challenge id and the
+            # config's submission budget (docs/adr/0011); the shim
+            # construction is the fallback for supervisor instances
+            # built outside a run (tests).
+            environment = self._environment
+            if isinstance(environment, HalCTFEnvironment):
+                coordinator = environment.submission_coordinator(
+                    client=resolved_client,
+                    run_id=self._run_id,
+                    event_log=self._event_log,
+                    challenge_id=challenge_id,
+                    max_submissions=self._config.max_submissions,
+                )
+            else:
+                coordinator = SubmissionCoordinator(
+                    client=resolved_client,
+                    run_id=self._run_id,
+                    challenge_id=challenge_id,
+                    event_log=self._event_log,
+                    max_submissions=self._config.max_submissions,
+                )
             return await coordinator.submit_verified_candidate(graph)
         finally:
             if owned:
@@ -423,7 +472,9 @@ class Supervisor:
         supervisor constructs the supervisor-owned privileged
         :class:`HalClient` (the ``_run_bootstrap`` pattern, AGENTS.md
         invariant 5) unless a client is injected (tests), and drives the
-        :class:`~ozzgraph.hints.HintCoordinator`, which evaluates the
+        HalCTF environment's
+        :class:`~ozzgraph.environments.halctf.hints.HintCoordinator`
+        (V09, docs/adr/0011), which evaluates the
         deterministic paid-hint gate (budget, no recent information
         gain, exhausted low-cost actions, two evaluator
         recommendations, sufficient expected-value improvement — every
@@ -437,7 +488,8 @@ class Supervisor:
                 owned by bootstrap — the paid-hint surface never
                 requests it.
             challenge_id: The challenge to buy the hint for; defaults to
-                the ``OZZGRAPH_CHALLENGE_ID`` environment variable.
+                the environment's discovered challenge id (``HAL_CTF_ID``
+                / ``HAL_CHALLENGE_ID`` / ``OZZGRAPH_CHALLENGE_ID``).
             client: Optional hint client to drive (must be privileged);
                 when ``None`` the supervisor constructs and closes its
                 own privileged HalClient.
@@ -445,9 +497,10 @@ class Supervisor:
         Raises:
             ValueError: If ``index`` is less than 1.
             ConfigError: If no challenge id is configured.
-            ozzgraph.hints.HintError: For every refusal the coordinator
-                raises (privilege, policy denial — see
-                :class:`~ozzgraph.hints.HintCoordinator`).
+            ozzgraph.environments.halctf.hints.HintError: For every
+                refusal the coordinator raises (privilege, policy denial
+                — see
+                :class:`~ozzgraph.environments.halctf.hints.HintCoordinator`).
             ozzgraph.hal_client.HalServiceError: If the platform call
                 fails after bounded retries.
 
@@ -460,9 +513,12 @@ class Supervisor:
                 "hint zero is free and requested by bootstrap"
             )
         if challenge_id is None:
-            resolved = os.environ.get(CHALLENGE_ID_ENV, "")
-            if resolved.strip() == "":
-                raise ConfigError(f"missing challenge id for hint purchase: set {CHALLENGE_ID_ENV}")
+            resolved = discover_halctf_challenge_id(os.environ)
+            if resolved == "":
+                raise ConfigError(
+                    "missing challenge id for hint purchase: set HAL_CTF_ID, "
+                    "HAL_CHALLENGE_ID, or OZZGRAPH_CHALLENGE_ID"
+                )
             challenge_id = resolved
         assert self._event_log is not None  # start() sets it before _started
         owned = client is None
@@ -472,13 +528,28 @@ class Supervisor:
             else HalClient(privileged=True, event_log=self._event_log, run_id=self._run_id)
         )
         try:
-            coordinator = HintCoordinator(
-                client=resolved_client,
-                run_id=self._run_id,
-                challenge_id=challenge_id,
-                event_log=self._event_log,
-                max_hints=self._config.max_hints,
-            )
+            # V09: the HalCTF environment provides its own hint
+            # coordinator, wired to the discovered challenge id and the
+            # config's max-paid-hint budget (docs/adr/0011); the shim
+            # construction is the fallback for supervisor instances
+            # built outside a run (tests).
+            environment = self._environment
+            if isinstance(environment, HalCTFEnvironment):
+                coordinator = environment.hint_coordinator(
+                    client=resolved_client,
+                    run_id=self._run_id,
+                    event_log=self._event_log,
+                    challenge_id=challenge_id,
+                    max_hints=self._config.max_hints,
+                )
+            else:
+                coordinator = HintCoordinator(
+                    client=resolved_client,
+                    run_id=self._run_id,
+                    challenge_id=challenge_id,
+                    event_log=self._event_log,
+                    max_hints=self._config.max_hints,
+                )
             return await coordinator.check_then_request(graph, index)
         finally:
             if owned:

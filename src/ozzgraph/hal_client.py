@@ -12,6 +12,8 @@ Wire protocol (JSON-RPC 2.0, ``POST {base_url}``):
 ==================  =====================  ===================================
 Method              Params                 Result
 ==================  =====================  ===================================
+``ctf.list``        *(none)*               ``CtfList`` object
+``challenge.list``  ``ctf_id`` (optional)  ``ChallengeList`` object
 ``challenge.get``   ``challenge_id``       ``Challenge`` object
 ``challenge.status`` ``challenge_id``      ``ChallengeStatus`` object
 ``flag.submit``     ``challenge_id``,      ``SubmissionResult`` object
@@ -22,17 +24,27 @@ Method              Params                 Result
 ``exit``            ``reason``             ``null`` or empty object
 ==================  =====================  ===================================
 
-Every upstream response is normalized into an internal versioned schema
-(Contract Versioning): unknown upstream fields are dropped and the remaining
-payload is validated into a :class:`Challenge` / :class:`ChallengeStatus` /
-:class:`SubmissionResult` / :class:`HintResult` / :class:`Scoreboard` model
-carrying ``schema_version``. Upstream renames are absorbed inside the
-normalizer (``model_validate``) without leaking into the codebase.
+The official HalCTF MCP tool set (V09, docs/CHANGES_v2.md milestone 9)
+is exposed as ``list_ctfs``, ``list_challenges`` (the ``challenges``
+tool), ``get_status`` (``status``), ``submit_flag``, ``request_hint``,
+and ``get_scoreboard`` (``scoreboard``) — see
+:data:`OFFICIAL_HALCTF_TOOLS`. Every upstream response is normalized
+into an internal versioned schema (Contract Versioning): unknown
+upstream fields are dropped and the remaining payload is validated into
+a :class:`Challenge` / :class:`ChallengeStatus` / :class:`SubmissionResult`
+/ :class:`HintResult` / :class:`Scoreboard` / :class:`CtfList` /
+:class:`ChallengeList` model carrying ``schema_version``. Upstream
+renames are absorbed inside the normalizer (``model_validate``) without
+leaking into the codebase.
 
 Configuration is constructor-injected with environment fallback (no secrets
-or settings enter the ``OzzGraphConfig`` model): ``OZZGRAPH_MCP_BASE_URL``,
-``OZZGRAPH_MCP_TIMEOUT_S``, ``OZZGRAPH_MCP_MAX_RETRIES``, and
-``OZZGRAPH_HAL_PRIVILEGED``.
+or settings enter the ``OzzGraphConfig`` model): the MCP endpoint is
+resolved with the deterministic V09 discovery
+(:func:`ozzgraph.config.discover_halctf_endpoint` — first non-blank of
+``OZZGRAPH_MCP_BASE_URL`` / ``HAL_MCP_ENDPOINT`` / ``HAL_ENDPOINT`` /
+``MCP_ENDPOINT`` / ``OPENAI_BASE_URL``, falling back to the localhost
+default for standalone ``halctl`` use), plus ``OZZGRAPH_MCP_TIMEOUT_S``,
+``OZZGRAPH_MCP_MAX_RETRIES``, and ``OZZGRAPH_HAL_PRIVILEGED``.
 
 Failure policy mirrors the model client (docs/API_AND_INTEGRATIONS.md,
 "Integration Failure Policy"): bounded exponential-backoff retries on
@@ -58,12 +70,27 @@ from typing import Self, TypeVar
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from ozzgraph.config import discover_halctf_endpoint
 from ozzgraph.events import Event, EventLog
 
 # Provider identity used in normalized errors and failure events.
 PROVIDER = "halctf"
 PRODUCER = "hal_client"
 HAL_FAILURE_EVENT = "hal_failure"
+
+#: The official HalCTF MCP tool set (V09, docs/CHANGES_v2.md milestone
+#: 9), keyed by tool name -> :class:`HalClient` method. Every platform
+#: tool has exactly one client surface; models reach it only through the
+#: kernel's adapters (``halctl`` / the environment services), never raw
+#: MCP (AGENTS.md invariant 5).
+OFFICIAL_HALCTF_TOOLS: dict[str, str] = {
+    "list_ctfs": "list_ctfs",
+    "challenges": "list_challenges",
+    "status": "get_status",
+    "submit_flag": "submit_flag",
+    "request_hint": "request_hint",
+    "scoreboard": "get_scoreboard",
+}
 
 # Internal contract version (Contract Versioning). Bump only via forward-only
 # migrations; every normalized model carries this version.
@@ -112,7 +139,13 @@ class Challenge(BaseModel):
 
 
 class ChallengeStatus(BaseModel):
-    """Internal v1 schema for a challenge's live status."""
+    """Internal v1 schema for a challenge's live status.
+
+    V09 (v2/halctf-adapter): the status carries the smoke-flag signal
+    (``smoke_flag`` — whether the smoke-test flag was accepted) and the
+    deterministic scoring breakdown (``scoring``), so the environment
+    can wire smoke-flag and scoring data without extra calls.
+    """
 
     model_config = ConfigDict(extra="ignore")
 
@@ -122,7 +155,29 @@ class ChallengeStatus(BaseModel):
     attempts: int = Field(ge=0)
     hints_used: int = Field(ge=0)
     points_earned: int = Field(ge=0)
+    smoke_flag: bool = False
+    scoring: Scoring | None = None
     updated_at: str
+
+
+class Scoring(BaseModel):
+    """Internal v1 schema for a challenge's deterministic scoring breakdown.
+
+    Attributes:
+        max_points: The challenge's maximum (full-solve) point value.
+        solves: Number of teams that already solved the challenge.
+        first_blood: Whether this team was the first to solve.
+        hint_penalty: Points deducted per paid hint (the deterministic
+            hint cost the HintPolicy layer budgets against).
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    schema_version: int = SCHEMA_VERSION
+    max_points: int = Field(ge=0)
+    solves: int = Field(ge=0)
+    first_blood: bool = False
+    hint_penalty: int = Field(default=0, ge=0)
 
 
 class SubmissionResult(BaseModel):
@@ -139,7 +194,12 @@ class SubmissionResult(BaseModel):
 
 
 class HintResult(BaseModel):
-    """Internal v1 schema for one hint request verdict."""
+    """Internal v1 schema for one hint request verdict.
+
+    V09: ``cost`` carries the hint's price in points when the platform
+    reports one (None when unknown) — the deterministic hint cost the
+    paid-hint gate budgets against.
+    """
 
     model_config = ConfigDict(extra="ignore")
 
@@ -148,6 +208,7 @@ class HintResult(BaseModel):
     index: int = Field(ge=0)
     hint: str
     paid: bool
+    cost: int | None = Field(default=None, ge=0)
 
 
 class ScoreboardEntry(BaseModel):
@@ -169,6 +230,38 @@ class Scoreboard(BaseModel):
 
     schema_version: int = SCHEMA_VERSION
     entries: list[ScoreboardEntry] = Field(default_factory=list)
+
+
+class Ctf(BaseModel):
+    """Internal v1 schema for one HalCTF competition (``ctf.list``)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    schema_version: int = SCHEMA_VERSION
+    id: str
+    name: str
+    description: str = ""
+    challenge_count: int = Field(default=0, ge=0)
+    solved: int = Field(default=0, ge=0)
+    points: int = Field(default=0, ge=0)
+
+
+class CtfList(BaseModel):
+    """Internal v1 schema for the ``ctf.list`` result."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    schema_version: int = SCHEMA_VERSION
+    ctfs: list[Ctf] = Field(default_factory=list)
+
+
+class ChallengeList(BaseModel):
+    """Internal v1 schema for the ``challenge.list`` result."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    schema_version: int = SCHEMA_VERSION
+    challenges: list[Challenge] = Field(default_factory=list)
 
 
 class HalServiceError(RuntimeError):
@@ -266,24 +359,37 @@ class HalClient:
     Env var                      Default                       Meaning
     ============================ ============================= ================
     ``OZZGRAPH_MCP_BASE_URL``    ``http://127.0.0.1:9000/mcp`` Base URL incl.
-                                                               MCP endpoint
-                                                               path
+                                                                 MCP endpoint
+                                                                 path — the
+                                                                 FIRST of the
+                                                                 deterministic
+                                                                 V09 discovery
+                                                                 candidates
+                                                                 (``OZZGRAPH_
+                                                                 MCP_BASE_URL``,
+                                                                 ``HAL_MCP_
+                                                                 ENDPOINT``,
+                                                                 ``HAL_ENDPOINT``,
+                                                                 ``MCP_ENDPOINT``,
+                                                                 ``OPENAI_BASE_URL``;
+                                                                 first non-blank
+                                                                 wins)
     ``OZZGRAPH_MCP_TIMEOUT_S``   ``60``                        Request
-                                                               timeout in
-                                                               seconds
+                                                                 timeout in
+                                                                 seconds
     ``OZZGRAPH_MCP_MAX_RETRIES`` ``3``                         Transient
-                                                               retries
-                                                               (``0``
-                                                               disables,
-                                                               max 10)
+                                                                 retries
+                                                                 (``0``
+                                                                 disables,
+                                                                 max 10)
     ``OZZGRAPH_HAL_PRIVILEGED``  *(unset)*                     Supervisor
-                                                               flag; only a
-                                                               privileged
-                                                               client may
-                                                               submit flags,
-                                                               buy paid
-                                                               hints, or
-                                                               exit
+                                                                 flag; only a
+                                                                 privileged
+                                                                 client may
+                                                                 submit flags,
+                                                                 buy paid
+                                                                 hints, or
+                                                                 exit
     ============================ ============================= ================
 
     Retry policy (docs/API_AND_INTEGRATIONS.md, "Integration Failure
@@ -329,7 +435,13 @@ class HalClient:
         sleeper: Sleeper = asyncio.sleep,
     ) -> None:
         env = os.environ
-        resolved_url = _env_str(env, MCP_BASE_URL_ENV, DEFAULT_MCP_BASE_URL)
+        # V09: the endpoint is resolved through the deterministic
+        # discovery (first non-blank of OZZGRAPH_MCP_BASE_URL /
+        # HAL_MCP_ENDPOINT / HAL_ENDPOINT / MCP_ENDPOINT /
+        # OPENAI_BASE_URL — ozzgraph.config.discover_halctf_endpoint),
+        # falling back to the localhost default for standalone halctl
+        # use. The explicit constructor argument always wins.
+        resolved_url = discover_halctf_endpoint(env) or DEFAULT_MCP_BASE_URL
         self._base_url = (resolved_url if base_url is None else base_url).rstrip("/")
         if not self._base_url.startswith(("http://", "https://")):
             raise ValueError(f"base_url must be an http(s) URL, got {self._base_url!r}")
@@ -384,6 +496,37 @@ class HalClient:
         traceback: TracebackType | None,
     ) -> None:
         await self.aclose()
+
+    async def list_ctfs(self) -> CtfList:
+        """List the available HalCTF competitions (``ctf.list``).
+
+        The ``list_ctfs`` tool of the official HalCTF MCP tool set (V09).
+        Read-only; open to any caller.
+
+        Raises:
+            HalServiceError: On provider failure (after bounded retries) or
+                on an unparseable response payload.
+        """
+        result, attempts = await self._call_rpc("ctf.list", {})
+        return self._parse_result("ctf.list", result, CtfList, attempts)
+
+    async def list_challenges(self, ctf_id: str | None = None) -> ChallengeList:
+        """List the challenges of a competition (``challenge.list``).
+
+        The ``challenges`` tool of the official HalCTF MCP tool set
+        (V09). ``ctf_id`` narrows the listing to one competition when
+        provided; without it the platform's default/active CTF is
+        listed. Read-only; open to any caller.
+
+        Raises:
+            HalServiceError: On provider failure (after bounded retries) or
+                on an unparseable response payload.
+        """
+        params: dict[str, object] = {}
+        if ctf_id is not None and ctf_id.strip() != "":
+            params["ctf_id"] = ctf_id.strip()
+        result, attempts = await self._call_rpc("challenge.list", params)
+        return self._parse_result("challenge.list", result, ChallengeList, attempts)
 
     async def get_challenge(self, challenge_id: str) -> Challenge:
         """Retrieve the challenge's normalized details (``challenge.get``).

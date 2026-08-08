@@ -8,11 +8,16 @@ concrete adapters:
 
 - :class:`~ozzgraph.environments.local.LocalEnvironment` — deterministic
   local assessment scope derived from configuration (milestone 8).
-- :class:`~ozzgraph.environments.halctf.HalCTFEnvironment` — MINIMAL
-  HalCTF adapter (milestone 9 lands the full one).
+- :class:`~ozzgraph.environments.halctf.HalCTFEnvironment` — FULL HalCTF
+  adapter (milestone 9): deterministic HAL_* discovery, the official
+  tool set, smoke flag, scoring, hint costs, graceful completion, and
+  the HalCTF-owned hint/submission/flag/scoreboard services
+  (docs/adr/0011).
 
 The kernel (supervisor, runner, router) never imports HalCTF/CTF
-concepts directly; it drives environments through the protocol.
+concepts directly; it drives environments through the protocol and
+reaches the HalCTF-owned services only through the
+``ozzgraph.environments.halctf`` shim.
 """
 
 from __future__ import annotations

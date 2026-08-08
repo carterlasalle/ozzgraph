@@ -1,4 +1,4 @@
-"""Deterministic flag candidate extraction with provenance for OzzGraph (PR22).
+"""Deterministic flag candidate extraction with provenance (V09, HalCTF).
 
 Implements the candidate-extraction slice of Phase 8 (docs/
 IMPLEMENTATION_PLAN.md, PR step 22; docs/TECHNICAL_REQUIREMENTS.md,
@@ -7,6 +7,13 @@ appears VERBATIM in an observation (or an artifact that observation
 references) AND that observation has at least one evidence entity linked
 via ``EVIDENCE EXTRACTED_FROM OBSERVATION``. A bare model claim is never
 a candidate — provenance is required (AGENTS.md rule #3).
+
+V09 (v2/halctf-adapter, docs/adr/0011): this module is owned by the
+HalCTF environment — it moved out of the generic kernel
+(``ozzgraph.flags`` was deleted) into ``ozzgraph.environments.halctf``
+so the kernel never imports HalCTF concepts directly. The generic
+entity vocabulary it shares with the kernel (``observation``,
+``evidence``, the extraction edge) lives in :mod:`ozzgraph.entities`.
 
 Design rules:
 
@@ -68,6 +75,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ozzgraph.artifacts import ArtifactIndexError, ArtifactNotFoundError, ArtifactStore
 from ozzgraph.config import DEFAULT_FLAG_PATTERN, DEFAULT_MAX_SUBMISSIONS
+from ozzgraph.entities import (
+    EDGE_EVIDENCE_EXTRACTED_FROM_OBSERVATION,
+    ENTITY_OBSERVATION,
+)
 from ozzgraph.events import (
     FLAGS_CANDIDATE_FOUND,
     GRAPH_EDGE_CREATED,
@@ -84,15 +95,16 @@ from ozzgraph.state_graph import EntityRecord, StateGraph
 FLAGS_PRODUCER = "flags"
 
 #: Entity types the extractor reads and writes (docs/DATA_STRATEGY.md,
-#: lowercase by convention).
-ENTITY_OBSERVATION = "observation"
-ENTITY_EVIDENCE = "evidence"
+#: lowercase by convention). ``observation`` / ``evidence`` are the
+#: generic kernel vocabulary (ozzgraph.entities, V09 docs/adr/0011);
+#: ``flag_candidate`` is HalCTF-owned.
 ENTITY_FLAG_CANDIDATE = "flag_candidate"
 
 #: Edge types the extractor reads and writes (docs/DATA_STRATEGY.md,
 #: uppercase by convention). The evidence edge direction is resolved
-#: from either endpoint, mirroring the evaluator (PR21).
-EDGE_EVIDENCE_EXTRACTED_FROM_OBSERVATION = "EVIDENCE EXTRACTED_FROM OBSERVATION"
+#: from either endpoint, mirroring the evaluator (PR21). The
+#: ``EVIDENCE EXTRACTED_FROM OBSERVATION`` edge is the generic kernel
+#: vocabulary (ozzgraph.entities); the candidate edge is HalCTF-owned.
 EDGE_FLAG_CANDIDATE_OBSERVED_IN_EVIDENCE = "FLAG_CANDIDATE OBSERVED_IN EVIDENCE"
 
 #: Payload fields of a flag_candidate entity.

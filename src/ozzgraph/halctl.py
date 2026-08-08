@@ -8,6 +8,8 @@ failure.
 
 Subcommands:
 
+- ``ctfs --json`` — list the available HalCTF competitions (V09)
+- ``challenges [--ctf-id <id>] --json`` — list challenges (V09)
 - ``challenge show --json`` — normalized challenge details
 - ``status --json`` — challenge status
 - ``submit --flag <flag> --json`` — submit a flag (supervisor-only)
@@ -67,6 +69,12 @@ def build_parser() -> argparse.ArgumentParser:
     challenge_sub = challenge.add_subparsers(dest="challenge_command", required=True)
     challenge_sub.add_parser("show", parents=[common], help="Show normalized challenge details.")
 
+    subparsers.add_parser("ctfs", help="List the available competitions (V09).")
+
+    challenges = subparsers.add_parser("challenges", help="List challenges (V09).")
+    challenges.add_argument("--ctf-id", default=None, help="Narrow the listing to one competition.")
+    challenges.add_argument("--json", action="store_true", help="Emit JSON (always on).")
+
     subparsers.add_parser("status", parents=[common], help="Challenge status.")
 
     submit = subparsers.add_parser("submit", parents=[common], help="Submit a flag.")
@@ -114,7 +122,16 @@ async def _run_command(args: argparse.Namespace) -> int:
     try:
         client = HalClient()
         async with client:
-            if args.command == "challenge":
+            if args.command == "ctfs":
+                ctfs_result = await client.list_ctfs()
+                _emit(ctfs_result.model_dump(mode="json"))
+            elif args.command == "challenges":
+                ctf_id = _arg(args, "ctf_id")
+                challenges_result = await client.list_challenges(
+                    ctf_id if isinstance(ctf_id, str) else None
+                )
+                _emit(challenges_result.model_dump(mode="json"))
+            elif args.command == "challenge":
                 assert challenge_id is not None
                 challenge_result = await client.get_challenge(challenge_id)
                 _emit(challenge_result.model_dump(mode="json"))
