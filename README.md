@@ -42,11 +42,10 @@ flowchart TB
     ER -->|loop| P
 ```
 
-**Release status: v1.0.0 — all 32 PRs of the implementation plan are merged;
-every Definition of Done item passed the PR32 rehearsal (19/19, see
-[docs/RELEASE.md](docs/RELEASE.md)).** The codebase is the release candidate;
-a versioned GitHub release/tag has not yet been cut (no `v1.0.0` tag or
-GitHub Release exists).
+**Release status: v1.0.0 — shipped.** All 32 PRs of the implementation plan are
+merged, every Definition of Done item passed the PR32 rehearsal (19/19), and
+the [v1.0.0 GitHub release](https://github.com/carterlasalle/ozzgraph/releases/tag/v1.0.0)
+has been cut. See [docs/RELEASE.md](docs/RELEASE.md) for release ops.
 
 ## What the harness does
 
