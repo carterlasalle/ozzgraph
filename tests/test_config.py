@@ -1,10 +1,17 @@
 """Unit tests for runtime configuration parsing (PR2)."""
 
+import json
 from pathlib import Path
 
 import pytest
 
-from ozzgraph.config import ConfigError, OzzGraphConfig, load_config
+from ozzgraph.config import (
+    ConfigError,
+    Credential,
+    OzzGraphConfig,
+    credential_secret,
+    load_config,
+)
 
 
 def test_load_config_requires_hal_user_id() -> None:
@@ -132,7 +139,8 @@ def test_load_config_respects_scope_overrides() -> None:
         }
     )
     assert config.max_command_length == 8192
-    assert config.target_allowlist == ("10.0.0.5", "challenge.local", "10.0.0.0/8")
+    # The allowlist is deterministic: sorted, whatever the env order.
+    assert config.target_allowlist == ("10.0.0.0/8", "10.0.0.5", "challenge.local")
     assert config.allowed_command_families == ("recon", "shell")
 
 
@@ -205,3 +213,210 @@ def test_load_config_blank_flag_env_uses_default() -> None:
     """A blank flag-pattern env var falls back to the safe default."""
     config = load_config(environ={"HAL_USER_ID": "user-42", "OZZGRAPH_FLAG_PATTERN": "   "})
     assert config.flag_pattern == r"flag\{[^{}\s]+\}"
+
+
+# ---------------------------------------------------------------------------
+# V08 scope + credentials files (docs/adr/0010)
+# ---------------------------------------------------------------------------
+
+
+def _scope_file(tmp_path: Path, body: str, suffix: str = ".json") -> Path:
+    path = tmp_path / f"scope{suffix}"
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def test_scope_file_json_list_merges_into_allowlist(tmp_path: Path) -> None:
+    """A JSON scope file's entries merge into target_allowlist, sorted."""
+    scope = _scope_file(
+        tmp_path,
+        json.dumps(["10.0.0.0/24", "http://10.0.0.5:3000", "10.0.0.5"]),
+    )
+    config = load_config(
+        environ={
+            "HAL_USER_ID": "user-42",
+            "OZZGRAPH_SCOPE_FILE": str(scope),
+            "OZZGRAPH_TARGET_ALLOWLIST": "intranet.example",
+        }
+    )
+    assert config.scope_file == scope
+    assert config.target_allowlist == (
+        "10.0.0.0/24",
+        "10.0.0.5",
+        "http://10.0.0.5:3000",
+        "intranet.example",
+    )
+
+
+def test_scope_file_toml_allowlist_table(tmp_path: Path) -> None:
+    """A TOML scope file uses an ``allowlist`` table (TOML has no bare lists)."""
+    scope = _scope_file(
+        tmp_path,
+        'allowlist = ["10.0.0.0/24", "challenge.local"]\n',
+        suffix=".toml",
+    )
+    config = load_config(environ={"HAL_USER_ID": "user-42", "OZZGRAPH_SCOPE_FILE": str(scope)})
+    assert config.target_allowlist == ("10.0.0.0/24", "challenge.local")
+
+
+def test_scope_file_yaml_list(tmp_path: Path) -> None:
+    """A YAML scope file loads through the safe loader."""
+    scope = _scope_file(
+        tmp_path,
+        "- 10.0.0.0/24\n- http://10.0.0.5:3000\n",
+        suffix=".yaml",
+    )
+    config = load_config(environ={"HAL_USER_ID": "user-42", "OZZGRAPH_SCOPE_FILE": str(scope)})
+    assert config.target_allowlist == ("10.0.0.0/24", "http://10.0.0.5:3000")
+
+
+def test_scope_file_deduplicates_and_sorts(tmp_path: Path) -> None:
+    """Duplicate and unsorted entries collapse deterministically."""
+    scope = _scope_file(tmp_path, json.dumps(["b.example", "a.example", "b.example"]))
+    config = load_config(environ={"HAL_USER_ID": "user-42", "OZZGRAPH_SCOPE_FILE": str(scope)})
+    assert config.target_allowlist == ("a.example", "b.example")
+
+
+def test_scope_file_missing_fails_loudly(tmp_path: Path) -> None:
+    """A configured-but-missing scope file is a loud ConfigError."""
+    with pytest.raises(ConfigError, match="scope"):
+        load_config(
+            environ={
+                "HAL_USER_ID": "user-42",
+                "OZZGRAPH_SCOPE_FILE": str(tmp_path / "nope.json"),
+            }
+        )
+
+
+def test_scope_file_malformed_json_fails_loudly(tmp_path: Path) -> None:
+    """Malformed JSON content is a loud ConfigError, never a partial list."""
+    scope = _scope_file(tmp_path, "{not json")
+    with pytest.raises(ConfigError, match="malformed"):
+        load_config(environ={"HAL_USER_ID": "user-42", "OZZGRAPH_SCOPE_FILE": str(scope)})
+
+
+def test_scope_file_wrong_shape_fails_loudly(tmp_path: Path) -> None:
+    """A scope file that is not a list of strings is rejected."""
+    scope = _scope_file(tmp_path, json.dumps({"hosts": ["a.example"]}))
+    with pytest.raises(ConfigError, match="allowlist"):
+        load_config(environ={"HAL_USER_ID": "user-42", "OZZGRAPH_SCOPE_FILE": str(scope)})
+    blank = _scope_file(tmp_path, json.dumps(["  "]))
+    with pytest.raises(ConfigError, match="non-empty"):
+        load_config(environ={"HAL_USER_ID": "user-42", "OZZGRAPH_SCOPE_FILE": str(blank)})
+
+
+def test_scope_file_unsupported_format_fails_loudly(tmp_path: Path) -> None:
+    """An unknown file suffix is rejected before parsing."""
+    scope = _scope_file(tmp_path, "a.example", suffix=".txt")
+    with pytest.raises(ConfigError, match="unsupported file format"):
+        load_config(environ={"HAL_USER_ID": "user-42", "OZZGRAPH_SCOPE_FILE": str(scope)})
+
+
+def _credentials_file(tmp_path: Path, body: str, suffix: str = ".json") -> Path:
+    path = tmp_path / f"credentials{suffix}"
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def test_credentials_file_json_records_load_deterministically(tmp_path: Path) -> None:
+    """Credential references load sorted by name, secrets never stored."""
+    creds = _credentials_file(
+        tmp_path,
+        json.dumps(
+            [
+                {"name": "web-basic", "kind": "http_basic", "username": "admin"},
+                {
+                    "name": "api-token",
+                    "kind": "api_token",
+                    "username": "svc",
+                    "secret_env": "OZZGRAPH_API_TOKEN",
+                },
+            ]
+        ),
+    )
+    config = load_config(
+        environ={"HAL_USER_ID": "user-42", "OZZGRAPH_CREDENTIALS_FILE": str(creds)}
+    )
+    assert [credential.name for credential in config.credentials] == [
+        "api-token",
+        "web-basic",
+    ]
+    token = config.credentials[0]
+    assert token.kind == "api_token"
+    assert token.secret_env == "OZZGRAPH_API_TOKEN"
+    # The secret VALUE never appears in the model or the file content.
+    assert "supersecret" not in creds.read_text(encoding="utf-8")
+
+
+def test_credentials_file_toml_records(tmp_path: Path) -> None:
+    """A TOML credentials file uses an array of tables."""
+    creds = _credentials_file(
+        tmp_path,
+        '[[credentials]]\nname = "web-basic"\nkind = "http_basic"\nusername = "admin"\n',
+        suffix=".toml",
+    )
+    config = load_config(
+        environ={"HAL_USER_ID": "user-42", "OZZGRAPH_CREDENTIALS_FILE": str(creds)}
+    )
+    assert config.credentials[0].name == "web-basic"
+    assert config.credentials[0].username == "admin"
+
+
+def test_credentials_file_yaml_records(tmp_path: Path) -> None:
+    """A YAML credentials file loads through the safe loader."""
+    creds = _credentials_file(
+        tmp_path,
+        "credentials:\n  - name: ssh-key\n    kind: ssh_key\n    secret_env: OZZGRAPH_SSH_KEY\n",
+        suffix=".yml",
+    )
+    config = load_config(
+        environ={"HAL_USER_ID": "user-42", "OZZGRAPH_CREDENTIALS_FILE": str(creds)}
+    )
+    assert config.credentials[0].kind == "ssh_key"
+    assert config.credentials[0].secret_env == "OZZGRAPH_SSH_KEY"
+
+
+def test_credentials_file_missing_fails_loudly(tmp_path: Path) -> None:
+    """A configured-but-missing credentials file is a loud ConfigError."""
+    with pytest.raises(ConfigError, match="credentials"):
+        load_config(
+            environ={
+                "HAL_USER_ID": "user-42",
+                "OZZGRAPH_CREDENTIALS_FILE": str(tmp_path / "nope.json"),
+            }
+        )
+
+
+def test_credentials_file_unknown_field_fails_loudly(tmp_path: Path) -> None:
+    """A record with an unknown field is rejected (extra='forbid')."""
+    creds = _credentials_file(
+        tmp_path,
+        json.dumps([{"name": "web", "kind": "http_basic", "username": "admin", "password": "x"}]),
+    )
+    with pytest.raises(ConfigError, match="invalid credential"):
+        load_config(environ={"HAL_USER_ID": "user-42", "OZZGRAPH_CREDENTIALS_FILE": str(creds)})
+
+
+def test_credentials_file_without_secret_source_fails_loudly(tmp_path: Path) -> None:
+    """A record with neither username nor secret_env holds nothing."""
+    creds = _credentials_file(tmp_path, json.dumps([{"name": "web", "kind": "http_basic"}]))
+    with pytest.raises(ConfigError, match="username or a secret_env"):
+        load_config(environ={"HAL_USER_ID": "user-42", "OZZGRAPH_CREDENTIALS_FILE": str(creds)})
+
+
+def test_credentials_file_malformed_json_fails_loudly(tmp_path: Path) -> None:
+    """Malformed JSON content is a loud ConfigError."""
+    creds = _credentials_file(tmp_path, "[{broken")
+    with pytest.raises(ConfigError, match="malformed"):
+        load_config(environ={"HAL_USER_ID": "user-42", "OZZGRAPH_CREDENTIALS_FILE": str(creds)})
+
+
+def test_credential_secret_resolves_from_environment() -> None:
+    """The secret value is read from the named env var at runtime."""
+    credential = Credential(name="api", kind="api_token", secret_env="OZZGRAPH_API_TOKEN")
+    assert credential_secret(credential, environ={"OZZGRAPH_API_TOKEN": "s3cr3t"}) == "s3cr3t"
+    with pytest.raises(ConfigError, match="OZZGRAPH_API_TOKEN"):
+        credential_secret(credential, environ={})
+    # A username-only credential has no secret to resolve.
+    user_only = Credential(name="pub", kind="ci_token", username="ci")
+    assert credential_secret(user_only, environ={}) == ""

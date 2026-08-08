@@ -50,14 +50,26 @@ def _build_parser() -> argparse.ArgumentParser:
         description=(
             "Run one autonomous assessment of TARGET end-to-end: discover -> "
             "model -> tool -> parse -> graph -> hypothesis -> validate -> "
-            "Finding -> exit. The target becomes OZZGRAPH_TARGET; when no "
-            "allowlist is configured it is derived from the target's host."
+            "Finding -> report -> exit. TARGET is classified into a local "
+            "assessment mode: http(s) URL (url), CIDR (network), hostname/IP "
+            "(host), a path to a git repository (repository), or a path to a "
+            "Docker Compose project (docker-compose); mixed targets form a "
+            "hybrid scope. The target becomes OZZGRAPH_TARGET; when no "
+            "allowlist is configured it is derived from the target. With no "
+            "HAL_* configuration the run uses the local assessment "
+            "environment (the default experience); OZZGRAPH_SCOPE_FILE and "
+            "OZZGRAPH_CREDENTIALS_FILE extend the allowlist and supply "
+            "credential references. A completed run renders the report "
+            "bundle (report.md / report.json / report.sarif / evidence/)."
         ),
     )
     run_parser.add_argument(
         "target",
         metavar="TARGET",
-        help="the authorized target to assess (http(s) URL, hostname, or IP)",
+        help=(
+            "the authorized target to assess: http(s) URL, hostname, IP, "
+            "CIDR, git repository path, or Docker Compose project path"
+        ),
     )
     return parser
 

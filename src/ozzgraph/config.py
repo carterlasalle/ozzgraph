@@ -5,16 +5,34 @@ v2 model. No secrets or model-specific settings live here — this module owns
 identity, runtime-directory layout, the heartbeat/budget knobs, and the scope
 policy knobs (command-length limit, target allowlist, permitted command
 families). Structured logging level arrives with PR4.
+
+V08 (v2/local-assessment) adds the optional scope file
+(``OZZGRAPH_SCOPE_FILE``: JSON/YAML/TOML allowlist entries merged into
+``target_allowlist``) and the optional credentials file
+(``OZZGRAPH_CREDENTIALS_FILE``: credential *references* — name/kind/username
+plus the name of the environment variable holding the secret; the secret value
+itself never enters the file or the config, docs/adr/0010). Both load
+deterministically and fail loudly (``ConfigError``) on malformed input.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import tomllib
 from collections.abc import Mapping
 from pathlib import Path
 
-from pydantic import BaseModel, Field, ValidationError, field_validator
+import yaml
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from ozzgraph.policy import (
     DEFAULT_ALLOWED_COMMAND_FAMILIES,
@@ -40,6 +58,18 @@ MAX_HINTS_ENV = "OZZGRAPH_MAX_HINTS"
 MAX_COMMAND_LENGTH_ENV = "OZZGRAPH_MAX_COMMAND_LENGTH"
 TARGET_ALLOWLIST_ENV = "OZZGRAPH_TARGET_ALLOWLIST"
 ALLOWED_COMMAND_FAMILIES_ENV = "OZZGRAPH_ALLOWED_COMMAND_FAMILIES"
+
+# V08 (v2/local-assessment): optional scope and credentials files. The
+# scope file holds a list of allowlist entries merged into
+# ``target_allowlist``; the credentials file holds *references* to
+# operator-supplied credentials (name/kind/username + the NAME of the
+# environment variable whose value is the secret) — the secret value
+# itself never enters the file or the config (docs/adr/0010).
+SCOPE_FILE_ENV = "OZZGRAPH_SCOPE_FILE"
+CREDENTIALS_FILE_ENV = "OZZGRAPH_CREDENTIALS_FILE"
+
+#: Accepted document suffixes for scope/credentials files, by format.
+_SCOPE_FILE_SUFFIXES = (".json", ".yaml", ".yml", ".toml")
 
 # Flag provenance and submission knobs (PR22): the deterministic flag
 # pattern the candidate extractor scans observation/artifact text with,
@@ -79,6 +109,66 @@ class ConfigError(RuntimeError):
     """Raised when runtime configuration is missing or invalid."""
 
 
+class Credential(BaseModel):
+    """A *reference* to an operator-supplied credential (V08).
+
+    Never carries the secret itself (AGENTS.md: no secrets in config):
+    ``secret_env`` names the environment variable whose VALUE is the
+    secret, read at runtime by the consuming component
+    (:func:`credential_secret`). A credential must carry at least one
+    of ``username`` / ``secret_env`` — a record with neither holds
+    nothing.
+
+    Attributes:
+        name: Stable credential name (referenced from scope data).
+        kind: Credential kind (e.g. ``http_basic``, ``api_token``,
+            ``ssh_key``) — a bounded label, never a secret.
+        username: Optional username for the credential.
+        secret_env: Name of the environment variable holding the
+            secret value; validated as a well-formed variable name.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=128)
+    kind: str = Field(min_length=1, max_length=64)
+    username: str | None = Field(default=None, max_length=256)
+    secret_env: str | None = Field(default=None, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+    @model_validator(mode="after")
+    def _at_least_one_secret_source(self) -> Credential:
+        """Reject a credential with neither a username nor a secret env."""
+        if self.username is None and self.secret_env is None:
+            raise ValueError("credential must carry a username or a secret_env reference")
+        return self
+
+
+def credential_secret(credential: Credential, environ: Mapping[str, str] | None = None) -> str:
+    """Resolve a credential's secret from its named environment variable.
+
+    The secret lives ONLY in the environment: it is never stored in the
+    credentials file, in the config model, or in any graph entity
+    (AGENTS.md: no committed secrets). A credential without
+    ``secret_env`` has no secret to resolve — callers holding only a
+    username (e.g. a public CI token with an empty secret) get an empty
+    string.
+
+    Raises:
+        ConfigError: If ``secret_env`` is set but the named variable is
+            missing or blank in the environment (fail loudly).
+    """
+    if credential.secret_env is None:
+        return ""
+    env = os.environ if environ is None else environ
+    value = env.get(credential.secret_env)
+    if value is None or value.strip() == "":
+        raise ConfigError(
+            f"credential {credential.name!r} references "
+            f"{credential.secret_env!r}, which is not set in the environment"
+        )
+    return value
+
+
 class OzzGraphConfig(BaseModel):
     """Validated runtime configuration.
 
@@ -109,6 +199,10 @@ class OzzGraphConfig(BaseModel):
             matches observation/artifact text against (PR22).
         max_submissions: Attempt cap for flag submission — per
             candidate and in total (PR22).
+        scope_file: Optional path to a scope file whose allowlist
+            entries are merged into ``target_allowlist`` (V08).
+        credentials: Credential *references* (name/kind/username +
+            secret env-var names), never secrets (V08).
     """
 
     hal_user_id: str = Field(min_length=1, pattern=r"^\S+$")
@@ -129,6 +223,13 @@ class OzzGraphConfig(BaseModel):
 
     flag_pattern: str = Field(default=DEFAULT_FLAG_PATTERN, min_length=1)
     max_submissions: int = Field(default=DEFAULT_MAX_SUBMISSIONS, ge=1)
+
+    # V08 (v2/local-assessment): optional scope file (allowlist entries
+    # merged into ``target_allowlist`` at load time) and the credential
+    # reference list (names/kinds/usernames + secret env-var names —
+    # never the secrets themselves).
+    scope_file: Path | None = None
+    credentials: tuple[Credential, ...] = Field(default_factory=tuple)
 
     @field_validator("flag_pattern")
     @classmethod
@@ -189,6 +290,115 @@ def _env_csv(environ: Mapping[str, str], key: str, default: tuple[str, ...]) -> 
     return tuple(part.strip() for part in raw.split(",") if part.strip())
 
 
+def _env_path(environ: Mapping[str, str], key: str) -> Path | None:
+    """Read an optional path environment variable; blank means unset."""
+    raw = _first_nonempty(environ, key)
+    return None if raw is None else Path(raw)
+
+
+def _load_document(path: Path) -> object:
+    """Parse a JSON / YAML / TOML document, selected by file suffix.
+
+    Raises:
+        ConfigError: If the file cannot be read, its suffix is not a
+            supported document format, or its content does not parse
+            (fail loudly, AGENTS.md rule #9).
+    """
+    suffix = path.suffix.casefold()
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ConfigError(f"cannot read {path}: {exc}") from exc
+    try:
+        if suffix == ".json":
+            return json.loads(raw)
+        if suffix in (".yaml", ".yml"):
+            return yaml.safe_load(raw)
+        if suffix == ".toml":
+            return tomllib.loads(raw)
+    except (json.JSONDecodeError, tomllib.TOMLDecodeError, yaml.YAMLError) as exc:
+        raise ConfigError(f"malformed document {path}: {exc}") from exc
+    raise ConfigError(
+        f"unsupported file format {suffix!r} for {path}; use one of "
+        f"{', '.join(_SCOPE_FILE_SUFFIXES)}"
+    )
+
+
+def _load_scope_entries(path: Path) -> tuple[str, ...]:
+    """The sorted, deduplicated allowlist entries from a scope file.
+
+    Accepted shapes (deterministic): a top-level list of strings, or an
+    object holding an ``allowlist`` list of strings (the natural TOML
+    shape). Blank entries are rejected.
+
+    Raises:
+        ConfigError: If the document is not one of the accepted shapes
+            or holds non-string entries.
+    """
+    document = _load_document(path)
+    entries: list[object]
+    if isinstance(document, list):
+        entries = document
+    elif isinstance(document, dict):
+        raw = document.get("allowlist")
+        if not isinstance(raw, list):
+            raise ConfigError(
+                f"scope file {path} must be a list of allowlist entries or an "
+                "object with an 'allowlist' list of entries"
+            )
+        entries = raw
+    else:
+        raise ConfigError(
+            f"scope file {path} must be a list of allowlist entries or an "
+            "object with an 'allowlist' list of entries"
+        )
+    validated: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, str) or not entry.strip():
+            raise ConfigError(f"scope file {path} must contain only non-empty string entries")
+        validated.append(entry.strip())
+    return tuple(sorted(set(validated)))
+
+
+def _load_credential_records(path: Path) -> tuple[Credential, ...]:
+    """Validated credential references from a credentials file.
+
+    Accepted shapes (deterministic): a top-level list of records, or an
+    object holding a ``credentials`` list of records (the natural TOML
+    shape). Records are validated by :class:`Credential` — unknown
+    fields, blank names, or a missing username/secret_env are rejected.
+
+    Raises:
+        ConfigError: If the document is not one of the accepted shapes
+            or any record fails validation.
+    """
+    document = _load_document(path)
+    records: list[object]
+    if isinstance(document, list):
+        records = document
+    elif isinstance(document, dict):
+        raw = document.get("credentials")
+        if not isinstance(raw, list):
+            raise ConfigError(
+                f"credentials file {path} must be a list of credential records or "
+                "an object with a 'credentials' list of records"
+            )
+        records = raw
+    else:
+        raise ConfigError(
+            f"credentials file {path} must be a list of credential records or "
+            "an object with a 'credentials' list of records"
+        )
+    for record in records:
+        if not isinstance(record, dict):
+            raise ConfigError(f"credentials file {path} must contain only credential objects")
+    try:
+        credentials = [Credential.model_validate(record) for record in records]
+    except ValidationError as exc:
+        raise ConfigError(f"invalid credential record in {path}: {exc}") from exc
+    return tuple(sorted(credentials, key=lambda credential: credential.name))
+
+
 def load_config(environ: Mapping[str, str] | None = None) -> OzzGraphConfig:
     """Build validated configuration from environment variables.
 
@@ -211,6 +421,18 @@ def load_config(environ: Mapping[str, str] | None = None) -> OzzGraphConfig:
     state_dir = Path(env.get(STATE_DIR_ENV, DEFAULT_STATE_DIR))
     artifact_dir = Path(env.get(ARTIFACT_DIR_ENV, str(state_dir / "artifacts")))
 
+    # V08: optional scope + credentials files. A configured-but-missing
+    # or malformed file raises ConfigError loudly — never a silent
+    # partial allowlist (AGENTS.md rule #9).
+    scope_file = _env_path(env, SCOPE_FILE_ENV)
+    credentials_file = _env_path(env, CREDENTIALS_FILE_ENV)
+    scope_entries = _load_scope_entries(scope_file) if scope_file is not None else ()
+    credentials = _load_credential_records(credentials_file) if credentials_file is not None else ()
+    allowlist = _env_csv(env, TARGET_ALLOWLIST_ENV, DEFAULT_TARGET_ALLOWLIST)
+    # Scope-file entries MERGE into the allowlist (docs/adr/0010);
+    # the merged set is sorted so the result is deterministic.
+    merged_allowlist = tuple(sorted(set(allowlist) | set(scope_entries)))
+
     try:
         return OzzGraphConfig(
             hal_user_id=user_id,
@@ -226,12 +448,14 @@ def load_config(environ: Mapping[str, str] | None = None) -> OzzGraphConfig:
             max_workers=_env_int(env, MAX_WORKERS_ENV, DEFAULT_MAX_WORKERS),
             max_hints=_env_int(env, MAX_HINTS_ENV, DEFAULT_MAX_HINTS),
             max_command_length=_env_int(env, MAX_COMMAND_LENGTH_ENV, DEFAULT_MAX_COMMAND_LENGTH),
-            target_allowlist=_env_csv(env, TARGET_ALLOWLIST_ENV, DEFAULT_TARGET_ALLOWLIST),
+            target_allowlist=merged_allowlist,
             allowed_command_families=_env_csv(
                 env, ALLOWED_COMMAND_FAMILIES_ENV, DEFAULT_ALLOWED_COMMAND_FAMILIES
             ),
             flag_pattern=_env_str(env, FLAG_PATTERN_ENV, DEFAULT_FLAG_PATTERN),
             max_submissions=_env_int(env, MAX_SUBMISSIONS_ENV, DEFAULT_MAX_SUBMISSIONS),
+            scope_file=scope_file,
+            credentials=credentials,
         )
     except ValidationError as exc:  # pragma: no cover - defensive
         raise ConfigError(f"invalid configuration: {exc}") from exc

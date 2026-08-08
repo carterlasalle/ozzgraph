@@ -30,6 +30,7 @@ from ozzgraph.environments.halctf import HALCTF_OBJECTIVE_ID
 from ozzgraph.environments.local import (
     DEFAULT_LOCAL_CAPABILITIES,
     LOCAL_OBJECTIVE_ID,
+    classify_local_target,
 )
 
 
@@ -166,7 +167,8 @@ async def test_local_targets_from_env_variables() -> None:
     targets = await env.discover_targets()
     assert [t.address for t in targets] == ["http://10.0.0.5:3000", "intranet.example"]
     assert [t.type for t in targets] == ["url", "host"]
-    assert targets[0].metadata == {"source": "target_env"}
+    assert targets[0].metadata == {"source": "target_env", "mode": "url"}
+    assert targets[1].metadata == {"source": "target_env", "mode": "host"}
     # Deterministic ids: stable across calls.
     assert [t.id for t in targets] == [t.id for t in await env.discover_targets()]
 
@@ -252,3 +254,148 @@ async def test_halctf_uses_os_environ_by_default(monkeypatch) -> None:
     env = HalCTFEnvironment(_config())
     targets = await env.discover_targets()
     assert targets[0].address == "pwn-02"
+
+
+# ---------------------------------------------------------------------------
+# V08 local-assessment modes (docs/adr/0010)
+# ---------------------------------------------------------------------------
+
+
+def test_classify_local_target_keeps_classic_shapes() -> None:
+    """URLs, CIDRs, and hosts classify exactly as before."""
+    assert classify_local_target("http://10.0.0.5:3000") == "url"
+    assert classify_local_target("https://intranet.example/admin") == "url"
+    assert classify_local_target("10.0.0.0/24") == "network"
+    assert classify_local_target("10.0.0.5") == "host"
+    assert classify_local_target("intranet.example") == "host"
+    assert classify_local_target("10.0.0.5:3000") == "host"  # host:port, not CIDR
+
+
+def test_classify_local_target_repository(tmp_path: Path, monkeypatch) -> None:
+    """A path containing .git classifies as a repository."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    assert classify_local_target(str(repo)) == "repo"
+    # A relative path with an embedded separator also resolves.
+    monkeypatch.chdir(tmp_path)
+    assert classify_local_target(f"./{repo.name}") == "repo"
+
+
+def test_classify_local_target_compose(tmp_path: Path) -> None:
+    """A path containing a compose file classifies as a compose project."""
+    stack = tmp_path / "stack"
+    stack.mkdir()
+    (stack / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    assert classify_local_target(str(stack)) == "compose"
+
+
+def test_classify_local_target_missing_path_fails_loudly(tmp_path: Path) -> None:
+    """A nonexistent path-like target is a loud ConfigError."""
+    with pytest.raises(ConfigError, match="does not exist"):
+        classify_local_target(str(tmp_path / "nope"))
+
+
+def test_classify_local_target_plain_dir_fails_loudly(tmp_path: Path) -> None:
+    """An existing directory that is neither repo nor compose is rejected."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    with pytest.raises(ConfigError, match="neither a git repository"):
+        classify_local_target(str(plain))
+
+
+def test_classify_local_target_file_fails_loudly(tmp_path: Path) -> None:
+    """A path-like target that is a file, not a directory, is rejected."""
+    file_path = tmp_path / "file.txt"
+    file_path.write_text("x", encoding="utf-8")
+    with pytest.raises(ConfigError, match="not a directory"):
+        classify_local_target(str(file_path))
+
+
+@pytest.mark.asyncio
+async def test_local_repository_target_via_environment(tmp_path: Path) -> None:
+    """OZZGRAPH_TARGET pointing at a git repo yields a repository target."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    env = LocalEnvironment(_config(), environ={"OZZGRAPH_TARGET": str(repo)})
+    targets = await env.discover_targets()
+    assert len(targets) == 1
+    assert targets[0].type == "repo"
+    assert targets[0].address == str(repo)
+    assert targets[0].metadata == {"source": "target_env", "mode": "repository"}
+    scope = await env.discover_scope()
+    assert scope.constraints["mode"] == "repository"
+    assert scope.constraints["target_modes"] == ["repository"]
+
+
+@pytest.mark.asyncio
+async def test_local_compose_target_via_environment(tmp_path: Path) -> None:
+    """OZZGRAPH_TARGET pointing at a compose project yields a compose target."""
+    stack = tmp_path / "stack"
+    stack.mkdir()
+    (stack / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    env = LocalEnvironment(_config(), environ={"OZZGRAPH_TARGET": str(stack)})
+    targets = await env.discover_targets()
+    assert len(targets) == 1
+    assert targets[0].type == "compose"
+    assert targets[0].metadata["mode"] == "docker-compose"
+
+
+@pytest.mark.asyncio
+async def test_local_bad_repository_path_fails_loudly(tmp_path: Path) -> None:
+    """A configured repository path that is invalid raises ConfigError."""
+    env = LocalEnvironment(_config(), environ={"OZZGRAPH_TARGET": str(tmp_path / "missing-repo")})
+    with pytest.raises(ConfigError, match="does not exist"):
+        await env.discover_targets()
+
+
+@pytest.mark.asyncio
+async def test_local_cidr_target_via_environment() -> None:
+    """A CIDR in OZZGRAPH_TARGET classifies as a network target."""
+    env = LocalEnvironment(_config(), environ={"OZZGRAPH_TARGET": "10.0.0.0/24"})
+    targets = await env.discover_targets()
+    assert targets[0].type == "network"
+    assert targets[0].metadata["mode"] == "network"
+
+
+@pytest.mark.asyncio
+async def test_local_hybrid_scope_from_mixed_targets(tmp_path: Path) -> None:
+    """Targets of mixed types yield a hybrid scope."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    env = LocalEnvironment(
+        _config(target_allowlist=("http://127.0.0.1:3000", str(repo))),
+        environ={},
+    )
+    scope = await env.discover_scope()
+    assert scope.constraints["mode"] == "hybrid"
+    assert scope.constraints["target_modes"] == ["repository", "url"]
+    targets = await env.discover_targets()
+    assert sorted(target.type for target in targets) == ["repo", "url"]
+    # Repo/compose paths are local surfaces: never network buckets.
+    assert str(repo) not in scope.hosts
+    assert str(repo) not in scope.urls
+    assert scope.urls == ("http://127.0.0.1:3000",)
+
+
+@pytest.mark.asyncio
+async def test_local_scope_mode_reflects_single_target_type() -> None:
+    """A single-type target set yields that mode (not hybrid)."""
+    env = LocalEnvironment(
+        _config(target_allowlist=("http://127.0.0.1:3000",)),
+        environ={},
+    )
+    scope = await env.discover_scope()
+    assert scope.constraints["mode"] == "url"
+    assert scope.constraints["target_modes"] == ["url"]
+
+
+@pytest.mark.asyncio
+async def test_local_scope_mode_none_without_targets() -> None:
+    """No targets means scope mode ``none``."""
+    env = LocalEnvironment(_config(), environ={})
+    scope = await env.discover_scope()
+    assert scope.constraints["mode"] == "none"
+    assert scope.constraints["target_modes"] == []
