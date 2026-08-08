@@ -8,13 +8,18 @@ PR = one board task. Decompose each PR with `coding-hermes-model-router` before
 spawning a worker. Follow AGENTS.md invariants + PR scope rules; bridge every
 commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
-**Tick 2026-08-08: V09 closed (judge PASS d636bfd6 — verified this tick, work
-committed by prior tick) + INT-CI-001 fixed (5628bf4): CI Lint was red on
-6222094 — ruff I001 in e2e_001_driver.py, the visible symptom of a real V09
-regression (driver still imported deleted kernel `ozzgraph.flags`; only stale
-__pycache__ .pyc masked it locally). Re-pointed imports to
-ozzgraph.entities + ozzgraph.environments.halctf (ADR-0011 surfaces). Full gate
-green (ruff no-cache, format, mypy, 1139 tests). Next: V10 (full-regression).**
+**Tick 2026-08-08: V10 closed (judge PASS 9ce33342 — verified this tick, work
+committed by prior tick 498a214). Bench suite verified: ruff/format/mypy clean,
+1181 tests pass (216s), benchmark CLI smoke evidence in commit. Tier-2 judge
+initially aborted twice on evaluator caps (dfa14698 input-token 1.0M exceeded,
+71e292c1 20m time cap — tier1 tests SIGTERM'd mid-run), both spurious per
+gitreins-usage pitfall; re-run with GITREINS_MAX_INPUT_TOKENS=5M
+MAX_OUTPUT_TOKENS=1M MAX_ITERATIONS=120 MAX_TIME=45m → PASS 9ce33342 (all 4
+criteria, tier1 lint/tests/secrets PASS, verdict committed 95506ac on gitreins
+branch). CI green on 498a214. NEVER-DONE audit this tick: 0 actionable gaps
+(3 outdated pkgs all transitive — ast-serialize/librt via mypy, pydantic-core
+2.48.0 still blocked by pydantic pin; no stubs; all modules covered by
+non-same-name test files; docs complete). Board idle → cooldown 43200s.**
 
 ## Active
 
@@ -148,12 +153,13 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 
 | ID | Task | Pri | Cpx | Deps | Tags | Model | Reasoning | Fallback |
 |----|------|-----|-----|------|------|-------|-----------|----------|
-| V10 | full-regression: real benchmark suite across model matrix (web/api/source/network/ad/pwn/reverse/forensics/stego/cloud/halctf) incl. deliberate dead ends + tool-contract test (every skill's required capability has a working installed provider); prove OzzGraph+model beats plain ReAct | High | 5±1 | V03-V09 | +++python, ++testing, ++benchmark | DS-V4-Pro | High | DS-V4-Flash |
+| _(empty — all v2 phases done; E2E-001 + NEVER-DONE fixtures remain below)_ |
 
 ## Completed
 
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
+| V10 | full-regression: benchmarks/ package (registry + OzzGraph harness vs plain ReAct + scripted model + scoring + deterministic report), dead-end lab target with pivot proof (hypothesis_abandoned + PIVOT, bounded turns), tool-contract test (every required_capability resolves to installed provider), benchmark CLI (--target/--react/--max-turns/--out + OZZGRAPH_BENCHMARK_* env), docs/BENCHMARKS.md (judge PASS 9ce33342, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 5±1 | 498a214 | DS-V4-Flash |
 | INT-CI-001 | E2E driver imports V09-moved flag modules from canonical homes (ozzgraph.entities / ozzgraph.environments.halctf) — fixes CI Lint failure (ruff I001 on e2e_001_driver.py, symptom of deleted ozzgraph.flags regression) | High | 1±0 | 5628bf4 | DS-V4-Flash |
 | V09 | halctf-adapter: HAL_* / OPENAI_BASE_URL / MCP_ENDPOINT discovery, official tool set (list_ctfs/challenges/status/submit_flag/request_hint/scoreboard), smoke flag, scoring, hint costs, graceful completion; hint-policy/submission/scoreboard/flag-candidate-extractor moved OUT of generic kernel into ozzgraph.environments.halctf (ADR-0011) (judge PASS d636bfd6, all criteria) | High | 4±1 | 6a7f8dc | DS-V4-Flash |
 | V08 | local-assessment: URL/network/repository/Docker-Compose/hybrid modes via OZZGRAPH_TARGET classification, scope + credentials files (target_allowlist + Credential list, loud ConfigError), report bundle (report.md/json/sarif + evidence/ + graph.sqlite + events.jsonl) at COMPLETED, LocalEnvironment as DEFAULT, ADR-0010 (judge PASS 6025990f, all 4 criteria) | High | 5±1 | 198ba36 | DS-V4-Flash |
