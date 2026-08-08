@@ -79,10 +79,27 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 > dev pytest` + test_timeout 300 (pipeline's 120s default killed the
 > 115s suite — 2 spurious FAIL verdicts traced to SIGKILL at 120s and
 > dev-group-less resync). Next: V06 (security-brain).
+>
+> ✅ V06 DONE (2026-08-08): committed c948e93 (4 files, 2216 insertions:
+> src/ozzgraph/security_brain.py 1129 lines — OpportunityGenerator
+> (graph-predicate opportunities: characterize service / test hypothesis /
+> expand scope, ranked, fail-loud), StrategicPlanner (LLM, invoked ONLY
+> when >1 viable path; strategy prompt + ranking summary), TaskBuilder
+> (bounded Task from opportunity/plan, command parity with runner),
+> HypothesisManager (create→evidence→promote/abandon lifecycle,
+> idempotent, event-mirrored), ProgressEvaluator (continue/pivot/finish
+> from graph predicates); runner.py wired: _one_turn branches on typed
+> BrainDecision — DeterministicActionDecision executes with ZERO model
+> calls, StrategicDecision calls StrategicPlanner exactly once,
+> FallbackDecision preserves the old model-propose path for 0-opportunity
+> states; BRAIN_PROGRESS_EVALUATED event; docs/CHANGES_v2.md updated.
+> 14 new tests (zero-LLM assertion, multi-path promote, hypothesis
+> lifecycle, progress verdicts). Gates green (ruff/format/mypy strict,
+> 1029 tests). Judge PASS ea396688 (4/4 criteria, tier1 lint/tests/
+> secrets PASS). Next: V07 (specialists).
 
 | ID | Task | Pri | Cpx | Deps | Tags | Model | Reasoning | Fallback |
 |----|------|-----|-----|------|------|-------|-----------|----------|
-| V06 | security-brain: replace round-robin planner with OpportunityGenerator + StrategicPlanner (LLM only when >1 viable path), TaskBuilder, HypothesisManager, ProgressEvaluator; deterministic single-obvious-action path avoids extra LLM calls | Critical | 5±1 | V02 | +++python, ++planner, ++reasoning | DS-V4-Pro | High | DS-V4-Flash |
 | V07 | specialists: turn workers into genuine narrow micro-agents (bounded objectives, tiny context, hypothesis→experiment→observation→conclusion loop, structured verdict+evidence_ids+impact); parallelize independent hypotheses, serialize global strategy, merge via reducer | High | 4±1 | V06 | +++python, ++agents, ++parallel | DS-V4-Pro | High | DS-V4-Flash |
 | V08 | local-assessment: URL/network/repository/Docker-Compose/hybrid modes, credentials + scope files, rich Finding model (CWE, assets, preconditions, evidence, reproduction, impact CIA, confidence), reporting (report.md/json/sarif + evidence/ + graph.sqlite + events.jsonl); make local the DEFAULT experience | High | 5±1 | V02,V04 | +++python, ++cli, ++reporting | DS-V4-Pro | High | DS-V4-Flash |
 | V09 | halctf-adapter: HAL_* / OPENAI_BASE_URL / MCP_ENDPOINT discovery, official tool set (list_ctfs/challenges/status/submit_flag/request_hint/scoreboard), smoke flag, scoring, hint costs, graceful completion; move hint-policy/submission/scoreboard/flag-candidate-extractor OUT of generic kernel into ozzgraph.environments.halctf | High | 4±1 | V01,V02 | +++python, ++integration, ++ctf | DS-V4-Flash | Medium | Kimi-K3 |
@@ -92,6 +109,7 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
+| V06 | security-brain: OpportunityGenerator + StrategicPlanner (LLM only when >1 viable path) + TaskBuilder + HypothesisManager + ProgressEvaluator, deterministic zero-LLM single-action path wired into runner (judge PASS ea396688, all 4 criteria) | Critical | 5±1 | c948e93 | DS-V4-Flash |
 | V05 | model-harness-matrix: empirical per-model profiles — TOML-backed data-driven registry (profile_data/), ProfileStore discover/discover_from_service (GET /v1/models + capability probe), byte-deterministic TraceMetrics benchmark persistence (judge PASS b8a2cfd1, all 5 criteria) | High | 4±1 | 70d6f3f | DS-V4-Flash |
 | V04 | semantic-observations: typed parsers/projectors for 17 high-value tools (JSON/XML/SARIF/JSONL), raw-first ArtifactStore persistence, runner observation wiring (judge PASS 01aa9dd, all 3 criteria) | Critical | 5±1 | 8e49dd0 | DS-V4-Flash |
 | V03 | tool-runtime: ToolCatalog/ToolInventory/CapabilityRegistry/ToolProvider, startup tool inventory, capabilities-not-binaries, `:max` Kali image (judge PASS 3f4640ae, all 5 criteria) | Critical | 5±1 | c3c44f9 | DS-V4-Flash |
