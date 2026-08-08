@@ -15,6 +15,7 @@ __pycache__/
 # GitReins local task state — never commit (foreman keeps these in sync)
 .gitreins/tasks.yaml
 .gitreins/history/
+.gitreins/usage.jsonl
 
 # runtime / state
 /state/

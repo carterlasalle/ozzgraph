@@ -3,7 +3,8 @@ guards:
   lint: true
   tests: true
   test_mode: full
-  test_command: uv run pytest -x --tb=short
+  test_command: uv run --group dev pytest -x --tb=short
+  test_timeout: 300
   static_analysis: false
 evaluator:
   max_iterations: 60
