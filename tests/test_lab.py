@@ -42,6 +42,7 @@ EXPECTED_NAMES = (
     "credential-reuse",
     "network-pivot",
     "multi-stage",
+    "dead-end",
 )
 
 EXPECTED_CATEGORIES = (
@@ -54,6 +55,7 @@ EXPECTED_CATEGORIES = (
     "credential reuse",
     "simple network pivot",
     "multi-stage flag discovery",
+    "deliberate dead ends",
 )
 
 #: OZ{...} envelope for lab flags (docs/SYNTHETIC_LAB.md: point
@@ -384,6 +386,43 @@ def test_multi_stage_token_is_deterministic_across_instances() -> None:
     finally:
         first.stop()
         second.stop()
+
+
+@pytest.mark.asyncio
+async def test_dead_end_decoy_routes_lead_nowhere(tmp_path: Path) -> None:
+    """The dead-end target's decoys look promising but never serve the flag.
+
+    ``/backup/flag.txt`` answers 404 (the decoy flag text is NOT the
+    target flag and never satisfies the lab ``OZ{...}`` envelope),
+    ``/backup/creds.txt`` leaks credentials ``/admin`` rejects (401
+    unconditionally), and the real flag lives only at ``/flag`` — the
+    route the root page's comment names.
+    """
+    with get_target("dead-end") as target:
+        url = _url(target)
+        root = await _curl(url + "/", tmp_path)
+        assert target.flag not in root.stdout
+        assert "/flag" in root.stdout  # the root page names the real route
+
+        decoy = await _curl(url + "/backup/flag.txt", tmp_path)
+        assert target.flag not in decoy.stdout
+        assert "not here" in decoy.stdout  # a 404 rabbit hole
+        assert "FLAG{decoy-" in decoy.stdout  # the spoofed decoy text
+
+        creds = await _curl(url + "/backup/creds.txt", tmp_path)
+        assert "hunter2" in creds.stdout  # decoy credentials
+
+        admin = await _curl(url + "/admin", tmp_path)
+        assert target.flag not in admin.stdout
+        assert "unauthorized" in admin.stdout
+
+        real = await _curl(url + "/flag", tmp_path)
+        assert target.flag in real.stdout
+
+        # The decoy flag-shaped string is not the real flag and does not
+        # match the lab flag envelope (a naive submit of it is rejected).
+        assert "FLAG{decoy-" != target.flag
+        assert re.search(r"^OZ\{lab-dead-end-[0-9a-f]{10}\}$", target.flag) is not None
 
 
 # ---------------------------------------------------------------------------

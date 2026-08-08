@@ -21,7 +21,7 @@ import os
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from datetime import UTC, datetime
 from types import TracebackType
-from typing import Self
+from typing import Protocol, Self, runtime_checkable
 
 import httpx
 from pydantic import BaseModel, Field, ValidationError
@@ -146,6 +146,29 @@ class ModelServiceError(RuntimeError):
         self.status_code = status_code
         self.retryable = retryable
         self.message = message
+
+
+@runtime_checkable
+class ModelClient(Protocol):
+    """The minimal client contract a model consumer needs (V10).
+
+    The runner (and the benchmark harness) consume a model through two
+    operations: an async ``complete(ModelRequest)`` returning a
+    normalized :class:`ModelResponse`, and an async ``aclose`` for
+    owned-resource cleanup. :class:`ModelService` satisfies the
+    contract; so does the benchmark suite's deterministic
+    :class:`~ozzgraph.benchmarks.scripted.ScriptedModelService` — a
+    hermetic, zero-network stand-in that makes full-harness runs
+    reproducible in CI (docs/BENCHMARKS.md).
+
+    ``@runtime_checkable`` keeps ``isinstance`` checks working for
+    callers that distinguish the service form from a bare callable
+    (the same convention as the matrix evaluator's client forms).
+    """
+
+    async def complete(self, request: ModelRequest) -> ModelResponse: ...
+
+    async def aclose(self) -> None: ...
 
 
 def _env_str(environ: Mapping[str, str], key: str, default: str) -> str:

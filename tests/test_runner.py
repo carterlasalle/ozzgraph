@@ -507,9 +507,11 @@ async def test_context_advertises_only_installed_capabilities(tmp_path: Path) ->
     """The startup inventory bounds the model context.
 
     With exactly one fake tool (curl) on the search path, the compiled
-    prompt advertises ``http.request`` and nothing else — the model
-    NEVER hears about a capability (or a skill requirement) that no
-    installed tool backs.
+    prompt advertises the capabilities that installed tool backs
+    (``http.request`` and the V10 curl-probe fallback
+    ``web.content_discovery``) and nothing else — the model NEVER hears
+    about a capability (or a skill requirement) that no installed tool
+    backs.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -551,7 +553,11 @@ async def test_context_advertises_only_installed_capabilities(tmp_path: Path) ->
     assert "- http.request" in prompt
     # Absent tools' capabilities never reach the model.
     assert "network.port_scan" not in prompt
-    assert "web.content_discovery" not in prompt
+    # The V10 curl-probe fallback backs web.content_discovery with the
+    # installed curl (docs/BENCHMARKS.md, tool contract), so it IS
+    # advertised — the model hears about every capability the installed
+    # tool backs, and no more.
+    assert "web.content_discovery" in prompt
 
 
 # ---------------------------------------------------------------------------

@@ -36,6 +36,7 @@ One target per suite category, in registry order
 | `credential-reuse` | credential reuse | `/admin` after reusing the credential leaked in `/backup/creds.txt` |
 | `network-pivot` | simple network pivot | second hop server, whose address `/pivot` discloses |
 | `multi-stage` | multi-stage flag discovery | `/stage2/<token>`, whose path `/stage1` reveals |
+| `dead-end` | deliberate dead ends | `/flag` only; the decoy routes (`/backup/flag.txt`, `/backup/creds.txt`, `/admin`) all lead nowhere |
 
 Flags are deterministic: `OZ{lab-<name>-<10 hex>}`, derived from the
 target name (see `ozzgraph.lab.lab_flag`), and are only reachable

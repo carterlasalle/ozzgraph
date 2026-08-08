@@ -16,6 +16,7 @@ from ozzgraph.lab.targets import (
     AuthLogicTarget,
     BinaryStringsTarget,
     CredentialReuseTarget,
+    DeadEndTarget,
     FileForensicsTarget,
     HiddenRoutesTarget,
     HttpReconTarget,
@@ -37,6 +38,7 @@ LAB_REGISTRY: tuple[type[SyntheticTarget], ...] = (
     CredentialReuseTarget,
     NetworkPivotTarget,
     MultiStageTarget,
+    DeadEndTarget,
 )
 
 

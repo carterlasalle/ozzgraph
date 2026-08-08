@@ -412,7 +412,12 @@ ENUM_SERVICE_VERSION = _skill(
         "CVE databases (no public internet)."
     ),
     timeout_seconds=60,
-    required_capabilities=("http.request", "dns.lookup", "network.probe", "exploit.search"),
+    # V10 (docs/BENCHMARKS.md, tool contract): version extraction needs
+    # only HTTP/DNS/probe providers — the exploit-database search
+    # (searchsploit) is a specialized deep-dive tool, NOT a requirement
+    # for advertising this skill (it stays in the card as guidance and
+    # in the catalog as a capability for Kali runtimes).
+    required_capabilities=("http.request", "dns.lookup", "network.probe"),
 )
 
 #: HTTP application analysis: auth scheme, cookies, API endpoints.
@@ -459,7 +464,12 @@ EXPLOIT_PARAMETER_INJECTION = _skill(
         "batch many parameters at once, or retry identical probes."
     ),
     timeout_seconds=90,
-    required_capabilities=("http.request", "web.sql_injection"),
+    # V10 (docs/BENCHMARKS.md, tool contract): the skill's core is
+    # bounded curl-based parameter probing — sqlmap is a specialized
+    # follow-up, not a requirement for advertising this skill (the card
+    # still guides toward it once an injection hypothesis is evidenced;
+    # the capability stays in the catalog for Kali runtimes).
+    required_capabilities=("http.request",),
 )
 
 #: Command injection detection with visible and blind markers.

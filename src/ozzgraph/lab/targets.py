@@ -34,6 +34,10 @@ Challenge design per target (flags are OZ{...}; see :func:`lab_flag`):
   second hop only.
 - :class:`MultiStageTarget` — two chained steps: stage 1 reveals the
   stage 2 path, stage 2 holds the flag; the token is deterministic.
+- :class:`DeadEndTarget` — deliberate dead ends (V10, docs/CHANGES_v2.md
+  milestone 10): decoy routes (``/backup/flag.txt``,
+  ``/backup/creds.txt``, ``/admin``) look promising but lead nowhere;
+  the real flag is only at ``/flag``.
 
 All responses are plain deterministic text/HTML; every ``stop()``
 releases the server and (for file targets) the temp directory.
@@ -361,6 +365,70 @@ class InternalFlagTarget(LoopbackHttpTarget):
     description: ClassVar[str] = "Internal hop of the network pivot (not registered)."
 
     def respond(self, path: str, headers: Mapping[str, str]) -> tuple[int, dict[str, str], bytes]:
+        if path == "/flag":
+            return self._plain(200, f"{self.flag}\n")
+        return self._plain(404, "not found\n")
+
+
+class DeadEndTarget(LoopbackHttpTarget):
+    """Deliberate dead ends: decoy routes that look promising, lead nowhere.
+
+    The V10 benchmark rabbit hole (docs/CHANGES_v2.md milestone 10,
+    docs/BENCHMARKS.md): the root page links to ``/backup/`` and its
+    HTML comment names the real flag route; ``/robots.txt`` advertises
+    ``/backup/flag.txt`` and ``/admin``; ``/backup/flag.txt`` answers
+    404 with a decoy flag-shaped string that is NOT the target flag;
+    ``/backup/creds.txt`` leaks credentials that ``/admin`` rejects
+    (it is 401 unconditionally). Every decoy route looks promising and
+    leads nowhere — a naive agent chases them in bounded circles while
+    the real flag sits only at ``/flag``. The harness must pivot away
+    from the dead ends (the security brain's ProgressEvaluator) and
+    still find the real flag.
+    """
+
+    name: ClassVar[str] = "dead-end"
+    category: ClassVar[str] = "deliberate dead ends"
+    description: ClassVar[str] = (
+        "Decoy routes (/backup/flag.txt, /backup/creds.txt, /admin) look "
+        "promising but lead nowhere; the flag is only at /flag."
+    )
+
+    def __init__(self, *, flag: str | None = None) -> None:
+        super().__init__(flag=flag)
+        #: Deterministic decoy string: flag-SHAPED but never the target
+        #: flag, and deliberately NOT matching the lab ``OZ{...}``
+        #: envelope (the harness's flag pattern), so a naive model that
+        #: chases it never observes the real sensitive-data signal.
+        self._decoy = (
+            "FLAG{decoy-" + hashlib.sha256(b"ozzgraph-lab-dead-end").hexdigest()[:10] + "}"
+        )
+
+    def respond(self, path: str, headers: Mapping[str, str]) -> tuple[int, dict[str, str], bytes]:
+        if path == "/":
+            return self._html(
+                200,
+                "<!doctype html><html><body><h1>Portal</h1>"
+                "<!-- flag review: /flag -->"
+                '<p><a href="/backup/">backup</a></p></body></html>\n',
+            )
+        if path == "/robots.txt":
+            return self._plain(200, "User-agent: *\nDisallow: /backup/\nDisallow: /admin\n")
+        if path == "/backup/flag.txt":
+            # Decoy: the promising-sounding path answers 404 (a genuine
+            # rabbit hole — the fake flag text never reaches a --fail
+            # probe's output) and the body still spoofs a flag for
+            # probes that do not fail on HTTP errors.
+            return self._plain(404, f"{self._decoy} — not here, keep looking\n")
+        if path == "/backup/creds.txt":
+            # Decoy credentials: they look usable but /admin rejects
+            # them (and everything else) — a second rabbit hole.
+            return self._plain(200, "username=admin\npassword=hunter2\n")
+        if path == "/admin":
+            return (
+                401,
+                {"WWW-Authenticate": 'Basic realm="ozzgraph-lab"'},
+                b"unauthorized\n",
+            )
         if path == "/flag":
             return self._plain(200, f"{self.flag}\n")
         return self._plain(404, "not found\n")

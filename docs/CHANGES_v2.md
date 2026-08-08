@@ -196,6 +196,46 @@ independently implemented components.
    > submission routes the graph DONE, and the run terminates COMPLETED
    > with the V08 report bundle.
 10. `v2/full-regression` — real benchmark suite across the model matrix.
+    > V10 (2026-08-08): implemented — `src/ozzgraph/benchmarks/` +
+    > `ozzgraph benchmark` CLI + docs/BENCHMARKS.md. The full-regression
+    > suite runs EVERY lab target (the 9 suite categories plus the new
+    > `dead-end` target) through the REAL `AutonomousRunner` composition
+    > (graph, security brain, evaluator, scope policy, tool plane) under a
+    > deterministic scripted model (`ScriptedModel`/`ScriptedModelService`,
+    > the `tests/test_matrix.py` client pattern) — hermetic, zero network,
+    > byte-deterministic report (modulo the lab's ephemeral port). The
+    > `dead-end` lab target is a genuine rabbit hole (decoy
+    > `/backup/flag.txt` 404 + spoofed flag text, decoy
+    > `/backup/creds.txt`, 401 `/admin`; real flag only at `/flag`); its
+    > benchmark run PROVES the agent pivots away: the failing decoy probes
+    > refute the hypotheses formed on the promising paths
+    > (`brain.hypothesis_abandoned`), the `ProgressEvaluator` records a
+    > PIVOT verdict (`brain.progress_evaluated`, every hypothesis resolved,
+    > objectives incomplete), and the run still completes with the REAL
+    > flag in bounded turns. The plain-ReAct baseline
+    > (`benchmarks/react.py` — bare propose→execute loop, no graph/brain/
+    > evaluator) runs the SAME scripted model on the SAME targets: the
+    > report proves OzzGraph beats ReAct on every target (fewer turns and
+    > model calls — the harness completes the objective the moment the flag
+    > is evidenced on a plan-bound turn; the baseline must wait for the
+    > model to submit) and solves the dead-end where a non-submitting
+    > baseline loops to its turn cap unsolved. The tool-contract test
+    > (`tests/test_tool_contract.py`) proves EVERY
+    > `Skill.required_capabilities` entry resolves to a working installed
+    > provider via `ToolProvider` (capabilities-not-binaries), and that an
+    > unavailable provider is detectable and fails loudly; fixes so the
+    > shipped skills resolve in any base environment: `curl` gained
+    > `web.content_discovery` (bounded path probing is its own primitive),
+    > and `enum_service_version` / `exploit_parameter_injection` dropped
+    > the `exploit.search` / `web.sql_injection` requirements (the cards
+    > keep searchsploit/sqlmap as deep-dive guidance; the capabilities stay
+    > in the catalog for Kali runtimes). `model_client.ModelClient` (a
+    > runtime-checkable `complete`+`aclose` protocol) lets the runner
+    > accept the hermetic scripted service alongside `ModelService`;
+    > `ozzgraph benchmark [--target NAME|--all] [--react] [--max-turns N]
+    > [--out FILE]` renders the deterministic markdown report, and
+    > `OZZGRAPH_BENCHMARK_MODEL_ID` / `_BASE_URL` / `_API_KEY` select a
+    > real model endpoint (no script) for real benchmarks. ~40 new tests.
 
 ## What to keep vs rewrite
 

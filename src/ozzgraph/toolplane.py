@@ -518,6 +518,22 @@ register_tool(
     )
 )
 
+#: Portable fallback content discovery: bounded curl-based path probing
+#: (``curl -o /dev/null -w '%{http_code}' <candidate>``) — the same
+#: primitive the content-discovery skill cards use. Registered AFTER
+#: the dedicated fuzzers so they stay the preferred providers when
+#: installed; this entry guarantees ``web.content_discovery`` resolves
+#: in ANY environment with curl (the V10 tool-contract guarantee,
+#: docs/BENCHMARKS.md: every skill's required capability resolves to a
+#: working installed provider in the base environment).
+register_tool(
+    _tool(
+        tool_id="curl_probe",
+        binaries=("curl",),
+        capabilities=("web.content_discovery",),
+    )
+)
+
 #: Automated web vulnerability scanning (template-driven).
 register_tool(
     _tool(

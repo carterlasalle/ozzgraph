@@ -116,6 +116,9 @@ Include isolated targets for:
 - credential reuse
 - simple network pivot
 - multi-stage flag discovery
+- deliberate dead ends (V10, docs/BENCHMARKS.md: the `dead-end` target's
+  decoy routes look promising but lead nowhere; the real flag is only at
+  `/flag` — the benchmark proves the harness pivots away and still solves)
 
 The suite is implemented as the synthetic test lab (PR27) in
 `src/ozzgraph/lab/`: deterministic, loopback-only, stdlib targets the

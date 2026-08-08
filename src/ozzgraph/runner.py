@@ -143,6 +143,7 @@ from ozzgraph.findings import (
 )
 from ozzgraph.model_client import (
     DEFAULT_MODEL_BASE_URL,
+    ModelClient,
     ModelMessage,
     ModelRequest,
     ModelService,
@@ -392,7 +393,7 @@ class AutonomousRunner:
         run_id: str = "",
         model_id: str | None = None,
         profile: ModelProfile | None = None,
-        model_service: ModelService | None = None,
+        model_service: ModelClient | None = None,
         router: PhaseRouter | None = None,
         planner: Planner | None = None,
         brain: SecurityBrain | None = None,

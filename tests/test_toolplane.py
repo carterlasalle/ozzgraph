@@ -184,9 +184,12 @@ def test_inventory_excludes_absent_tools_and_never_advertises_their_capabilities
     assert absent.capabilities == ()
 
     available = inventory.capabilities.available()
-    assert available == frozenset({"http.request"})
-    # The absent tool's capabilities never leak into the advertised set.
-    assert "web.content_discovery" not in available
+    # V10 (docs/BENCHMARKS.md, tool contract): the portable curl-based
+    # path-probing provider (curl_probe) backs web.content_discovery in
+    # any environment with curl — so a present curl advertises it even
+    # without a dedicated fuzzer. A genuinely absent tool's capability
+    # (nmap -> network.port_scan) never leaks into the advertised set.
+    assert available == frozenset({"http.request", "web.content_discovery"})
     assert "network.port_scan" not in available
 
 
@@ -275,10 +278,15 @@ def test_capability_registry_round_trips(tmp_path: Path) -> None:
 
     assert registry.is_available("http.request")
     assert registry.is_available("network.port_scan")
-    assert not registry.is_available("web.content_discovery")
+    # V10 tool contract (docs/BENCHMARKS.md): the curl_probe fallback backs
+    # web.content_discovery with an installed curl, so it IS available.
+    assert registry.is_available("web.content_discovery")
     assert registry.providers_for("http.request") == ("curl",)
     assert registry.providers_for("network.port_scan") == ("nmap",)
-    assert registry.capabilities_for_binary("curl") == ("http.request",)
+    assert registry.capabilities_for_binary("curl") == (
+        "http.request",
+        "web.content_discovery",
+    )
     assert set(registry.capabilities_for_binary("nmap")) == {
         "network.port_scan",
         "network.service_detect",
@@ -323,7 +331,14 @@ def test_tool_provider_resolves_best_installed_provider(tmp_path: Path) -> None:
     assert port_scan.path == str(bin_dir / "nmap")
 
     assert provider.is_resolvable("http.request")
-    assert not provider.is_resolvable("web.content_discovery")
+    # V10 tool contract: the curl_probe fallback makes web.content_discovery
+    # resolvable with an installed curl (the preferred fuzzers win when
+    # present; the fallback guarantees the capability in any base env).
+    resolved_discovery = provider.resolve("web.content_discovery")
+    assert resolved_discovery.tool_id == "curl_probe"
+    assert resolved_discovery.capability == "web.content_discovery"
+    assert resolved_discovery.binary == "curl"
+    assert resolved_discovery.path == str(bin_dir / "curl")
 
 
 def test_tool_provider_skips_absent_catalog_preference(tmp_path: Path) -> None:
@@ -338,9 +353,9 @@ def test_tool_provider_missing_capability_raises_loudly(tmp_path: Path) -> None:
     """No installed provider -> typed error naming the catalog providers."""
     bin_dir = _fake_bin_dir(tmp_path, ["curl"])
     provider = ToolProvider(ToolInventory(paths=[str(bin_dir)]).run().capabilities)
-    with pytest.raises(ToolProviderError, match="web.content_discovery") as excinfo:
-        provider.resolve("web.content_discovery")
-    assert "ffuf" in str(excinfo.value)  # the catalog providers are named
+    with pytest.raises(ToolProviderError, match="web.sql_injection") as excinfo:
+        provider.resolve("web.sql_injection")
+    assert "sqlmap" in str(excinfo.value)  # the catalog providers are named
 
 
 def test_tool_provider_unknown_capability_raises_loudly(tmp_path: Path) -> None:
@@ -395,12 +410,12 @@ def test_skill_required_capabilities_validated_against_fake_inventory(
     all_ids = {summary.skill_id for summary in registry.list_available(available)}
     assert all_ids == set(SKILLS)
 
-    # Drop sqlmap -> only the SQL-injection skill becomes unavailable.
-    (bin_dir / "sqlmap").unlink()
+    # Drop base64 -> only the auth-bypass skill (crypto.decode) disappears.
+    (bin_dir / "base64").unlink()
     monkeypatch.setenv("PATH", str(bin_dir))
     reduced = ToolInventory().run().capabilities.available()
     reduced_ids = {summary.skill_id for summary in registry.list_available(reduced)}
-    assert reduced_ids == set(SKILLS) - {"exploit_parameter_injection"}
+    assert reduced_ids == set(SKILLS) - {"exploit_auth_bypass"}
 
     # Drop everything -> no skill with requirements is advertised.
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
