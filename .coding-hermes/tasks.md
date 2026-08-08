@@ -27,19 +27,21 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 > HalCTF as one adapter." Vertical-first. Read docs/CHANGES_v2.md before
 > starting. Phases V01-V10; work strictly in order (FIFO), each a judged commit.
 
-> ⚠️ V01 NOTE (2026-08-08): The V01 tick did the work but TIMED OUT at the old
-> 30-min cap BEFORE committing. The full V01 implementation is STAGED but
-> uncommitted (25 files, ~2959 insertions: environments/__init__.py, base.py,
-> local.py, halctf.py, models.py; runner.py; ADR-0008; rewrites of phases.py,
-> policy.py, router.py, skills.py, submissions.py, supervisor.py; + tests).
-> Do NOT redo V01. The next tick should run the quality gate on the staged
-> work, `gitreins task complete` + commit it (judge PASS), mark V01 [x], then
-> proceed to V02. Tick cap is now 3600s.
+> ✅ V01 DONE (2026-08-08): committed da1aaaf (26 files, 2968 insertions:
+> environments/ package, ADR-0008, kernel rewrites, AutonomousRunner, tests).
+> Judge PASS d1416f4 (5/5 criteria, 911 tests).
+>
+> ✅ V02 DONE (2026-08-08): committed db18787 (6 files, 923 insertions:
+> `ozzgraph run` CLI + console script, findings.py Finding/FindingStore,
+> runner evidence→hypothesis→Finding on CONFIRMED verdict, supervisor
+> Evaluator wiring, tests/test_e2e_run.py process-level E2E — real subprocess
+> against lab hidden-routes target + stub OpenAI endpoint; exit 0,
+> TERMINATION: completed, graph chain + findings.json, exit-1/exit-3 mapping).
+> Full gate green (ruff/format/mypy strict, 915 tests). Judge PASS 6c6a117a
+> (3/3 criteria). Next: V03 (tool-runtime). Tick cap 3600s.
 
 | ID | Task | Pri | Cpx | Deps | Tags | Model | Reasoning | Fallback |
 |----|------|-----|-----|------|------|-------|-----------|----------|
-| V01 | generic-runtime: EnvironmentAdapter protocol (discover_scope/targets/objectives/capabilities), Scope/Target/Objective types, LocalEnvironment + HalCTFEnvironment; REMOVE FLAG_HUNT + VERIFY_AND_SUBMIT from generic kernel; supervisor drives a real AutonomousRunner (not sleep loop) | Critical | 5±1 | — | +++python, ++architecture, ++security | DS-V4-Pro | High | DS-V4-Flash |
-| V02 | autonomous-vertical-slice: make `ozzgraph run <target>` work end-to-end (discover → model → tool → parse → graph → hypothesis → validate → Finding → exit) against one deliberately vulnerable app, NO test code manually driving components; process-level E2E | Critical | 5±1 | V01 | +++python, ++e2e, ++security | DS-V4-Pro | High | DS-V4-Flash |
 | V03 | tool-runtime: lean default assessment image + separate `:max` Kali `kali-linux-everything` image; ToolCatalog/ToolInventory/CapabilityRegistry/ToolProvider; startup inventories every tool (path, version, capabilities); model NEVER hears of a nonexistent tool; skills declare capabilities not binaries | Critical | 5±1 | V02 | +++docker, ++python, ++infra | DS-V4-Pro | High | DS-V4-Flash |
 | V04 | semantic-observations: typed parsers/projectors for high-value tools (curl/nmap/ffuf/feroxbuster/nuclei/netexec/smbmap/ldap/semgrep/CodeQL/trivy/gitleaks/file/readelf/checksec/exiftool/binwalk) using machine-readable output (JSON/XML/SARIF/JSONL); ALWAYS persist raw output to ArtifactStore FIRST, then parse → evidence → graph | Critical | 5±1 | V02 | +++python, ++parsing, ++graph | DS-V4-Pro | High | DS-V4-Flash |
 | V05 | model-harness-matrix: empirical per-model profiles (TOML: protocol, output tokens, benchmarks) via GET /v1/models + capability probe; benchmark format compliance/tool selection/repetition/evidence grounding/solve rates; pick protocols from data not family assumptions | High | 4±1 | V02 | +++python, ++benchmark, ++models | DS-V4-Flash | Medium | Kimi-K3 |
@@ -53,6 +55,8 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
+| V02 | autonomous-vertical-slice: `ozzgraph run <target>` end-to-end as a real process (CLI + console script, Finding model/store, evidence→hypothesis→Finding, evaluator wiring, process-level E2E test) (judge PASS 6c6a117a, all 3 criteria) | Critical | 5±1 | db18787 | DS-V4-Flash |
+| V01 | generic-runtime: EnvironmentAdapter protocol, Scope/Target/Objective, Local/HalCTF environments, kernel rewrites, real AutonomousRunner (judge PASS d1416f4, all 5 criteria) | Critical | 5±1 | da1aaaf | DS-V4-Flash |
 | FLAGLEAK-001 | Redact/hash flag material in run-only event-log events (flags.candidate_found/submission.attempted/submission.accepted/submission.rejected now carry flag_sha256+flag_length digests; graph.entity_created keeps raw flag — replay-required) (judge PASS, all 4 criteria) | High | 3±1 | a667733 | DS-V4-Flash |
 | DOCS-000 | Documentation gate pass — CONTRIBUTING.md + SECURITY.md + README refresh + repo metadata (judge PASS 1913c392, all 3 criteria) | High | 3±1 | 06c5ab1 | DS-V4-Flash |
 | DOC-001 | Full documentation pass — polished README + docs/USAGE.md + docs/CUSTOMIZATION.md (judge PASS 8cee566d) | High | 3±1 | 2a0daa3 | DS-V4-Flash |
