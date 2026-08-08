@@ -8,6 +8,15 @@ PR = one board task. Decompose each PR with `coding-hermes-model-router` before
 spawning a worker. Follow AGENTS.md invariants + PR scope rules; bridge every
 commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
+**Tick 2026-08-08: DOCS-000 closed (judge PASS 8ae01605, commit c436427 —
+verified this tick; worker committed + pushed, guards PASS). v2 documentation
+pass complete: README refreshed (v2 milestone status, v2 modules in
+capabilities/layout, v2 docs in table), repo metadata updated (description +
+7 topics via gh repo edit), formatting bar intact. First judge run hit the
+known spurious tier1 `ruff: not found` env artifact (gitreins-usage pitfall) —
+re-run with PATH=$PWD/.venv/bin:$PATH → PASS (all 4 criteria). Board idle →
+cooldown 43200s.**
+
 **Tick 2026-08-08: V10 closed (judge PASS 9ce33342 — verified this tick, work
 committed by prior tick 498a214). Bench suite verified: ruff/format/mypy clean,
 1181 tests pass (216s), benchmark CLI smoke evidence in commit. Tier-2 judge
@@ -159,6 +168,7 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
+| DOCS-000 | v2 documentation pass re-run — README refreshed for completed v2 milestone (release status v1.0.0 + v2 V01–V10, v2 modules in capabilities/layout: environments/, findings.py, observations.py, security_brain.py, specialists.py, profile_store.py/profile_data/, matrix.py, benchmarks/, lab/), v2 docs added to Documentation table (CHANGES_v2.md, OBSERVATIONS.md, BENCHMARKS.md, SYNTHETIC_LAB.md), repo description + 7 topics updated via gh repo edit, formatting bar intact (judge PASS 8ae01605, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 3±1 | c436427 | DS-V4-Flash |
 | V10 | full-regression: benchmarks/ package (registry + OzzGraph harness vs plain ReAct + scripted model + scoring + deterministic report), dead-end lab target with pivot proof (hypothesis_abandoned + PIVOT, bounded turns), tool-contract test (every required_capability resolves to installed provider), benchmark CLI (--target/--react/--max-turns/--out + OZZGRAPH_BENCHMARK_* env), docs/BENCHMARKS.md (judge PASS 9ce33342, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 5±1 | 498a214 | DS-V4-Flash |
 | INT-CI-001 | E2E driver imports V09-moved flag modules from canonical homes (ozzgraph.entities / ozzgraph.environments.halctf) — fixes CI Lint failure (ruff I001 on e2e_001_driver.py, symptom of deleted ozzgraph.flags regression) | High | 1±0 | 5628bf4 | DS-V4-Flash |
 | V09 | halctf-adapter: HAL_* / OPENAI_BASE_URL / MCP_ENDPOINT discovery, official tool set (list_ctfs/challenges/status/submit_flag/request_hint/scoreboard), smoke flag, scoring, hint costs, graceful completion; hint-policy/submission/scoreboard/flag-candidate-extractor moved OUT of generic kernel into ozzgraph.environments.halctf (ADR-0011) (judge PASS d636bfd6, all criteria) | High | 4±1 | 6a7f8dc | DS-V4-Flash |
@@ -212,29 +222,28 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 | T01 | PR1: init uv project + CI skeleton (lint, format, type, test gates) | Critical | 2±1 | e4deda1 | DS-V4-Flash |
 | T02 | PR2: runtime configuration + supervisor skeleton | Critical | 4±1 | 02711ad | DS-V4-Flash |
 
-## [ ] DOCS-000 — Documentation pass re-run for completed v2 milestone (V01–V10)
+## [x] DOCS-000 — Documentation pass re-run for completed v2 milestone (V01–V10)
 
-The v2 milestone (V01–V10) is complete but the README is stale — it was last
-touched at v1.0.0 and documents only the HalCTF-era harness (0 mentions of the
-v2 modules). Re-run the documentation pass from the diff since the last docs
-pass. Required (per the fleet Documentation Gate standard):
-
-1. **README.md** — reflect the completed v2 milestone:
-   - Release status: v1.0.0 shipped **+ v2 (V01–V10) complete** (general
-     vuln-research harness, HalCTF as one adapter)
-   - New v2 modules in the capabilities/layout: `environments/`,
-     `findings.py`, `observations.py`, `security_brain.py`, `specialists.py`,
-     `profile_store.py`/`profile_data/`, `matrix.py`, `benchmarks/`, `lab/`
-   - Add the newer v2 docs to the Documentation table: `CHANGES_v2.md`,
-     `OBSERVATIONS.md`, `BENCHMARKS.md`, `SYNTHETIC_LAB.md`
-2. **docs/ index** — ensure `docs/README.md` or the table references the v2 docs.
-3. **GitHub repo description + topics** — confirm they still match
-   (`gh repo edit`; desc + 3–8 topics).
-4. Pass the formatting bar: centered title + badges + nav-row + diagram +
-   tables, skimmable at a glance (cover-the-text test).
-
-Verify `uv run ruff check .` and `uv run ruff format --check .` pass (they lint
-README/docs Python blocks), then judge + commit + push.
+**Tick 2026-08-08: DOCS-000 done — v2 documentation gate PASS (judge 8ae01605).**
+Worker (deepseek-v4-flash @ openrouter) refreshed README.md for the completed v2
+milestone: release status line "v1.0.0 shipped + v2 (V01–V10) complete" with
+general security-research reframing (HalCTF as one optional adapter), v2
+modules added to capabilities table + repository layout tree (environments/,
+lab/, benchmarks/, profile_data/, findings.py, observations.py,
+security_brain.py, specialists.py, profile_store.py, matrix.py), v2 docs added
+to Documentation table (CHANGES_v2.md, OBSERVATIONS.md, BENCHMARKS.md,
+SYNTHETIC_LAB.md), quick-start now leads with `ozzgraph run <target>` local
+mode, test count 880→1181. Repo metadata updated via gh repo edit: description
+"Autonomous security-research harness: model-adaptive agent supervisor with
+SQLite graph state, provenance, bounded actions, and pluggable environment
+adapters (HalCTF, local, lab)" + 7 topics (agent, automation, cli, harness,
+cybersecurity, security, vulnerability-research — dropped stale ctf/go).
+Formatting bar intact (title/badges/nav/mermaid/tables). Content landed in
+c436427 (worker committed + pushed; guards PASS). First judge run FAIL was the
+known spurious tier1 env artifact (ruff: not found — .venv/bin missing from
+judge subprocess PATH, gitreins-usage pitfall); re-run with
+PATH=$PWD/.venv/bin:$PATH → PASS 8ae01605 (all 4 criteria, tier1
+lint/tests/secrets PASS). Board idle → cooldown 43200s.
 
 ## [ ] E2E-001 — E2E Testing Tick (self-improving loop)
 
