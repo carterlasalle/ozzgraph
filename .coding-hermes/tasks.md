@@ -39,10 +39,19 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 > TERMINATION: completed, graph chain + findings.json, exit-1/exit-3 mapping).
 > Full gate green (ruff/format/mypy strict, 915 tests). Judge PASS 6c6a117a
 > (3/3 criteria). Next: V03 (tool-runtime). Tick cap 3600s.
+>
+> ✅ V03 DONE (2026-08-08): committed c3c44f9 (10 files, 1583 insertions:
+> src/ozzgraph/toolplane.py ToolCatalog/ToolInventory/CapabilityRegistry/
+> ToolProvider, startup inventory in AutonomousRunner, capabilities-driven
+> context (AVAILABLE CAPABILITIES block), Skill.required_capabilities +
+> list_available, docker/Dockerfile.kali `:max` Kali image, docs +
+> test_toolplane.py 26 tests + wiring/image tests). Work was completed by the
+> prior tick's worker but left uncommitted (timeout) — this tick verified
+> gates green (ruff/format/mypy strict, 941 tests) and committed, no redo.
+> Judge PASS 3f4640ae (5/5 criteria). Next: V04 (semantic-observations).
 
 | ID | Task | Pri | Cpx | Deps | Tags | Model | Reasoning | Fallback |
 |----|------|-----|-----|------|------|-------|-----------|----------|
-| V03 | tool-runtime: lean default assessment image + separate `:max` Kali `kali-linux-everything` image; ToolCatalog/ToolInventory/CapabilityRegistry/ToolProvider; startup inventories every tool (path, version, capabilities); model NEVER hears of a nonexistent tool; skills declare capabilities not binaries | Critical | 5±1 | V02 | +++docker, ++python, ++infra | DS-V4-Pro | High | DS-V4-Flash |
 | V04 | semantic-observations: typed parsers/projectors for high-value tools (curl/nmap/ffuf/feroxbuster/nuclei/netexec/smbmap/ldap/semgrep/CodeQL/trivy/gitleaks/file/readelf/checksec/exiftool/binwalk) using machine-readable output (JSON/XML/SARIF/JSONL); ALWAYS persist raw output to ArtifactStore FIRST, then parse → evidence → graph | Critical | 5±1 | V02 | +++python, ++parsing, ++graph | DS-V4-Pro | High | DS-V4-Flash |
 | V05 | model-harness-matrix: empirical per-model profiles (TOML: protocol, output tokens, benchmarks) via GET /v1/models + capability probe; benchmark format compliance/tool selection/repetition/evidence grounding/solve rates; pick protocols from data not family assumptions | High | 4±1 | V02 | +++python, ++benchmark, ++models | DS-V4-Flash | Medium | Kimi-K3 |
 | V06 | security-brain: replace round-robin planner with OpportunityGenerator + StrategicPlanner (LLM only when >1 viable path), TaskBuilder, HypothesisManager, ProgressEvaluator; deterministic single-obvious-action path avoids extra LLM calls | Critical | 5±1 | V02 | +++python, ++planner, ++reasoning | DS-V4-Pro | High | DS-V4-Flash |
@@ -55,6 +64,7 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
+| V03 | tool-runtime: ToolCatalog/ToolInventory/CapabilityRegistry/ToolProvider, startup tool inventory, capabilities-not-binaries, `:max` Kali image (judge PASS 3f4640ae, all 5 criteria) | Critical | 5±1 | c3c44f9 | DS-V4-Flash |
 | V02 | autonomous-vertical-slice: `ozzgraph run <target>` end-to-end as a real process (CLI + console script, Finding model/store, evidence→hypothesis→Finding, evaluator wiring, process-level E2E test) (judge PASS 6c6a117a, all 3 criteria) | Critical | 5±1 | db18787 | DS-V4-Flash |
 | V01 | generic-runtime: EnvironmentAdapter protocol, Scope/Target/Objective, Local/HalCTF environments, kernel rewrites, real AutonomousRunner (judge PASS d1416f4, all 5 criteria) | Critical | 5±1 | da1aaaf | DS-V4-Flash |
 | FLAGLEAK-001 | Redact/hash flag material in run-only event-log events (flags.candidate_found/submission.attempted/submission.accepted/submission.rejected now carry flag_sha256+flag_length digests; graph.entity_created keeps raw flag — replay-required) (judge PASS, all 4 criteria) | High | 3±1 | a667733 | DS-V4-Flash |
