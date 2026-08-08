@@ -122,6 +122,7 @@ from ozzgraph.model_client import (
     ModelService,
     ModelServiceError,
 )
+from ozzgraph.observations import observation_for_result
 from ozzgraph.phases import Phase
 from ozzgraph.planner import (
     EDGE_EVIDENCE_CONTRADICTS_HYPOTHESIS,
@@ -626,14 +627,20 @@ class AutonomousRunner:
     async def _persist_execution(self, turn: ExecutorTurn, result: ToolResult) -> None:
         """Persist raw output, then update the graph (evidence chain).
 
-        Order per AGENTS.md rule #1: the RAW output lands in the
-        artifact store first, then compact summaries enter the graph as
-        an ``observation`` entity (referencing the producing ``action``
-        entity) and an ``evidence`` entity (referencing the
-        observation) — satisfying the data invariants "every
-        Observation references an Action" and "every Evidence
-        references an Observation or artifact". Every mutation is
-        mirrored as a ``graph.*`` event with the same timestamp.
+        Order per AGENTS.md rule #1 — the RAW-first invariant
+        (docs/CHANGES_v2.md milestone 4): the raw output lands in the
+        artifact store FIRST, then the semantic parser selected by the
+        producing command (:func:`ozzgraph.observations.parser_for_command`)
+        normalizes it into a typed observation (source/kind/data per
+        tool: nmap hosts+ports, nuclei findings, trivy vulnerabilities,
+        ...; the generic shell text parser is the fallback), and the
+        observation references the stored artifact. The observation
+        entity (referencing the producing ``action`` entity) and an
+        ``evidence`` entity (referencing the observation) follow —
+        satisfying the data invariants \"every Observation references an
+        Action\" and \"every Evidence references an Observation or
+        artifact\". Every mutation is mirrored as a ``graph.*`` event
+        with the same timestamp.
         """
         request = turn.action
         action_id = f"{ENTITY_ACTION}-{request.fingerprint}"
@@ -646,7 +653,12 @@ class AutonomousRunner:
             target=request.hypothesis_id,
             truncated=truncated,
         )
-        summary = _bounded(_summarize(result), _SUMMARY_LIMIT)
+        result.artifact_ids = [artifact.artifact_id]
+        # Parse AFTER the raw output is persisted: the observation may
+        # reference the artifact even when the parse itself fails
+        # (malformed=True), so raw output never depends on parsing.
+        observation = observation_for_result(result, artifact_id=artifact.artifact_id)
+        summary = _bounded(observation.summary, _SUMMARY_LIMIT)
         at = datetime.now(UTC)
 
         observation_id = f"observation-{request.fingerprint}"
@@ -657,12 +669,16 @@ class AutonomousRunner:
                 ENTITY_OBSERVATION,
                 {
                     "action_id": action_id,
-                    "source": "shell",
-                    "kind": "text",
+                    "source": observation.source,
+                    "kind": observation.kind,
                     "summary": summary,
+                    "data": observation.data,
                     "artifact_id": artifact.artifact_id,
+                    "artifact_ids": observation.artifact_ids,
                     "exit_code": result.exit_code,
-                    "ok": result.exit_code == 0 and not result.timeout_state,
+                    "ok": observation.ok,
+                    "malformed": observation.malformed,
+                    "parse_error": observation.parse_error,
                 },
                 at=at,
             )

@@ -34,7 +34,7 @@ from ozzgraph.runner import (
     AutonomousRunner,
     RunnerStatus,
 )
-from ozzgraph.shell import ShellRunner
+from ozzgraph.shell import ShellRunner, ToolResult, TruncationState
 from ozzgraph.state_graph import StateGraph
 from ozzgraph.toolplane import ToolInventory
 
@@ -138,6 +138,7 @@ def _runner(
     stop_event=None,
     budgets: Budgets | None = None,
     inventory: ToolInventory | None = None,
+    shell: ShellRunner | FakeShell | None = None,
 ) -> AutonomousRunner:
     state = tmp_path / "state"
     state.mkdir(parents=True, exist_ok=True)
@@ -156,7 +157,7 @@ def _runner(
         profile=GPT_PROFILE,
         model_service=model_service,
         policy=ScopePolicy(target_allowlist=("127.0.0.1",)),
-        shell=ShellRunner(),
+        shell=shell if shell is not None else ShellRunner(),
         # Hermetic tool plane: an empty search path finds no tools, so
         # the model context advertises no capabilities and no version
         # probe ever spawns a subprocess (deterministic, fast).
@@ -484,3 +485,115 @@ async def test_context_advertises_only_installed_capabilities(tmp_path: Path) ->
     # Absent tools' capabilities never reach the model.
     assert "network.port_scan" not in prompt
     assert "web.content_discovery" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# V04 semantic observations (docs/CHANGES_v2.md milestone 4)
+# ---------------------------------------------------------------------------
+
+
+class FakeShell(ShellRunner):
+    """Deterministic shell double: canned ToolResults keyed by command."""
+
+    def __init__(self, results: dict[str, ToolResult]) -> None:
+        super().__init__()
+        self._results = results
+
+    async def run(
+        self,
+        command: str,
+        *,
+        timeout_seconds: float,
+        stdout_limit: int,
+        stderr_limit: int,
+        working_directory: Path,
+    ) -> ToolResult:
+        try:
+            return self._results[command]
+        except KeyError:
+            raise AssertionError(f"unexpected command: {command!r}") from None
+
+
+NMAP_XML_OUTPUT = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<nmaprun scanner="nmap" args="nmap -oX - -sV 127.0.0.1" start="1700000000" version="7.94">
+<host starttime="1700000000" endtime="1700000001"><status state="up"/>
+<address addr="127.0.0.1" addrtype="ipv4"/>
+<hostnames><hostname name="localhost" type="PTR"/></hostnames>
+<ports>
+<port protocol="tcp" portid="22"><state state="open"/><service name="ssh" product="OpenSSH" version="9.2p1"/></port>
+<port protocol="tcp" portid="80"><state state="open"/><service name="http" product="nginx"/></port>
+</ports>
+<os><osmatch name="Linux" accuracy="98"/></os>
+</host>
+</nmaprun>
+"""
+
+
+@pytest.mark.asyncio
+async def test_semantic_observation_raw_first_flow(tmp_path: Path) -> None:
+    """A semantic tool run persists raw output FIRST, then the typed
+    observation (source/kind/data per tool) + evidence into the graph.
+
+    Exercises the full V04 pipeline through the real investigate loop
+    with a canned shell: nmap -oX output becomes a typed observation
+    entity (hosts/ports in ``data``) whose payload references the
+    artifact, and the artifact holds the raw bytes byte-for-byte.
+    """
+    command = "nmap -oX - -sV 127.0.0.1"
+    canned = ToolResult(
+        action_id="a" * 32,
+        command=command,
+        exit_code=0,
+        stdout=NMAP_XML_OUTPUT,
+        stderr="",
+        duration=0.01,
+        timeout_state=False,
+        truncation_state=TruncationState(),
+    )
+    service = ModelService(
+        transport=_transport([json.dumps({"kind": "run", "payload": command})]),
+        max_retries=0,
+        event_log=EventLog.for_run(tmp_path / "state"),
+        run_id=RUN,
+    )
+    budgets = _budgets(max_model_calls=1, max_tool_calls=1)
+    async with StateGraph(":memory:") as graph:
+        runner = _runner(
+            tmp_path,
+            graph,
+            model_service=service,
+            budgets=budgets,
+            shell=FakeShell({command: canned}),
+        )
+        try:
+            status = await runner.run()
+        finally:
+            await runner.aclose()
+        assert status is RunnerStatus.BUDGET_EXHAUSTED
+
+        observations = await graph.list_entities("observation")
+        assert len(observations) == 1
+        payload = observations[0].data
+        assert payload["source"] == "nmap"
+        assert payload["kind"] == "xml"
+        assert payload["ok"] is True
+        assert payload["malformed"] is False
+        assert payload["artifact_id"]
+        # The observation references the artifact (raw-first invariant).
+        assert payload["artifact_ids"] == [payload["artifact_id"]]
+        data = payload["data"]
+        assert isinstance(data, dict)
+        assert data["host_count"] == 1
+        assert data["open_ports"] == ["tcp/22", "tcp/80"]
+
+        # Evidence references the observation and the artifact.
+        evidence = await graph.list_entities("evidence")
+        assert len(evidence) == 1
+        assert evidence[0].data["observation_id"] == observations[0].id
+        assert evidence[0].data["artifact_id"] == payload["artifact_id"]
+
+        # Raw output persisted to the artifact store, byte-for-byte.
+        artifacts = ArtifactStore(tmp_path / "state" / "artifacts")
+        raw = artifacts.path_for(str(payload["artifact_id"])).read_text(encoding="utf-8")
+        assert raw == NMAP_XML_OUTPUT
