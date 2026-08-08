@@ -118,10 +118,28 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 > tick verified gates green (ruff/format/mypy strict, 1070 tests), pushed,
 > judged PASS 8b6c8e3 (4/4 criteria, tier1 lint/tests/secrets PASS).
 > Next: V08 (local-assessment).
+>
+> ✅ V08 DONE (2026-08-08): committed 1673b97→14eb864→198ba36 (16 files,
+> 2261 insertions: reporting.py render_report_bundle — report.md +
+> report.json + report.sarif from graph findings in state_dir alongside
+> evidence/ + graph.sqlite (online-backup snapshot) + events.jsonl, runner
+> emits bundle at COMPLETED with loud report_failed; LocalEnvironment
+> url/network/repository/docker-compose/hybrid modes via OZZGRAPH_TARGET
+> classification (classify_local_target, LOCAL_MODE_NAMES, scope_mode
+> hybrid, LocalEnvironment now the DEFAULT via supervisor._make_environment);
+> config.py OZZGRAPH_SCOPE_FILE/_load_scope_entries (JSON/YAML/TOML,
+> sorted+deduped → target_allowlist) + OZZGRAPH_CREDENTIALS_FILE/
+> _load_credential_records (Credential refs sorted by name) with loud
+> ConfigError on unreadable/malformed/wrong-shape; ADR-0010, docs/
+> CHANGES_v2.md + USAGE env vars; tests test_reporting.py 458 lines +
+> test_config.py 219 + test_environments.py 149 + test_runner.py 57 + e2e
+> additions). Work completed + pushed by prior worker, unjudged — this tick
+> verified gates green (ruff/format/mypy strict, 1114 tests) and confirmed
+> judge PASS 6025990f (4/4 criteria, tier1 lint/tests/secrets PASS).
+> Next: V09 (halctf-adapter).
 
 | ID | Task | Pri | Cpx | Deps | Tags | Model | Reasoning | Fallback |
 |----|------|-----|-----|------|------|-------|-----------|----------|
-| V08 | local-assessment: URL/network/repository/Docker-Compose/hybrid modes, credentials + scope files, rich Finding model (CWE, assets, preconditions, evidence, reproduction, impact CIA, confidence), reporting (report.md/json/sarif + evidence/ + graph.sqlite + events.jsonl); make local the DEFAULT experience | High | 5±1 | V02,V04 | +++python, ++cli, ++reporting | DS-V4-Pro | High | DS-V4-Flash |
 | V09 | halctf-adapter: HAL_* / OPENAI_BASE_URL / MCP_ENDPOINT discovery, official tool set (list_ctfs/challenges/status/submit_flag/request_hint/scoreboard), smoke flag, scoring, hint costs, graceful completion; move hint-policy/submission/scoreboard/flag-candidate-extractor OUT of generic kernel into ozzgraph.environments.halctf | High | 4±1 | V01,V02 | +++python, ++integration, ++ctf | DS-V4-Flash | Medium | Kimi-K3 |
 | V10 | full-regression: real benchmark suite across model matrix (web/api/source/network/ad/pwn/reverse/forensics/stego/cloud/halctf) incl. deliberate dead ends + tool-contract test (every skill's required capability has a working installed provider); prove OzzGraph+model beats plain ReAct | High | 5±1 | V03-V09 | +++python, ++testing, ++benchmark | DS-V4-Pro | High | DS-V4-Flash |
 
@@ -129,6 +147,7 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
+| V08 | local-assessment: URL/network/repository/Docker-Compose/hybrid modes via OZZGRAPH_TARGET classification, scope + credentials files (target_allowlist + Credential list, loud ConfigError), report bundle (report.md/json/sarif + evidence/ + graph.sqlite + events.jsonl) at COMPLETED, LocalEnvironment as DEFAULT, ADR-0010 (judge PASS 6025990f, all 4 criteria) | High | 5±1 | 198ba36 | DS-V4-Flash |
 | V06 | security-brain: OpportunityGenerator + StrategicPlanner (LLM only when >1 viable path) + TaskBuilder + HypothesisManager + ProgressEvaluator, deterministic zero-LLM single-action path wired into runner (judge PASS ea396688, all 4 criteria) | Critical | 5±1 | c948e93 | DS-V4-Flash |
 | V07 | specialists: SpecialistMicroAgent bounded hypothesis→experiment→observation→conclusion loop (MAX_MICRO_ITERATIONS=3, zero model calls, no full-graph context), Scheduler parallel hypotheses (hypothesis-id conflict keys) + serialized global strategy (MUTATION_CONFLICT_KEY), Reducer structured verdict merge (verdict+evidence_ids+impact CWE/assets/confidence), SpecialistFleet batch + runner dispatch, ADR-0009 (judge PASS 8b6c8e3, all 4 criteria) | High | 4±1 | e953e00 | DS-V4-Flash |
 | V05 | model-harness-matrix: empirical per-model profiles — TOML-backed data-driven registry (profile_data/), ProfileStore discover/discover_from_service (GET /v1/models + capability probe), byte-deterministic TraceMetrics benchmark persistence (judge PASS b8a2cfd1, all 5 criteria) | High | 4±1 | 70d6f3f | DS-V4-Flash |
