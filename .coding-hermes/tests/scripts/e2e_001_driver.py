@@ -48,6 +48,8 @@ from ozzgraph.artifacts import ArtifactStore
 from ozzgraph.bootstrap import BootstrapRunner
 from ozzgraph.budgets import Budgets
 from ozzgraph.config import OzzGraphConfig
+from ozzgraph.entities import EDGE_EVIDENCE_EXTRACTED_FROM_OBSERVATION
+from ozzgraph.environments.halctf import FlagCandidateExtractor
 from ozzgraph.events import (
     BOOTSTRAP_CHALLENGE_STATUS,
     BOOTSTRAP_HINT_REQUESTED,
@@ -65,10 +67,6 @@ from ozzgraph.events import (
     graph_event,
 )
 from ozzgraph.executor import EXECUTOR_ACTION_ATTEMPTED, Executor
-from ozzgraph.flags import (
-    EDGE_EVIDENCE_EXTRACTED_FROM_OBSERVATION,
-    FlagCandidateExtractor,
-)
 from ozzgraph.hal_client import (
     HAL_PRIVILEGED_ENV,
     MCP_BASE_URL_ENV,
