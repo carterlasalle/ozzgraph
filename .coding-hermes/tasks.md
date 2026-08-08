@@ -97,10 +97,30 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 > lifecycle, progress verdicts). Gates green (ruff/format/mypy strict,
 > 1029 tests). Judge PASS ea396688 (4/4 criteria, tier1 lint/tests/
 > secrets PASS). Next: V07 (specialists).
+>
+> ✅ V07 DONE (2026-08-08): committed c3872ce→e953e00 (4 commits, 2801
+> insertions: workers.py SpecialistMicroAgent + MicroAgentTask — bounded
+> deterministic hypothesis→experiment→observation→conclusion loop,
+> MAX_MICRO_ITERATIONS=3, ZERO model calls, only context is hypothesis
+> objective + prior observations (never full graph); scheduler.py
+> parallelizes independent hypotheses (hypothesis id IS the conflict key;
+> ready_order drives batch under max_workers) while global strategy stays
+> serialized via serialized_task + reserved MUTATION_CONFLICT_KEY;
+> reducer.py merges structured verdicts — Verdict + evidence_ids + impact
+> (CWE/assets/confidence) live in fact payload + fingerprint;
+> specialists.py SpecialistFleet (narrow task build → bounded parallel
+> schedule → reducer → promote confirmed/abandon refuted → evidence-backed
+> findings + findings.json); runner.py _run_specialist_batch_turn
+> dispatches a fleet batch instead of an LLM call when brain returns a
+> pure independent-hypothesis StrategicDecision and a fleet is wired
+> (specialists=); docs/CHANGES_v2.md + ADR-0009. Work was completed by
+> the prior tick's worker and committed but left unpushed/unjudged — this
+> tick verified gates green (ruff/format/mypy strict, 1070 tests), pushed,
+> judged PASS 8b6c8e3 (4/4 criteria, tier1 lint/tests/secrets PASS).
+> Next: V08 (local-assessment).
 
 | ID | Task | Pri | Cpx | Deps | Tags | Model | Reasoning | Fallback |
 |----|------|-----|-----|------|------|-------|-----------|----------|
-| V07 | specialists: turn workers into genuine narrow micro-agents (bounded objectives, tiny context, hypothesis→experiment→observation→conclusion loop, structured verdict+evidence_ids+impact); parallelize independent hypotheses, serialize global strategy, merge via reducer | High | 4±1 | V06 | +++python, ++agents, ++parallel | DS-V4-Pro | High | DS-V4-Flash |
 | V08 | local-assessment: URL/network/repository/Docker-Compose/hybrid modes, credentials + scope files, rich Finding model (CWE, assets, preconditions, evidence, reproduction, impact CIA, confidence), reporting (report.md/json/sarif + evidence/ + graph.sqlite + events.jsonl); make local the DEFAULT experience | High | 5±1 | V02,V04 | +++python, ++cli, ++reporting | DS-V4-Pro | High | DS-V4-Flash |
 | V09 | halctf-adapter: HAL_* / OPENAI_BASE_URL / MCP_ENDPOINT discovery, official tool set (list_ctfs/challenges/status/submit_flag/request_hint/scoreboard), smoke flag, scoring, hint costs, graceful completion; move hint-policy/submission/scoreboard/flag-candidate-extractor OUT of generic kernel into ozzgraph.environments.halctf | High | 4±1 | V01,V02 | +++python, ++integration, ++ctf | DS-V4-Flash | Medium | Kimi-K3 |
 | V10 | full-regression: real benchmark suite across model matrix (web/api/source/network/ad/pwn/reverse/forensics/stego/cloud/halctf) incl. deliberate dead ends + tool-contract test (every skill's required capability has a working installed provider); prove OzzGraph+model beats plain ReAct | High | 5±1 | V03-V09 | +++python, ++testing, ++benchmark | DS-V4-Pro | High | DS-V4-Flash |
@@ -110,6 +130,7 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
 | V06 | security-brain: OpportunityGenerator + StrategicPlanner (LLM only when >1 viable path) + TaskBuilder + HypothesisManager + ProgressEvaluator, deterministic zero-LLM single-action path wired into runner (judge PASS ea396688, all 4 criteria) | Critical | 5±1 | c948e93 | DS-V4-Flash |
+| V07 | specialists: SpecialistMicroAgent bounded hypothesis→experiment→observation→conclusion loop (MAX_MICRO_ITERATIONS=3, zero model calls, no full-graph context), Scheduler parallel hypotheses (hypothesis-id conflict keys) + serialized global strategy (MUTATION_CONFLICT_KEY), Reducer structured verdict merge (verdict+evidence_ids+impact CWE/assets/confidence), SpecialistFleet batch + runner dispatch, ADR-0009 (judge PASS 8b6c8e3, all 4 criteria) | High | 4±1 | e953e00 | DS-V4-Flash |
 | V05 | model-harness-matrix: empirical per-model profiles — TOML-backed data-driven registry (profile_data/), ProfileStore discover/discover_from_service (GET /v1/models + capability probe), byte-deterministic TraceMetrics benchmark persistence (judge PASS b8a2cfd1, all 5 criteria) | High | 4±1 | 70d6f3f | DS-V4-Flash |
 | V04 | semantic-observations: typed parsers/projectors for 17 high-value tools (JSON/XML/SARIF/JSONL), raw-first ArtifactStore persistence, runner observation wiring (judge PASS 01aa9dd, all 3 criteria) | Critical | 5±1 | 8e49dd0 | DS-V4-Flash |
 | V03 | tool-runtime: ToolCatalog/ToolInventory/CapabilityRegistry/ToolProvider, startup tool inventory, capabilities-not-binaries, `:max` Kali image (judge PASS 3f4640ae, all 5 criteria) | Critical | 5±1 | c3c44f9 | DS-V4-Flash |
