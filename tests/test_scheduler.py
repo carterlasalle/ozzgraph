@@ -42,6 +42,7 @@ from ozzgraph.scheduler import (
     EDGE_WORKER_RUN_EXPLORED_HYPOTHESIS,
     ENTITY_TASK,
     ENTITY_WORKER_RUN,
+    MUTATION_CONFLICT_KEY,
     SCHEDULER_PRODUCER,
     SCHEDULER_RUN_COMPLETED,
     SCHEDULER_RUN_STARTED,
@@ -301,6 +302,27 @@ def test_serialized_key_must_stand_alone() -> None:
     Task(id="a", conflict_keys=(SERIALIZED_CONFLICT_KEY,))
 
 
+def test_mutation_key_must_stand_alone_on_mutating_tasks() -> None:
+    # A mutating task carries exactly the reserved mutation key.
+    task = Task(id="a", mutating=True, conflict_keys=(MUTATION_CONFLICT_KEY,))
+    assert task.mutating is True
+    assert task.conflict_keys == (MUTATION_CONFLICT_KEY,)
+    # A mutating task without the key is rejected loudly.
+    with pytest.raises(ValidationError, match="exactly the reserved"):
+        Task(id="a", mutating=True)
+    with pytest.raises(ValidationError, match="exactly the reserved"):
+        Task(id="a", mutating=True, conflict_keys=("recon",))
+    with pytest.raises(ValidationError, match="exactly the reserved"):
+        Task(id="a", mutating=True, conflict_keys=(MUTATION_CONFLICT_KEY, "recon"))
+
+
+def test_read_only_task_cannot_claim_mutation_key() -> None:
+    with pytest.raises(ValidationError, match="read-only"):
+        Task(id="a", conflict_keys=(MUTATION_CONFLICT_KEY,))
+    # The default read-only task stays parallel-eligible.
+    Task(id="a", conflict_keys=("recon",))
+
+
 def test_serialized_task_hook_carries_the_reserved_key() -> None:
     task = serialized_task("flag-submit", plan_step_id="plan-1-step-1")
     assert task.conflict_keys == (SERIALIZED_CONFLICT_KEY,)
@@ -423,6 +445,37 @@ async def test_independent_tasks_run_concurrently() -> None:
         result = await task
     assert runner.max_active == 2
     assert [run.task_id for run in result.worker_runs] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_mutating_tasks_serialize_but_independent_tasks_overlap() -> None:
+    """Mutation tasks serialize among themselves; hypothesis tasks stay parallel."""
+    dag = TaskDAG(
+        [
+            Task(id="m-1", mutating=True, conflict_keys=(MUTATION_CONFLICT_KEY,)),
+            Task(id="m-2", mutating=True, conflict_keys=(MUTATION_CONFLICT_KEY,)),
+            Task(id="h-1", conflict_keys=("hyp-1",)),
+        ]
+    )
+    runner = GateRunner(closed_gates(("m-1", "m-2", "h-1")))
+    async with StateGraph(":memory:") as graph:
+        task = asyncio.create_task(_scheduler(dag, runner, max_workers=3).run(graph))
+        await runner.wait_for_entries(2)
+        # Deterministic dispatch (sorted ids): h-1 and m-1 start together —
+        # the hypothesis task overlaps the mutation task freely — while m-2
+        # is excluded by the mutation conflict key (never two mutations).
+        assert runner.active == {"h-1", "m-1"}
+        assert runner.started == ["h-1", "m-1"]
+        runner.gates["h-1"].set()
+        runner.gates["m-1"].set()
+        await runner.wait_for_entries(3)
+        # m-2 started only after m-1 finished (serialized among mutations).
+        assert runner.active == {"m-2"}
+        assert "m-1" in runner.finished
+        runner.gates["m-2"].set()
+        result = await task
+    assert runner.max_active == 2  # hypothesis + one mutation, never two mutations
+    assert [run.task_id for run in result.worker_runs] == ["h-1", "m-1", "m-2"]
 
 
 # ---------------------------------------------------------------------------

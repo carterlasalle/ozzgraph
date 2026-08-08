@@ -37,6 +37,15 @@ Design rules:
   supervisor uses. The gate is deterministic and fail-closed: a serialized
   task never starts while anything else runs.
 
+- Mutation serialization (AGENTS.md rule #7, V07): a task whose action
+  mutates state (``mutating=True``) must carry exactly the reserved
+  :data:`MUTATION_CONFLICT_KEY`, so mutation/strategy tasks serialize among
+  themselves while independent hypothesis tasks stay parallel through their
+  own conflict keys. The reserved key stands alone (mirroring the serialized
+  key) and is rejected on a read-only task — a task that mutates state can
+  never hide that fact, and a task that does not mutate can never claim the
+  key.
+
 - Structured findings (AGENTS.md rule #3): a model claim is a hypothesis,
   never authoritative state. A :class:`Finding` is a typed record with
   provenance (task id, source) that MUST carry at least one evidence/artifact
@@ -55,6 +64,24 @@ Design rules:
 - Small kernel (AGENTS.md rule #10): the scheduler only schedules; the runner
   is injected and nothing is wired into the supervisor here. The scheduler is
   a component plus its contracts, delivered standalone (PR step 24).
+
+V07 (docs/CHANGES_v2.md milestone 7): specialists. Independent hypotheses
+parallelize and global strategy serializes through the SAME two mechanisms
+that already exist here — per-hypothesis conflict keys and the reserved
+:data:`SERIALIZED_CONFLICT_KEY`. :func:`hypothesis_task` is the dedicated
+hook: a task testing one hypothesis carries the hypothesis id AS its
+conflict key, so two tasks exploring the SAME hypothesis are mutually
+exclusive (never concurrent) while tasks exploring DIFFERENT hypotheses
+carry disjoint keys and run concurrently under ``max_workers`` — the
+AGENTS.md rule #7 partition (parallelize evidence gathering, not mutable
+exploit chains). Global-strategy tasks stay supervisor-serialized through
+:func:`serialized_task`: the reserved key conflicts with every other task,
+including hypothesis tasks. The structured conclusion of a specialist run
+travels through :class:`Finding` as an optional ``verdict`` (``confirmed``
+/ ``refuted`` / ``inconclusive``) plus an ``impact`` payload (CWE /
+assets / confidence), so the reducer can merge conclusions as structured
+verdicts into graph facts unchanged (additive optional fields; every
+existing finding shape stays valid).
 """
 
 from __future__ import annotations
@@ -123,6 +150,15 @@ EDGE_WORKER_RUN_EXPLORED_HYPOTHESIS = "WORKER_RUN EXPLORED HYPOTHESIS"
 #: run concurrently with anything, and a serialized key must be the task's
 #: only conflict key.
 SERIALIZED_CONFLICT_KEY = "serialized"
+
+#: Reserved conflict key marking a task as state-mutating (AGENTS.md rule
+#: #7, V07: parallelize evidence gathering, not mutable exploit chains). A
+#: mutating task (``mutating=True``) must carry exactly this key, so
+#: mutation/strategy tasks serialize among themselves while independent
+#: hypothesis tasks stay parallel through their own conflict keys. Unlike
+#: :data:`SERIALIZED_CONFLICT_KEY` it does NOT conflict with unrelated
+#: tasks — only with other mutating tasks.
+MUTATION_CONFLICT_KEY = "mutation"
 
 
 class SchedulerError(RuntimeError):
@@ -237,10 +273,17 @@ class Task(BaseModel):
             id in the graph.
         depends_on: Explicit dependency references — task ids that must
             complete before this task may start.
+        mutating: True when the task's action mutates state (an exploit
+            chain, a strategy change); a mutating task must carry
+            exactly the reserved :data:`MUTATION_CONFLICT_KEY`, so
+            mutation/strategy tasks serialize among themselves
+            (AGENTS.md rule #7). Read-only evidence gathering stays
+            False and parallelizes through its own conflict keys.
         conflict_keys: Explicit conflict-key set. Tasks with overlapping
             keys are mutually exclusive and may never run concurrently;
             the reserved :data:`SERIALIZED_CONFLICT_KEY` conflicts with
-            every task.
+            every task and :data:`MUTATION_CONFLICT_KEY` with every
+            other mutating task.
         plan_step_id: The plan step this task implements, when the task
             serves a plan step (``TASK IMPLEMENTS PLANSTEP`` edge).
         hypothesis_id: The hypothesis this task explores, when it tests
@@ -251,6 +294,7 @@ class Task(BaseModel):
 
     id: str = Field(min_length=1)
     depends_on: tuple[str, ...] = ()
+    mutating: bool = False
     conflict_keys: tuple[str, ...] = ()
     plan_step_id: str | None = None
     hypothesis_id: str | None = None
@@ -281,6 +325,29 @@ class Task(BaseModel):
                 "supervisor-serialized tasks and must be the only conflict key"
             )
         return value
+
+    @model_validator(mode="after")
+    def _mutation_conflict_contract(self) -> Task:
+        """A mutating task carries exactly the mutation key, and only it does.
+
+        Mirrors the serialized-key semantics (AGENTS.md rule #7): a task
+        that mutates state declares it loudly with
+        :data:`MUTATION_CONFLICT_KEY` as its ONLY conflict key, so
+        mutation/strategy tasks serialize among themselves while
+        independent hypothesis tasks stay parallel. A read-only task
+        claiming the reserved key is a contradiction and is rejected.
+        """
+        if self.mutating and self.conflict_keys != (MUTATION_CONFLICT_KEY,):
+            raise ValueError(
+                f"mutating task {self.id!r} must carry exactly the reserved "
+                f"{MUTATION_CONFLICT_KEY!r} conflict key, got {self.conflict_keys}"
+            )
+        if not self.mutating and MUTATION_CONFLICT_KEY in self.conflict_keys:
+            raise ValueError(
+                f"conflict key {MUTATION_CONFLICT_KEY!r} is reserved for mutating "
+                f"tasks; task {self.id!r} is read-only and cannot claim it"
+            )
+        return self
 
 
 class TaskOutcome(BaseModel):
