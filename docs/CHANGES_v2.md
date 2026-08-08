@@ -159,6 +159,42 @@ independently implemented components.
    > run uses `LocalEnvironment` (docs/adr/0010).
 9. `v2/halctf-adapter` — HAL_* discovery, official tool set, smoke flag,
    scoring, hint costs, graceful completion; no kernel contamination.
+   > V09 (2026-08-08, 6a7f8dc, docs/adr/0011): implemented — deterministic
+   > env-based discovery (`ozzgraph.config`: HalCTF mode selected by any
+   > `HAL_CTF_ID` / `HAL_CHALLENGE_ID` / `HAL_ENDPOINT` /
+   > `HAL_MCP_ENDPOINT` / `MCP_ENDPOINT` / legacy `OZZGRAPH_CHALLENGE_ID`
+   > variable; the MCP endpoint is the first non-blank of
+   > `OZZGRAPH_MCP_BASE_URL` / `HAL_MCP_ENDPOINT` / `HAL_ENDPOINT` /
+   > `MCP_ENDPOINT` / `OPENAI_BASE_URL`; HalCTF mode without an endpoint
+   > raises `ConfigError` loudly at `load_config` and at
+   > `HalCTFEnvironment` construction; `HAL_USER_ID` never selects the
+   > mode, so the local default — V08 `OZZGRAPH_TARGET` classification —
+   > is unchanged). The official HalCTF MCP tool set is exposed by
+   > `hal_client` (`OFFICIAL_HALCTF_TOOLS`: `list_ctfs` -> `ctf.list`,
+   > `challenges` -> `challenge.list`, `status` -> `challenge.status`,
+   > `submit_flag` -> `flag.submit`, `request_hint` -> `hint.request`,
+   > `scoreboard` -> `scoreboard.get`), with `halctl ctfs` /
+   > `halctl challenges` subcommands and halctl-parser document kinds.
+   > Challenge status carries the smoke-flag signal and the deterministic
+   > scoring breakdown (`ChallengeStatus.smoke_flag` / `scoring`),
+   > `HintResult` carries the platform-reported per-hint `cost`, and the
+   > paid-hint gate keeps enforcing the max-paid-hint-count invariant
+   > (supervisor-only, AGENTS.md rule 5/7). **Hints/submissions fully out
+   > of the kernel**: `HintPolicy`/`HintCoordinator`,
+   > `SubmissionCoordinator`, `FlagCandidateExtractor`, and the new
+   > `ScoreboardCoordinator` moved out of `ozzgraph.hints` /
+   > `ozzgraph.submissions` / `ozzgraph.flags` (all deleted) into
+   > `ozzgraph.environments.halctf`, reached only through the package
+   > shim or the environment's service factories
+   > (`flag_extractor` / `submission_coordinator` / `hint_coordinator` /
+   > `scoreboard_coordinator`, wired to the discovered challenge id and
+   > the config's budgets); the shared generic vocabulary
+   > (`observation`/`evidence`) lives in `ozzgraph.entities`, and a
+   > grep-enforced test proves no kernel module outside `environments/`
+   > imports the moved modules. Graceful completion: the objective's
+   > `success_hint` names the deterministic signal, an accepted
+   > submission routes the graph DONE, and the run terminates COMPLETED
+   > with the V08 report bundle.
 10. `v2/full-regression` — real benchmark suite across the model matrix.
 
 ## What to keep vs rewrite

@@ -59,6 +59,8 @@ Models do not call MCP directly.
 A local terminal-native adapter exposes:
 
 ```bash
+halctl ctfs --json
+halctl challenges [--ctf-id 'ctf-1'] --json
 halctl challenge show --json
 halctl status --json
 halctl submit --flag 'flag{...}' --json
@@ -67,10 +69,15 @@ halctl scoreboard --json
 halctl exit --reason solved
 ```
 
-Internal client:
+Internal client (the official HalCTF MCP tool set — `list_ctfs`,
+`challenges`, `status`, `submit_flag`, `request_hint`, `scoreboard`):
 
 ```python
 class HalClient:
+    async def list_ctfs(self) -> CtfList: ...
+    async def list_challenges(
+        self, ctf_id: str | None = None,
+    ) -> ChallengeList: ...
     async def get_challenge(self, challenge_id: str) -> Challenge: ...
     async def get_status(self, challenge_id: str) -> ChallengeStatus: ...
     async def submit_flag(
@@ -99,17 +106,22 @@ Configuration is constructor-injected with environment fallback; the
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `OZZGRAPH_MCP_BASE_URL` | `http://127.0.0.1:9000/mcp` | Base URL including the MCP endpoint path |
+| `OZZGRAPH_MCP_BASE_URL` | `http://127.0.0.1:9000/mcp` | Base URL including the MCP endpoint path — the FIRST of the deterministic V09 discovery candidates. |
+| `HAL_MCP_ENDPOINT` / `HAL_ENDPOINT` / `MCP_ENDPOINT` / `OPENAI_BASE_URL` | — | Additional endpoint candidates, consulted in order after `OZZGRAPH_MCP_BASE_URL` (first non-blank wins; see `ozzgraph.config.discover_halctf_endpoint`). |
 | `OZZGRAPH_MCP_TIMEOUT_S` | `60` | Request timeout in seconds |
 | `OZZGRAPH_MCP_MAX_RETRIES` | `3` | Retries for transient failures; `0` disables, bounded to max 10 |
 | `OZZGRAPH_HAL_PRIVILEGED` | *(unset)* | Supervisor flag; only a privileged `halctl`/`HalClient` may submit flags, buy paid hints, or exit the run |
-| `OZZGRAPH_CHALLENGE_ID` | *(unset)* | Challenge id used by the `halctl` subcommands that need one |
+| `OZZGRAPH_CHALLENGE_ID` / `HAL_CTF_ID` / `HAL_CHALLENGE_ID` | *(unset)* | Challenge id used by the `halctl` subcommands that need one (first non-blank wins) |
 
-The wire protocol is JSON-RPC 2.0 (`challenge.get`, `challenge.status`,
-`flag.submit`, `hint.request`, `scoreboard.get`, `exit`). Every upstream
-response is normalized into an internal versioned schema
-(`Challenge`/`ChallengeStatus`/`SubmissionResult`/`HintResult`/`Scoreboard`)
+The wire protocol is JSON-RPC 2.0 (`ctf.list`, `challenge.list`,
+`challenge.get`, `challenge.status`, `flag.submit`, `hint.request`,
+`scoreboard.get`, `exit`). Every upstream response is normalized into an
+internal versioned schema
+(`CtfList`/`ChallengeList`/`Challenge`/`ChallengeStatus`/`SubmissionResult`/`HintResult`/`Scoreboard`)
 so upstream changes do not leak throughout the codebase.
+`ChallengeStatus` carries the smoke-flag signal and the deterministic
+scoring breakdown; `HintResult` carries the platform-reported per-hint
+cost.
 
 Every failure is raised as a single typed `HalServiceError` carrying
 `provider`, `status_code`, `retryable`, and `message`. Retries apply only to

@@ -67,7 +67,11 @@ investigate loop), and wire `Supervisor.run()` to drive it.
     challenge) and one Objective ("obtain and submit the flag",
     expressed as an Objective, NOT a kernel phase). Scoreboard, hints,
     submissions, and smoke flags are deliberately NOT ported — the full
-    HalCTF adapter is milestone 9.
+    HalCTF adapter is milestone 9 (docs/adr/0011 completes it: HAL_*
+    discovery, the official tool set, smoke flag, scoring, hint costs,
+    graceful completion, and the hint/submission/flag/scoreboard
+    services moved out of the generic kernel into
+    `ozzgraph.environments.halctf`).
 
 - **Phase set change**: `Phase.FLAG_HUNT` and `Phase.VERIFY_AND_SUBMIT`
   are removed from the generic kernel (phases, router transitions,

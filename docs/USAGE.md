@@ -65,14 +65,23 @@ constructor-injected with environment fallback in `ozzgraph.model_client` and
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `OZZGRAPH_CHALLENGE_ID` | — | Challenge id for `halctl` and bootstrap (status, free hint). |
+| `HAL_CTF_ID` / `HAL_CHALLENGE_ID` / `OZZGRAPH_CHALLENGE_ID` | — | Challenge id for the HalCTF runtime (first non-blank wins; V09 discovery, docs/adr/0011). Used by `halctl`, bootstrap (status, free hint), and the environment. |
 | `OZZGRAPH_TARGET` | — | Single target for bootstrap reconnaissance. |
 | `OZZGRAPH_TARGET_<NS>` | — | Namespaced targets, e.g. `OZZGRAPH_TARGET_HTTP`, `OZZGRAPH_TARGET_DNS` (namespaces `HTTP`/`HTTPS`/`DNS` select the probe category). |
-| `OZZGRAPH_SMOKE_FLAG` | — | When set, submitted once at startup through the privileged client as a pipeline smoke test (requires `OZZGRAPH_CHALLENGE_ID`). |
-| `OZZGRAPH_MCP_BASE_URL` | `http://127.0.0.1:9000/mcp` | JSON-RPC 2.0 MCP endpoint (base URL including the path). |
+| `OZZGRAPH_SMOKE_FLAG` | — | When set, submitted once at startup through the privileged client as a pipeline smoke test (requires a challenge id). |
+| `OZZGRAPH_MCP_BASE_URL` | `http://127.0.0.1:9000/mcp` | JSON-RPC 2.0 MCP endpoint (base URL including the path) — the FIRST of the deterministic discovery candidates. |
+| `HAL_MCP_ENDPOINT` / `HAL_ENDPOINT` / `MCP_ENDPOINT` / `OPENAI_BASE_URL` | — | Additional endpoint candidates, consulted in that order after `OZZGRAPH_MCP_BASE_URL` (first non-blank wins). `OPENAI_BASE_URL` can carry the endpoint once HalCTF mode is selected but never selects the mode itself. |
 | `OZZGRAPH_MCP_TIMEOUT_S` | `60` | Per-request timeout. |
 | `OZZGRAPH_MCP_MAX_RETRIES` | `3` | Bounded retries on transient failures (429/5xx/transport; max 10). |
 | `OZZGRAPH_HAL_PRIVILEGED` | — | When set, `halctl` privileged operations (submit, paid hints, exit) are allowed. Only the supervisor sets this. |
+
+HalCTF mode is selected when ANY HalCTF runtime variable is set
+(`HAL_CTF_ID`, `HAL_CHALLENGE_ID`, `HAL_ENDPOINT`, `HAL_MCP_ENDPOINT`,
+`MCP_ENDPOINT`, or `OZZGRAPH_CHALLENGE_ID`). With none of them set the
+run is a **local assessment** (V08 `OZZGRAPH_TARGET` classification).
+`HAL_USER_ID` is identity and never selects HalCTF mode. **HalCTF mode
+without a discoverable endpoint fails loudly** (`ConfigError` at
+startup): set one of the endpoint candidates above.
 
 ### 2.3 Model endpoint (OpenAI-compatible)
 
@@ -142,8 +151,10 @@ stdout (deterministic key order) and exits non-zero on failure.
 
 | Subcommand | Privileged? | Notes |
 |---|---|---|
+| `ctfs` | no | List the available competitions (V09). |
+| `challenges [--ctf-id <id>]` | no | List challenges, optionally narrowed to one competition (V09). |
 | `challenge show --challenge-id <id>` | no | Normalized challenge details. |
-| `status --challenge-id <id>` | no | Challenge status (solved, attempts, hints used, points). |
+| `status --challenge-id <id>` | no | Challenge status (solved, attempts, hints used, points, smoke flag, scoring). |
 | `submit --flag <flag> --challenge-id <id>` | **yes** | Submit a flag. |
 | `hint --index <n> --challenge-id <id>` | **yes if n > 0** | Hint zero is free; paid hints are supervisor-only. |
 | `scoreboard` | no | Competition scoreboard. |
@@ -167,9 +178,9 @@ failure (`HalServiceError`, `HalPrivilegeError`, config `ValueError`), `2`
 usage failure.
 
 The underlying wire protocol is JSON-RPC 2.0
-(`challenge.get`, `challenge.status`, `flag.submit`, `hint.request`,
-`scoreboard.get`, `exit`) with bounded retries and a normalized,
-contract-versioned internal schema — see
+(`ctf.list`, `challenge.list`, `challenge.get`, `challenge.status`,
+`flag.submit`, `hint.request`, `scoreboard.get`, `exit`) with bounded
+retries and a normalized, contract-versioned internal schema — see
 [API_AND_INTEGRATIONS.md](API_AND_INTEGRATIONS.md) § HalCTF Integration.
 
 ## 5. Artifact store, event log, and replay
