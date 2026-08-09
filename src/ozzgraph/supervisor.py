@@ -20,6 +20,14 @@ supervisor-only paid-hint surface that drives
 privileged client (V09: both coordinators moved out of the generic
 kernel into ``ozzgraph.environments.halctf``, docs/adr/0011).
 
+HAL-005 wires the "last two arrows" into the active loop: the runner
+invokes the supervisor-owned :meth:`Supervisor._submit_flag_candidates`
+hook after every executed turn's persistence, so a newly observed flag
+is extracted (``FlagCandidateExtractor.extract``) and submitted through
+the privileged sidecar transport with ZERO LLM calls between seeing it
+and submitting it, and a COMPLETED run fires the best-effort sidecar
+``/done`` (:meth:`Supervisor._notify_platform_done`).
+
 V01 (docs/adr/0008): :meth:`Supervisor.run` drives the v2 "most important
 fix" (docs/CHANGES_v2.md) — instead of the idle
 ``while ...: await asyncio.sleep(0.25)`` poll, the supervisor builds the
@@ -60,17 +68,23 @@ from ozzgraph.environments import (
     LocalEnvironment,
 )
 from ozzgraph.environments.halctf import (
+    FlagsError,
     HintClient,
     HintCoordinator,
     SubmissionClient,
     SubmissionCoordinator,
+    SubmissionLimitError,
+    SubmissionPrivilegeError,
+    SubmissionRejectedError,
+    SubmissionStateError,
 )
 from ozzgraph.evaluator import Evaluator
 from ozzgraph.events import BOOTSTRAP, TERMINATION, Event, EventLog
-from ozzgraph.hal_client import HalClient, HintResult, SubmissionResult
+from ozzgraph.hal_client import HalClient, HalServiceError, HintResult, SubmissionResult
 from ozzgraph.heartbeat import Heartbeat
 from ozzgraph.model_client import ModelService
 from ozzgraph.policy import ScopePolicy
+from ozzgraph.router import MissingRequiredStateError
 from ozzgraph.runner import AutonomousRunner, RunnerStatus
 from ozzgraph.state_graph import StateGraph
 
@@ -82,6 +96,21 @@ class TerminationReason(str, Enum):
     INTERRUPTED = "interrupted"
     FAILED = "failed"
     BUDGET_EXHAUSTED = "budget_exhausted"
+
+
+#: Producer name on every supervisor event.
+SUPERVISOR_PRODUCER = "supervisor"
+
+#: Run-log event emitted when the HAL-005 flag loop hook hits a typed
+#: refusal the coordinator does not already record (submission limit /
+#: privilege / corrupt state, missing challenge id, platform service
+#: failure, corrupt flag-candidate state) — loud, never fatal.
+SUPERVISOR_FLAG_SUBMISSION_FAILED = "supervisor.flag_submission_failed"
+
+#: Run-log event emitted when the best-effort sidecar ``/done`` client
+#: could not even be constructed (invalid env URL) — the wire-failure
+#: case is recorded as ``sidecar.done_failed`` by the client itself.
+SUPERVISOR_DONE_FAILED = "supervisor.done_failed"
 
 
 class Supervisor:
@@ -281,11 +310,23 @@ class Supervisor:
                         model_service=model_service,
                         policy=policy,
                         evaluator=evaluator,
+                        # HAL-005: the runner invokes this supervisor-owned
+                        # hook after every executed turn's persistence, so a
+                        # newly observed flag is extracted and submitted with
+                        # ZERO LLM calls between seeing it and submitting it
+                        # (the privileged client never leaves the supervisor,
+                        # AGENTS.md invariant 5).
+                        flag_submitter=self._submit_flag_candidates,
                     )
                     try:
                         status = await runner.run()
                     finally:
                         await runner.aclose()
+                # HAL-005: an accepted submission completed the run
+                # (accepted -> objective completed -> COMPLETED) — fire
+                # the best-effort sidecar /done once (never fatal).
+                if status is RunnerStatus.COMPLETED:
+                    await self._notify_platform_done()
                 return self.stop(reason=self._map_status(status))
             finally:
                 if model_service is not None:
@@ -509,6 +550,154 @@ class Supervisor:
         finally:
             if owned:
                 await resolved_client.aclose()
+
+    async def _submit_flag_candidates(self, graph: StateGraph) -> None:
+        """Extract new flag candidates and submit them (supervisor-owned, HAL-005).
+
+        The "last two arrows" of the HalCTF active loop: after every
+        runner turn persists its observation/evidence, THIS hook runs
+        :meth:`FlagCandidateExtractor.extract` — deterministic,
+        provenance-gated, idempotent (a candidate that already exists,
+        was rejected, or is at its attempt budget is never re-created) —
+        and drives the supervisor-only submission surface
+        (:meth:`submit_verified_candidate`) with a supervisor-owned
+        privileged sidecar client (AGENTS.md invariant 5: no worker or
+        model ever holds it). One submission attempt per turn keeps flag
+        submission serialized (AGENTS.md rule #7); an accepted
+        submission routes the graph DONE on the next loop iteration, the
+        objective completes, and the run terminates COMPLETED.
+
+        Error contract — all non-fatal, fail loudly:
+
+        - No new candidates -> no attempt (silent no-op).
+        - :class:`~ozzgraph.router.MissingRequiredStateError` (no
+          verified candidate) -> silent no-op, never fatal.
+        - :class:`~ozzgraph.environments.halctf.submissions.SubmissionRejectedError`
+          -> the coordinator ALREADY marked the candidate ``rejected:
+          true`` (mirrored as a ``graph.entity_updated`` event plus a
+          ``submission.rejected`` run event), so the flag is never
+          re-submitted; investigation continues.
+        - Submission limit / privilege / corrupt-state refusals,
+          a missing challenge id, and platform service failures are
+          recorded loudly as ``supervisor.flag_submission_failed``
+          events; a transient platform failure leaves the candidate
+          verified, so the next turn's hook retries it (bounded by the
+          submission budget and the loop budgets).
+
+        Args:
+            graph: The authoritative state graph holding the new
+                observation/evidence entities.
+        """
+        environment = self._environment
+        if not isinstance(environment, HalCTFEnvironment):
+            return  # local mode: no flag submission surface
+        assert self._event_log is not None  # start() sets it before _started
+        assert self._artifact_store is not None  # start() sets it before _started
+        extractor = environment.flag_extractor(
+            run_id=self._run_id,
+            event_log=self._event_log,
+            artifact_store=self._artifact_store,
+        )
+        try:
+            await extractor.extract(graph)
+        except FlagsError as exc:
+            self._append_supervisor_event(
+                SUPERVISOR_FLAG_SUBMISSION_FAILED,
+                {"error_type": type(exc).__name__, "message": str(exc)},
+            )
+            return
+        challenge_id = environment.challenge_id
+        if challenge_id == "":
+            self._append_supervisor_event(
+                SUPERVISOR_FLAG_SUBMISSION_FAILED,
+                {
+                    "error_type": "ConfigError",
+                    "message": (
+                        "missing challenge id for submission: set HAL_CTF_ID, "
+                        "HAL_CHALLENGE_ID, or OZZGRAPH_CHALLENGE_ID"
+                    ),
+                },
+            )
+            return
+        # The supervisor owns the privileged sidecar transport (the real
+        # platform surface, HAL-004); the coordinator checks the
+        # privilege boundary again before any wire call.
+        client = environment.sidecar_submission_client(
+            run_id=self._run_id,
+            event_log=self._event_log,
+            privileged=True,
+        )
+        try:
+            await self.submit_verified_candidate(graph, challenge_id=challenge_id, client=client)
+        except MissingRequiredStateError:
+            return  # no verified candidate — a no-op, never fatal
+        except SubmissionRejectedError:
+            return  # coordinator marked the candidate rejected; keep investigating
+        except (SubmissionLimitError, SubmissionPrivilegeError, SubmissionStateError) as exc:
+            self._append_supervisor_event(
+                SUPERVISOR_FLAG_SUBMISSION_FAILED,
+                {"error_type": type(exc).__name__, "message": str(exc)},
+            )
+        except (ConfigError, HalServiceError) as exc:
+            self._append_supervisor_event(
+                SUPERVISOR_FLAG_SUBMISSION_FAILED,
+                {"error_type": type(exc).__name__, "message": str(exc)},
+            )
+        finally:
+            await client.aclose()
+
+    async def _notify_platform_done(self, reason: str = "completed") -> None:
+        """Fire the best-effort sidecar ``/done`` after a COMPLETED run (HAL-005).
+
+        The final arrow of the accepted-submission path: accepted
+        submission -> objective completed -> runner COMPLETED ->
+        ``/done`` fires once, through the environment's supervisor-owned
+        privileged sidecar client. Never raises (HAL-004): wire failures
+        are recorded as ``sidecar.done_failed`` events by the client and
+        swallowed, and a client construction failure (invalid env URL) is
+        recorded as a ``supervisor.done_failed`` event — a run must not
+        fail because the sidecar was unreachable at teardown.
+
+        Args:
+            reason: The structured termination reason carried on the
+                ``/done`` payload.
+        """
+        environment = self._environment
+        if not isinstance(environment, HalCTFEnvironment):
+            return
+        assert self._event_log is not None  # start() sets it before _started
+        try:
+            client = environment.sidecar_submission_client(
+                run_id=self._run_id,
+                event_log=self._event_log,
+                privileged=True,
+            )
+        except Exception as exc:  # noqa: BLE001 - best-effort, never fatal
+            self._append_supervisor_event(
+                SUPERVISOR_DONE_FAILED,
+                {
+                    "error_type": type(exc).__name__,
+                    "message": f"/done client construction failed: {exc}",
+                },
+            )
+            return
+        try:
+            await client.done(run_id=self._run_id, reason=reason)
+        finally:
+            await client.aclose()
+
+    def _append_supervisor_event(self, event_type: str, payload: dict[str, object]) -> None:
+        """Append one supervisor run event (producer ``supervisor``)."""
+        assert self._event_log is not None  # start() sets it before _started
+        self._event_log.append(
+            Event(
+                run_id=self._run_id,
+                timestamp=datetime.now(UTC),
+                event_type=event_type,
+                producer=SUPERVISOR_PRODUCER,
+                payload=payload,
+            )
+        )
 
     async def request_paid_hint(
         self,

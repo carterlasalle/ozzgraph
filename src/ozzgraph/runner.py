@@ -88,7 +88,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from enum import Enum
 
@@ -193,6 +193,10 @@ RUNNER_FINDING_CREATED = "runner.finding_created"
 #: Run-log event emitted when a V07 specialist batch is dispatched and
 #: when it completes (the verdict counts).
 RUNNER_SPECIALIST_BATCH = "runner.specialist_batch"
+#: Run-log event emitted when the supervisor-owned flag extraction +
+#: submission hook failed loudly (HAL-005: the failure is recorded and
+#: the loop continues under the budgets — never fatal).
+RUNNER_FLAG_PROCESSING_FAILED = "runner.flag_processing_failed"
 #: Run-log event emitted when the V08 report bundle render fails loudly
 #: (the terminal status is still returned; the failure is recorded).
 RUNNER_REPORT_FAILED = "runner.report_failed"
@@ -378,6 +382,15 @@ class AutonomousRunner:
             dispatches a bounded parallel specialist batch (micro-agent
             loop -> scheduler -> reducer -> facts) instead of calling
             the model. ``None`` keeps the V06 strategic path unchanged.
+        flag_submitter: The supervisor-owned flag extraction + submission
+            hook (HAL-005); when set, the runner invokes it after every
+            executed turn's persistence so a newly observed flag enters
+            the privileged submission path with ZERO LLM calls between
+            seeing it and submitting it. The supervisor wires its own
+            hook here (``FlagCandidateExtractor.extract`` ->
+            ``submit_verified_candidate``); the runner never touches a
+            privileged client itself (AGENTS.md invariant 5). ``None``
+            keeps the loop byte-for-byte unchanged (local mode).
     """
 
     def __init__(
@@ -403,6 +416,7 @@ class AutonomousRunner:
         shell: ShellRunner | None = None,
         inventory: ToolInventory | None = None,
         specialists: SpecialistFleet | None = None,
+        flag_submitter: Callable[[StateGraph], Awaitable[None]] | None = None,
     ) -> None:
         self._config = config
         self._graph = graph
@@ -473,6 +487,10 @@ class AutonomousRunner:
         # LLM call. Default None keeps the V06 behavior byte-for-byte —
         # the E2E happy path never changes shape.
         self._specialists = specialists
+        # HAL-005: the supervisor-owned flag extraction + submission
+        # hook, invoked after every executed turn's persistence. None
+        # (local mode / uninjected) keeps the loop unchanged.
+        self._flag_submitter = flag_submitter
 
     # ------------------------------------------------------------------
     # public surface
@@ -620,6 +638,11 @@ class AutonomousRunner:
         if isinstance(executed, RunnerStatus):
             return executed
         await self._persist_execution(turn, executed)
+        # HAL-005: a newly observed flag must enter the supervisor-owned
+        # submission path with ZERO LLM turns between seeing it and
+        # submitting it — the deterministic hook runs right here, after
+        # the observation/evidence are durable in the graph.
+        await self._process_flag_candidates()
         self._append(
             BRAIN_DETERMINISTIC_ACTION,
             {
@@ -727,6 +750,7 @@ class AutonomousRunner:
         if isinstance(executed, RunnerStatus):
             return executed
         await self._persist_execution(turn, executed)
+        await self._process_flag_candidates()
         await self._evaluate(route, plan_id)
         return None
 
@@ -877,8 +901,40 @@ class AutonomousRunner:
         if isinstance(executed, RunnerStatus):
             return executed
         await self._persist_execution(turn, executed)
+        await self._process_flag_candidates()
         await self._evaluate(route, plan_id)
         return None
+
+    async def _process_flag_candidates(self) -> None:
+        """Invoke the supervisor-owned flag extraction + submission hook.
+
+        HAL-005: called after every executed turn persists its
+        observation/evidence (the deterministic, strategic, and
+        fallback turn paths — the only paths that persist observations
+        with ``EVIDENCE EXTRACTED_FROM OBSERVATION`` edges, which is the
+        extractor's provenance gate). The supervisor's hook runs
+        ``FlagCandidateExtractor.extract`` then drives the
+        supervisor-only submission surface — deterministic, ZERO LLM
+        calls between seeing a flag and submitting it, and no worker or
+        model ever holds a privileged client (AGENTS.md invariant 5).
+
+        A hook failure is recorded loudly as a
+        ``runner.flag_processing_failed`` event and the loop continues
+        under the budgets; the hook itself treats no-candidate and
+        platform-rejected outcomes as non-fatal no-ops.
+        """
+        if self._flag_submitter is None:
+            return
+        try:
+            await self._flag_submitter(self._graph)
+        except Exception as exc:  # noqa: BLE001 - recorded, never silent
+            self._append(
+                RUNNER_FLAG_PROCESSING_FAILED,
+                {
+                    "error_type": type(exc).__name__,
+                    "message": str(exc),
+                },
+            )
 
     async def _evaluate_progress(self) -> ProgressEvaluation:
         """The V06 progress decision for this loop iteration.

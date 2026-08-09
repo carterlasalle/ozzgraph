@@ -225,7 +225,27 @@ independently implemented components.
    > recorded as `sidecar.failure` events; `/done` is BEST-EFFORT
    > (`sidecar.done` / `sidecar.done_failed` events, never raises — a run
    > must not fail because the sidecar was unreachable at teardown).
-10. `v2/full-regression` — real benchmark suite across the model matrix.
+   > HAL-005 (2026-08-09): the "last two arrows" are wired into the
+   > ACTIVE loop — after every executed runner turn persists its
+   > observation/evidence, the supervisor-owned hook
+   > (`Supervisor._submit_flag_candidates`, injected into the runner as
+   > `flag_submitter`) runs `FlagCandidateExtractor.extract` and drives
+   > the supervisor-only `submit_verified_candidate` through the
+   > privileged sidecar transport: a newly observed flag is submitted
+   > with ZERO LLM calls between seeing it and submitting it, one
+   > submission attempt per turn (serialized, AGENTS.md rule 7), and an
+   > accepted submission routes the graph DONE on the next iteration —
+   > the objective completes and a COMPLETED run fires the best-effort
+   > sidecar `/done` (`Supervisor._notify_platform_done`). No-candidate
+   > (`MissingRequiredStateError`) is a silent no-op, a platform
+   > rejection (`SubmissionRejectedError`) is never re-submitted (the
+   > coordinator already marked the candidate rejected), and limit /
+   > privilege / config / transient platform failures are recorded as
+   > `supervisor.flag_submission_failed` events — a transient failure
+   > leaves the candidate verified so the next turn's hook retries it.
+   > The runner stays kernel-clean (the hook is injected, never
+   > imported) and local mode is byte-for-byte unchanged.
+   10. `v2/full-regression` — real benchmark suite across the model matrix.
     > V10 (2026-08-08): implemented — `src/ozzgraph/benchmarks/` +
     > `ozzgraph benchmark` CLI + docs/BENCHMARKS.md. The full-regression
     > suite runs EVERY lab target (the 9 suite categories plus the new
