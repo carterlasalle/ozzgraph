@@ -5,7 +5,7 @@ Defines the :class:`EnvironmentAdapter` contract — the v2 pivot
 talk to a runtime environment ONLY through this protocol. A CTF
 challenge (HalCTF), a local web app, a Docker Compose stack, a Git
 repository, and a vulnerable VM are all just different adapters behind
-the same five methods.
+the same six methods.
 
 Design rules:
 
@@ -15,6 +15,11 @@ Design rules:
 - Discovery is deterministic per environment: the same configuration
   yields the same scope/targets/objectives/capabilities, so routing,
   planning, and the DONE predicate are reproducible.
+- ``verdict_satisfies_objectives`` is the environment's objective-
+  completion predicate (HAL-006): the runner consults it before
+  completing objectives on an evaluator COMPLETE verdict, so completion
+  semantics stay environment-specific (local assessment accepts the
+  verdict; HalCTF requires an accepted submission in the graph).
 - ``discover_capabilities`` is the conservative capability vocabulary
   the harness advertises to the model (``http.request``,
   ``network.probe``, ``filesystem.read``, ...). V03 (tool-runtime)
@@ -34,6 +39,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from ozzgraph.environments.models import Objective, Scope, Target
+from ozzgraph.state_graph import StateGraph
 
 
 class EnvironmentAdapter(Protocol):
@@ -52,6 +58,10 @@ class EnvironmentAdapter(Protocol):
         discover_capabilities: The capability vocabulary the
             environment supports (conservative; V03 makes it
             inventory-backed).
+        verdict_satisfies_objectives: Whether an evaluator COMPLETE
+            verdict (on the given graph state) satisfies the run's
+            objectives — the environment-specific completion predicate
+            (HAL-006).
         aclose: Release owned resources; never raises.
     """
 
@@ -62,5 +72,7 @@ class EnvironmentAdapter(Protocol):
     async def discover_objectives(self) -> list[Objective]: ...
 
     async def discover_capabilities(self) -> set[str]: ...
+
+    async def verdict_satisfies_objectives(self, graph: StateGraph) -> bool: ...
 
     async def aclose(self) -> None: ...

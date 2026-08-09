@@ -87,8 +87,11 @@ investigate loop), and wire `Supervisor.run()` to drive it.
   graph entity is `completed: true`. Objectives are seeded into the
   authoritative SQLite graph from the environment adapter and flipped
   to completed ONLY through deterministic paths (an accepted submission
-  routed DONE, or an evaluator COMPLETE verdict) — never because a
-  model claimed completion.
+  routed DONE, or an evaluator COMPLETE verdict the environment accepts
+  as satisfying its objectives — HAL-006 adds the environment-specific
+  `verdict_satisfies_objectives` predicate, so a validated hypothesis
+  alone never completes a HalCTF objective) — never because a model
+  claimed completion.
 
 - **AutonomousRunner** (`ozzgraph.runner`): the real investigate loop.
   Constructor takes config, the state graph, the event log, the
@@ -142,9 +145,11 @@ Easier:
 Harder:
 
 - The loop's completion paths are still narrow in V01: objectives
-  complete only via the accepted-submission DONE route or an evaluator
-  COMPLETE verdict, and the evaluator needs a persisted plan (branching
-  graph), so a default single-target run ends on budget exhaustion
+  complete via the accepted-submission DONE route or an evaluator
+  COMPLETE verdict the environment accepts (HAL-006: local always
+  accepts it, HalCTF only with an accepted submission), and the
+  evaluator needs a persisted plan (branching graph), so a default
+  single-target run ends on budget exhaustion
   until V02 adds the true process-level slice and V09 completes the
   HalCTF adapter.
 - Flag-hunt skills are gone from the kernel; challenge-specific skill

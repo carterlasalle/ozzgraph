@@ -78,6 +78,11 @@ class FakeEnvironment:
     async def discover_capabilities(self) -> set[str]:
         return {"http.request"}
 
+    async def verdict_satisfies_objectives(self, graph: StateGraph) -> bool:
+        # Local semantics: the evaluator COMPLETE verdict satisfies the
+        # objective unconditionally (HAL-006 keeps this behavior).
+        return True
+
     async def aclose(self) -> None:
         pass
 

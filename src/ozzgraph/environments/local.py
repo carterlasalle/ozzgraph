@@ -60,6 +60,7 @@ from pathlib import Path
 from ozzgraph.bootstrap import load_targets
 from ozzgraph.config import ConfigError, OzzGraphConfig
 from ozzgraph.environments.models import Objective, Scope, Target, TargetType
+from ozzgraph.state_graph import StateGraph
 
 #: Conservative generic capability vocabulary (docs/CHANGES_v2.md,
 #: "Key technical changes"): what the local environment can do until
@@ -291,6 +292,19 @@ class LocalEnvironment:
     async def discover_capabilities(self) -> set[str]:
         """The conservative generic capability set until V03."""
         return set(DEFAULT_LOCAL_CAPABILITIES)
+
+    async def verdict_satisfies_objectives(self, graph: StateGraph) -> bool:
+        """An evaluator COMPLETE verdict always satisfies the local objective.
+
+        Local assessment's completion contract has no terminal artifact
+        beyond the validated, evidence-backed finding: the deterministic
+        evaluator COMPLETE verdict IS the completion signal, so it
+        satisfies the objective unconditionally (the pre-HAL-006
+        behavior, byte-for-byte unchanged). ``graph`` is part of the
+        protocol contract (an environment may judge satisfaction from
+        the graph state); local mode never needs to.
+        """
+        return True
 
     async def aclose(self) -> None:
         """No owned resources; idempotent no-op."""

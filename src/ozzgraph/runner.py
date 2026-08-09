@@ -1154,9 +1154,15 @@ class AutonomousRunner:
         """Consult the evaluator when a plan exists (PR21).
 
         The evaluator's deterministic verdicts drive objective
-        completion: a COMPLETE verdict marks every objective completed
-        (the generic DONE path). No plan -> nothing to evaluate;
-        evaluator failures are recorded and the loop continues.
+        completion: a COMPLETE verdict completes objectives ONLY when
+        the environment accepts the verdict as satisfying them (HAL-006
+        — the environment's completion predicate; local assessment
+        accepts it, HalCTF requires an accepted submission in the
+        graph). The COMPLETE verdict itself still produces a Finding
+        unconditionally (a validated hypothesis is a finding, but on its
+        own never a completed objective). No plan -> nothing to
+        evaluate; evaluator failures are recorded and the loop
+        continues.
 
         V06: the hypothesis manager owns the lifecycle — a REFUTED
         hypothesis is abandoned (never re-opportunized), a CONFIRMED
@@ -1201,7 +1207,15 @@ class AutonomousRunner:
                     at=at,
                 )
         if evaluation.verdict is PlanVerdict.COMPLETE:
-            await self._complete_objectives()
+            # HAL-006: objective completion is environment-specific —
+            # the environment accepts the COMPLETE verdict (on this
+            # graph state) as satisfying its objectives only when its
+            # predicate says so (local: always; HalCTF: only with an
+            # accepted submission). The Finding still renders
+            # unconditionally: the verdict remains a validated-
+            # hypothesis signal even when it is not a completion signal.
+            if await self._environment.verdict_satisfies_objectives(self._graph):
+                await self._complete_objectives()
             # V02: a COMPLETE verdict means a ranked hypothesis was
             # validated — produce the evidence-backed Finding.
             await self._produce_findings(evaluation)
@@ -1669,7 +1683,8 @@ class AutonomousRunner:
         """Mark every objective completed (deterministic DONE path).
 
         Called only on a deterministic terminal signal (accepted
-        submission routed DONE, or an evaluator COMPLETE verdict) —
+        submission routed DONE, or an evaluator COMPLETE verdict the
+        environment accepts as satisfying its objectives — HAL-006) —
         never because a model claimed completion.
         """
         at = datetime.now(UTC)

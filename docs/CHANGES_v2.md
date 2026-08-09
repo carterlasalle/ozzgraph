@@ -245,7 +245,19 @@ independently implemented components.
    > leaves the candidate verified so the next turn's hook retries it.
    > The runner stays kernel-clean (the hook is injected, never
    > imported) and local mode is byte-for-byte unchanged.
-   10. `v2/full-regression` — real benchmark suite across the model matrix.
+   > HAL-006 (2026-08-09): objective completion is acceptance-gated per
+   > environment — the `EnvironmentAdapter` protocol gains
+   > `verdict_satisfies_objectives(graph)`, and the runner consults it
+   > before completing objectives on an evaluator COMPLETE verdict
+   > (`LocalEnvironment` always accepts the verdict, keeping local mode
+   > byte-for-byte unchanged; `HalCTFEnvironment` accepts it ONLY when
+   > the graph holds an accepted submission entity — the router's
+   > terminal signal). A validated hypothesis (COMPLETE verdict) still
+   > produces its evidence-backed Finding, but on its own never
+   > completes `objective-halctf-flag`: a HalCTF run can no longer
+   > terminate COMPLETED unscored. The accepted-submission DONE path is
+   > unchanged.
+10. `v2/full-regression` — real benchmark suite across the model matrix.
     > V10 (2026-08-08): implemented — `src/ozzgraph/benchmarks/` +
     > `ozzgraph benchmark` CLI + docs/BENCHMARKS.md. The full-regression
     > suite runs EVERY lab target (the 9 suite categories plus the new

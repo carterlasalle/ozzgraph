@@ -91,6 +91,12 @@ from ozzgraph.environments.halctf.submissions import SubmissionClient, Submissio
 from ozzgraph.environments.models import Objective, Scope, Target
 from ozzgraph.events import EventLog
 from ozzgraph.halctl import CHALLENGE_ID_ENV
+from ozzgraph.router import (
+    ENTITY_SUBMISSION,
+    FIELD_ACCEPTED,
+    InvalidGraphStateError,
+)
+from ozzgraph.state_graph import EntityRecord, StateGraph
 
 #: Conservative capability vocabulary for a HalCTF challenge;
 #: the tool-runtime milestone replaces these static sets with a real
@@ -108,6 +114,24 @@ HALCTF_OBJECTIVE_DESCRIPTION = (
     "Obtain the challenge's flag and submit it through the privileged "
     "supervisor-only submission surface."
 )
+
+
+def _payload_bool(record: EntityRecord, key: str) -> bool:
+    """Read a strict-boolean payload field, defaulting to False.
+
+    Mirrors :func:`ozzgraph.router._payload_bool`: a present non-bool
+    value is invalid graph state and fails loudly (AGENTS.md rule #9).
+    """
+    value = record.data.get(key)
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise InvalidGraphStateError(
+            f"entity {record.id!r} payload field {key!r} must be a bool, "
+            f"got {type(value).__name__} ({value!r})"
+        )
+    return value
+
 
 #: The objective's deterministic success signal (docs/adr/0011): the
 #: generic runner completes the objective only through deterministic
@@ -439,6 +463,28 @@ class HalCTFEnvironment:
     async def discover_capabilities(self) -> set[str]:
         """The conservative capability set until the tool-runtime milestone."""
         return set(DEFAULT_HALCTF_CAPABILITIES)
+
+    async def verdict_satisfies_objectives(self, graph: StateGraph) -> bool:
+        """Only an accepted submission satisfies the flag objective (HAL-006).
+
+        The objective's completion contract (docs/adr/0011): the flag is
+        obtained only when a submission was accepted through the
+        privileged supervisor-only surface — a validated hypothesis on
+        its own never completes ``objective-halctf-flag``. So an
+        evaluator COMPLETE verdict completes the objective ONLY when the
+        graph already holds an accepted submission entity (the router's
+        terminal signal); the runner consults this predicate before
+        marking objectives completed on a COMPLETE verdict.
+
+        Raises:
+            InvalidGraphStateError: If a ``submission`` payload
+                ``accepted`` field is present but not a bool (the same
+                strict-boolean contract as the router).
+        """
+        for record in await graph.list_entities(ENTITY_SUBMISSION):
+            if _payload_bool(record, FIELD_ACCEPTED):
+                return True
+        return False
 
     async def aclose(self) -> None:
         """No owned resources; idempotent no-op."""
