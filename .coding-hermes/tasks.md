@@ -32,6 +32,24 @@ non-same-name test files; docs complete). Board idle → cooldown 43200s.**
 
 ## Active
 
+> **Tick 2026-08-09: HAL-003 closed (judge PASS 469be7f1, commit e9c421e — verified**
+> this tick). Model routing in HalCTF mode: `Supervisor._model_routing()` resolves
+> the platform-injected `HAL_AGENT_MODEL` → model id and `OPENAI_BASE_URL` →
+> model client base URL via the HAL-001 snapshot (`build_halctf_runtime_snapshot`);
+> `_run` constructs a supervisor-owned `ModelService` in HalCTF mode and passes
+> `model_id=` + `model_service=` into `AutonomousRunner` (closed in the same
+> finally as `environment.aclose()`); absent platform vars degrade gracefully
+> (`model_id=None` → `OZZGRAPH_MODEL_ID`/`"default"`, `base_url=None` →
+> `OZZGRAPH_MODEL_BASE_URL`/default — HAL-002 env-first philosophy); local mode
+> passes nothing extra (runner defaults byte-for-byte unchanged). `runner.started`
+> event now logs the ACTUAL resolved base URL via new read-only
+> `ModelService.base_url` property (getattr keeps protocol doubles like
+> ScriptedModelService on the default). docs/USAGE.md HalCTF model-routing note
+> added. Gate: ruff/format/mypy strict clean, 1201 tests pass (220s, +6 new).
+> Judge PASS 469be7f1 (4/4 criteria, tier1 lint/tests/secrets PASS). gitreins
+> task deleted, tasks.yaml clean. HAL-004..HAL-011 pending → cooldown stays 900s.
+> Next: HAL-004 (sidecar transport adapter).
+
 > **Tick 2026-08-09: HAL-002 closed (judge PASS d0e00cb, commit cbbffe5 — verified**
 > this tick). MCP optional/fallback for HalCTF startup: `OPENAI_BASE_URL` removed
 > from `HALCTF_ENDPOINT_CANDIDATES` (it is the model service `/llm`, never the MCP
@@ -187,7 +205,6 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 | HAL-006 | Objective completion acceptance-gated — only an accepted /submit completes objective-halctf-flag; PlanVerdict.COMPLETE may create a finding but not complete it | Critical | 4±1 | HAL-005 | +++evaluator, ++objective | DS-V4-Flash | High | DS-V4-Pro |
 | HAL-005 | Wire flag extraction directly after _persist_execution → new verified candidate immediately enters supervisor submission (no LLM) | Critical | 5±1 | HAL-004 | +++submission, ++graph | DS-V4-Flash | High | DS-V4-Pro |
 | HAL-004 | Sidecar transport adapter — /submit + /done, normalize observed {status,points_awarded} → SubmissionResult | High | 4±1 | V09 | ++http, ++halctf | DS-V4-Flash | Medium | Kimi-K3 |
-| HAL-003 | Model routing in HalCTF mode — map OPENAI_BASE_URL → model service, HAL_AGENT_MODEL → model id | High | 3±1 | HAL-001 | ++model, ++env | DS-V4-Flash | Medium | Kimi-K3 |
 
 ## [x] HAL-001 — HalCTFRuntimeSnapshot: env → graph targets + scope allowlist (real HalCTF runtime)
 
@@ -224,7 +241,20 @@ lint/tests/secrets PASS). gitreins task deleted, tasks.yaml clean.
 3. Remove `OPENAI_BASE_URL` from `HALCTF_ENDPOINT_CANDIDATES` (it is the model service, `/llm`, not the MCP server `/mcp/`).
 4. Tests: HalCTF env constructs with zero endpoint vars; fail-loud only preserved for truly unrecoverable config.
 
-## [ ] HAL-003 — Model routing in HalCTF mode
+## [x] HAL-003 — Model routing in HalCTF mode
+
+**Tick 2026-08-09: HAL-003 closed (judge PASS 469be7f1, commit e9c421e).**
+Model routing wired: `Supervisor._model_routing()` resolves `HAL_AGENT_MODEL` →
+model id + `OPENAI_BASE_URL` → client base URL via the HAL-001 snapshot; `_run`
+constructs a supervisor-owned `ModelService` in HalCTF mode and passes
+`model_id=`/`model_service=` into `AutonomousRunner` (closed in the same finally
+as the environment); absent platform vars degrade gracefully to
+`OZZGRAPH_MODEL_ID` / `OZZGRAPH_MODEL_BASE_URL` / defaults; local mode untouched.
+`runner.started` now logs the actual resolved base URL via new
+`ModelService.base_url` property (getattr-protected for protocol doubles).
+docs/USAGE.md note added. Gate: ruff/format/mypy strict clean, 1201 tests pass
+(220s, +6 new). Judge PASS 469be7f1 (4/4 criteria, tier1 lint/tests/secrets
+PASS). gitreins task deleted, tasks.yaml clean.
 
 **Source:** Verified — `model_client.py` defaults `DEFAULT_MODEL_BASE_URL=http://127.0.0.1:8000/v1`; `runner.py` reads `OZZGRAPH_MODEL_ID` (default `"default"`). Neither `OPENAI_BASE_URL` nor `HAL_AGENT_MODEL` is used. The real platform provides `OPENAI_BASE_URL=http://127.0.0.1:9000/llm` and `HAL_AGENT_MODEL=google/gemma-4-26b-a4b-it-maas`. Probable immediate failure on the event platform.
 
@@ -319,6 +349,7 @@ lint/tests/secrets PASS). gitreins task deleted, tasks.yaml clean.
 |----|------|-----|-----|--------|-------|
 | HAL-001 | HalCTFRuntimeSnapshot from env — HAL_TARGET_<NAME>_IP/_PORT + single-form + HAL_CHALLENGE_* + HAL_AGENT_MODEL/HAL_RUN_ID/HAL_TEAM_UUID + flag-like env + OPENAI_BASE_URL/MCP_ENDPOINT → real-URL graph targets + Scope.hosts/urls + ScopePolicy target_allowlist (atomic), infra exclusion (sidecar 127.0.0.1:9000/model/MCP) (judge PASS a495fe1, all 5 criteria, tier1 lint/tests/secrets PASS) | Critical | 5±1 | 9fca71a | DS-V4-Flash |
 | HAL-002 | MCP optional/fallback for HalCTF startup — OPENAI_BASE_URL out of HALCTF_ENDPOINT_CANDIDATES (model service /llm, never MCP), load_config + HalCTFEnvironment construct endpoint=None env-only, require_halctf_endpoint retained for genuine endpoint consumers, fail-loud scoped to unrecoverable config, hal_client localhost default unchanged (judge PASS d0e00cb, all 5 criteria, tier1 lint/tests/secrets PASS) | Critical | 3±1 | cbbffe5 | DS-V4-Flash |
+| HAL-003 | Model routing in HalCTF mode — Supervisor._model_routing resolves HAL_AGENT_MODEL → model id + OPENAI_BASE_URL → client base URL via HAL-001 snapshot, supervisor-owned ModelService wired into runner (closed in finally), absent platform vars degrade to OZZGRAPH_MODEL_*/defaults, local mode unchanged, runner.started logs actual base_url via ModelService.base_url property (judge PASS 469be7f1, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 3±1 | e9c421e | DS-V4-Flash |
 | DOCS-000 | v2 documentation pass re-run — README refreshed for completed v2 milestone (release status v1.0.0 + v2 V01–V10, v2 modules in capabilities/layout: environments/, findings.py, observations.py, security_brain.py, specialists.py, profile_store.py/profile_data/, matrix.py, benchmarks/, lab/), v2 docs added to Documentation table (CHANGES_v2.md, OBSERVATIONS.md, BENCHMARKS.md, SYNTHETIC_LAB.md), repo description + 7 topics updated via gh repo edit, formatting bar intact (judge PASS 8ae01605, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 3±1 | c436427 | DS-V4-Flash |
 | V10 | full-regression: benchmarks/ package (registry + OzzGraph harness vs plain ReAct + scripted model + scoring + deterministic report), dead-end lab target with pivot proof (hypothesis_abandoned + PIVOT, bounded turns), tool-contract test (every required_capability resolves to installed provider), benchmark CLI (--target/--react/--max-turns/--out + OZZGRAPH_BENCHMARK_* env), docs/BENCHMARKS.md (judge PASS 9ce33342, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 5±1 | 498a214 | DS-V4-Flash |
 | INT-CI-001 | E2E driver imports V09-moved flag modules from canonical homes (ozzgraph.entities / ozzgraph.environments.halctf) — fixes CI Lint failure (ruff I001 on e2e_001_driver.py, symptom of deleted ozzgraph.flags regression) | High | 1±0 | 5628bf4 | DS-V4-Flash |
