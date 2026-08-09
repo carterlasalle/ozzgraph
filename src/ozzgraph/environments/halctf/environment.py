@@ -58,6 +58,13 @@ contract, NOT a kernel phase. V09 completes the adapter:
   surfacing it as ``environment.snapshot`` and in the scope
   constraints. Challenge-id-only environments keep the V09
   single-target fallback.
+- **Generalized flag pattern** (HAL-007): the environment's default
+  flag candidate pattern generalizes the local ``flag{...}`` default to
+  identifier-style prefixes (``flag{}``, ``HALCTF{}``, ...) whenever
+  the operator has not explicitly set ``OZZGRAPH_FLAG_PATTERN``
+  (non-blank, matching ``load_config``'s blank-means-unset semantics);
+  an explicit operator pattern always wins. The local default is
+  byte-for-byte unchanged.
 
 Discovery performs NO I/O in this adapter (it derives everything from
 configuration), so discovery is deterministic and testable without an
@@ -74,6 +81,7 @@ import httpx
 
 from ozzgraph.artifacts import ArtifactStore
 from ozzgraph.config import (
+    FLAG_PATTERN_ENV,
     ConfigError,
     HalCTFRuntimeSnapshot,
     OzzGraphConfig,
@@ -138,6 +146,18 @@ def _payload_bool(record: EntityRecord, key: str) -> bool:
 #: paths — an accepted submission routes the graph DONE.
 HALCTF_OBJECTIVE_SUCCESS_HINT = "submission accepted for the challenge"
 
+#: HalCTF's default flag candidate pattern (HAL-007): the local
+#: ``flag{...}`` default generalized to identifier-style prefixes
+#: (``flag{}``, ``HALCTF{}``, ...) — an identifier-like prefix
+#: ``[A-Za-z][A-Za-z0-9_]{1,14}`` immediately followed by a brace pair
+#: whose interior has no braces or whitespace (the same interior shape
+#: as the local :data:`~ozzgraph.config.DEFAULT_FLAG_PATTERN`). The
+#: platform does NOT inject ``OZZGRAPH_FLAG_PATTERN``, so without this
+#: generalization a real HalCTF detonation would only ever recognize
+#: ``flag{...}`` and miss ``HALCTF{...}`` flags. An operator-set
+#: ``OZZGRAPH_FLAG_PATTERN`` always wins over this default.
+HALCTF_DEFAULT_FLAG_PATTERN = r"[A-Za-z][A-Za-z0-9_]{1,14}\{[^{}\s]+\}"
+
 
 class HalCTFEnvironment:
     """Full HalCTF runtime environment (V09, HAL-002, docs/adr/0011).
@@ -169,6 +189,20 @@ class HalCTFEnvironment:
     ) -> None:
         self._config = config
         self._environ = os.environ if environ is None else environ
+        # HAL-007: the effective flag candidate pattern. The operator's
+        # explicit OZZGRAPH_FLAG_PATTERN (non-blank — the same
+        # blank-means-unset semantics load_config's ``_env_str`` uses)
+        # wins; otherwise HalCTF mode generalizes the local ``flag{...}``
+        # default to identifier-style prefixes (``flag{}``,
+        # ``HALCTF{}``, ...) so a real platform detonation never misses
+        # a challenge flag the platform did not configure. The local
+        # default (:data:`~ozzgraph.config.DEFAULT_FLAG_PATTERN`) is
+        # untouched.
+        raw_flag_pattern = self._environ.get(FLAG_PATTERN_ENV)
+        if raw_flag_pattern is not None and raw_flag_pattern.strip() != "":
+            self._flag_pattern = self._config.flag_pattern
+        else:
+            self._flag_pattern = HALCTF_DEFAULT_FLAG_PATTERN
         # V09 + HAL-002: the MCP endpoint is OPTIONAL. An explicit
         # endpoint always wins; otherwise discovery resolves the first
         # non-blank candidate, and an env-only detonation (no candidate
@@ -224,15 +258,17 @@ class HalCTFEnvironment:
     ) -> FlagCandidateExtractor:
         """The provenance-gated flag candidate extractor for this challenge.
 
-        Wired to the environment's config (flag pattern and submission
-        attempt budget), so a HalCTF driver extracts candidates with the
-        operator's configured policy without importing the adapter's
-        internals.
+        Wired to the environment's effective flag pattern (HAL-007) —
+        the operator's explicit ``OZZGRAPH_FLAG_PATTERN`` when set,
+        otherwise the generalized HalCTF default (``flag{}``,
+        ``HALCTF{}``, ...) — and the submission attempt budget, so a
+        HalCTF driver extracts candidates with the configured policy
+        without importing the adapter's internals.
         """
         return FlagCandidateExtractor(
             run_id=run_id,
             event_log=event_log,
-            pattern=self._config.flag_pattern,
+            pattern=self._flag_pattern,
             max_attempts=self._config.max_submissions,
             artifact_store=artifact_store,
         )

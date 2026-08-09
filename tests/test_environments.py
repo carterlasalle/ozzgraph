@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from ozzgraph.config import DEFAULT_FLAG_PATTERN, ConfigError, OzzGraphConfig
+from ozzgraph.config import ConfigError, OzzGraphConfig
 from ozzgraph.environments import (
     EnvironmentAdapter,
     HalCTFEnvironment,
@@ -26,7 +26,11 @@ from ozzgraph.environments import (
     Target,
 )
 from ozzgraph.environments.base import EnvironmentAdapter as ProtocolAdapter
-from ozzgraph.environments.halctf import HALCTF_OBJECTIVE_ID, HALCTF_OBJECTIVE_SUCCESS_HINT
+from ozzgraph.environments.halctf import (
+    HALCTF_DEFAULT_FLAG_PATTERN,
+    HALCTF_OBJECTIVE_ID,
+    HALCTF_OBJECTIVE_SUCCESS_HINT,
+)
 from ozzgraph.environments.local import (
     DEFAULT_LOCAL_CAPABILITIES,
     LOCAL_OBJECTIVE_ID,
@@ -346,7 +350,21 @@ def test_halctf_environment_service_factories() -> None:
     assert hint._challenge_id == "web-01"  # type: ignore[attr-defined]
     assert hint._policy._max_hints == 1  # type: ignore[attr-defined]
     extractor = env.flag_extractor(run_id="run-1")
-    assert extractor._pattern.pattern == DEFAULT_FLAG_PATTERN  # type: ignore[attr-defined]
+    # HAL-007: without an operator-set OZZGRAPH_FLAG_PATTERN the HalCTF
+    # environment generalizes the local default to identifier-style
+    # prefixes (flag{}, HALCTF{}, ...) — never the local flag{...} default.
+    assert extractor._pattern.pattern == HALCTF_DEFAULT_FLAG_PATTERN  # type: ignore[attr-defined]
+    # An operator-set pattern wins: the extractor then uses the config's
+    # explicit pattern (which load_config mirrors from the env var).
+    operator_pattern = r"CTF\{[^{}\s]+\}"
+    overridden = HalCTFEnvironment(
+        _config(flag_pattern=operator_pattern),
+        environ=_halctf_env(OZZGRAPH_FLAG_PATTERN=operator_pattern),
+    )
+    assert (
+        overridden.flag_extractor(run_id="run-1")._pattern.pattern  # type: ignore[attr-defined]
+        == operator_pattern
+    )
     scoreboard = env.scoreboard_coordinator(client=client, run_id="run-1")
     assert scoreboard._client is client  # type: ignore[attr-defined]
 
