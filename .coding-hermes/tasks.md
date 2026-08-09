@@ -32,6 +32,29 @@ non-same-name test files; docs complete). Board idle → cooldown 43200s.**
 
 ## Active
 
+> **Tick 2026-08-09: HAL-007 closed (judge PASS 52fb4801, commit 44a52d9 — verified**
+> this tick). HalCTF flag pattern generalized: `HalCTFEnvironment` gains
+> `HALCTF_DEFAULT_FLAG_PATTERN = r"[A-Za-z][A-Za-z0-9_]{1,14}\{[^{}\s]+\}"` — the
+> local `flag{...}` default generalized to identifier-style prefixes (flag{},
+> HALCTF{}, ...), same interior shape (no braces/whitespace). `__init__` resolves
+> the effective pattern once: operator's explicit `OZZGRAPH_FLAG_PATTERN`
+> (non-blank, mirroring `load_config`'s blank-means-unset semantics) wins;
+> otherwise the generalized HalCTF default applies — so a real platform
+> detonation (which never injects OZZGRAPH_FLAG_PATTERN) now catches HALCTF{...}
+> flags. `flag_extractor()` wired to the resolved pattern; constant exported from
+> `ozzgraph.environments.halctf`. Local default byte-for-byte unchanged:
+> `DEFAULT_FLAG_PATTERN` (config.py:178), `load_config`, `FlagCandidateExtractor`
+> default, benchmarks/matrix/lab untouched. Gate: ruff/format/mypy strict clean,
+> 1265 tests pass (215s, +6 new in tests/test_flag_pattern.py: HALCTF{}+flag{}
+> both persist, JS/CSS braces never match, operator override wins, local default
+> unchanged; test_environments.py service-factory test extended). Worker
+> dispatched via hermes chat (deepseek-v4-flash @ openrouter), committed 44a52d9
+> (worker ran Tier-1 guards, PASS — full suite inside the pre-commit guard) +
+> pushed. Judge PASS 52fb4801 (3/3 criteria, tier1 lint/tests/secrets PASS,
+> verdict committed on gitreins branch). gitreins task deleted, tasks.yaml clean.
+> HAL-008..HAL-011 pending → cooldown stays 900s. Next: HAL-008 (process/exit
+> semantics).
+
 > **Tick 2026-08-09: HAL-006 closed (judge PASS bfbec37b, commit 9c0921f — verified**
 > this tick). Objective completion acceptance-gated: `EnvironmentAdapter` gains
 > `verdict_satisfies_objectives(graph)` (base.py) — the environment-specific
@@ -206,7 +229,6 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 | HAL-010 | Wire SpecialistFleet into Supervisor production composition (currently test-only) | High | 4±1 | V07 | ++specialists, ++supervisor | DS-V4-Flash | Medium | Kimi-K3 |
 | HAL-009 | Port Tottori live-run exploitation lessons into skills (SQLi/JWT/SSRF/XXE/deser/protocol/forensics/cloud-IAM), kernel-external | High | 4±1 | V17 | +++skills, ++halctf | DS-V4-Flash | Medium | Kimi-K3 |
 | HAL-008 | HalCTF process semantics — budget-exhausted / unsolved / gave-up / graceful failure exit 0; keep structured reason in events | High | 3±1 | — | ++lifecycle, ++cli | DS-V4-Flash | Medium | Kimi-K3 |
-| HAL-007 | Generalize HalCTF flag pattern (flag{}, HALCTF{}, event prefixes) independent of local default | Medium | 2±1 | V09 | ++config, ++flags | DS-V4-Flash | Low | Kimi-K3 |
 
 ## [x] HAL-001 — HalCTFRuntimeSnapshot: env → graph targets + scope allowlist (real HalCTF runtime)
 
@@ -358,7 +380,21 @@ criteria, tier1 lint/tests/secrets PASS). gitreins task deleted, tasks.yaml clea
 3. Local pentest semantics unchanged (validated finding may satisfy objective).
 4. Tests: evaluator COMPLETE with no submission leaves objective incomplete; accepted submission completes it.
 
-## [ ] HAL-007 — Generalize HalCTF flag pattern
+## [x] HAL-007 — Generalize HalCTF flag pattern
+
+**Tick 2026-08-09: HAL-007 closed (judge PASS 52fb4801, commit 44a52d9 — verified this tick).**
+HalCTF flag pattern generalized: `HalCTFEnvironment` gains
+`HALCTF_DEFAULT_FLAG_PATTERN = r"[A-Za-z][A-Za-z0-9_]{1,14}\{[^{}\s]+\}"` —
+identifier-style prefixes (flag{}, HALCTF{}, ...) with the same interior shape
+as the local default; `__init__` resolves the effective pattern once (operator's
+explicit non-blank `OZZGRAPH_FLAG_PATTERN` wins, blank-means-unset mirroring
+`load_config`; else the HalCTF default) and `flag_extractor()` uses it; constant
+exported from `ozzgraph.environments.halctf`. Local default byte-for-byte
+unchanged (`DEFAULT_FLAG_PATTERN`, `load_config`, `FlagCandidateExtractor`
+default, benchmarks/matrix/lab untouched). Gate: ruff/format/mypy strict clean,
+1265 tests pass (215s, +6 in tests/test_flag_pattern.py + test_environments.py
+extension). Judge PASS 52fb4801 (3/3 criteria, tier1 lint/tests/secrets PASS).
+gitreins task deleted, tasks.yaml clean. Next: HAL-008 (process/exit semantics).
 
 **Source:** Verified — `DEFAULT_FLAG_PATTERN=r"flag\{[^{}\s]+\}"`. Tottori's committed log shows real challenges use `HALCTF{...}` and `flag{...}`; its matcher generalizes to `[A-Za-z][A-Za-z0-9_]{1,14}\{...\}`. The platform doesn't inject `OZZGRAPH_FLAG_PATTERN`.
 
@@ -411,6 +447,7 @@ criteria, tier1 lint/tests/secrets PASS). gitreins task deleted, tasks.yaml clea
 
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
+| HAL-007 | HalCTF flag pattern generalized — HALCTF_DEFAULT_FLAG_PATTERN r"[A-Za-z][A-Za-z0-9_]{1,14}\{[^{}\s]+\}" (identifier-style prefixes flag{}/HALCTF{}...), __init__ resolves effective pattern (operator non-blank OZZGRAPH_FLAG_PATTERN wins, blank-means-unset like load_config, else HalCTF default), flag_extractor wired, exported from ozzgraph.environments.halctf, local default + benchmarks/matrix/lab byte-for-byte unchanged (judge PASS 52fb4801, all 3 criteria, tier1 lint/tests/secrets PASS) | Medium | 2±1 | 44a52d9 | DS-V4-Flash |
 | HAL-001 | HalCTFRuntimeSnapshot from env — HAL_TARGET_<NAME>_IP/_PORT + single-form + HAL_CHALLENGE_* + HAL_AGENT_MODEL/HAL_RUN_ID/HAL_TEAM_UUID + flag-like env + OPENAI_BASE_URL/MCP_ENDPOINT → real-URL graph targets + Scope.hosts/urls + ScopePolicy target_allowlist (atomic), infra exclusion (sidecar 127.0.0.1:9000/model/MCP) (judge PASS a495fe1, all 5 criteria, tier1 lint/tests/secrets PASS) | Critical | 5±1 | 9fca71a | DS-V4-Flash |
 | HAL-002 | MCP optional/fallback for HalCTF startup — OPENAI_BASE_URL out of HALCTF_ENDPOINT_CANDIDATES (model service /llm, never MCP), load_config + HalCTFEnvironment construct endpoint=None env-only, require_halctf_endpoint retained for genuine endpoint consumers, fail-loud scoped to unrecoverable config, hal_client localhost default unchanged (judge PASS d0e00cb, all 5 criteria, tier1 lint/tests/secrets PASS) | Critical | 3±1 | cbbffe5 | DS-V4-Flash |
 | HAL-003 | Model routing in HalCTF mode — Supervisor._model_routing resolves HAL_AGENT_MODEL → model id + OPENAI_BASE_URL → client base URL via HAL-001 snapshot, supervisor-owned ModelService wired into runner (closed in finally), absent platform vars degrade to OZZGRAPH_MODEL_*/defaults, local mode unchanged, runner.started logs actual base_url via ModelService.base_url property (judge PASS 469be7f1, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 3±1 | e9c421e | DS-V4-Flash |
