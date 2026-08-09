@@ -32,6 +32,31 @@ non-same-name test files; docs complete). Board idle → cooldown 43200s.**
 
 ## Active
 
+> **Tick 2026-08-09: HAL-008 closed (judge PASS f55fee81, commit f1a2a2d — verified**
+> this tick). HalCTF process/exit semantics: `_exit_code_for()` in `__main__.py`
+> makes the process-boundary mapping HalCTF-mode-aware — in HalCTF mode (any
+> `HALCTF_MODE_VARS` non-blank) EVERY structured `TerminationReason`
+> (COMPLETED / INTERRUPTED / FAILED / BUDGET_EXHAUSTED) → container exit 0
+> (scored, unsolved, exhausted, gave-up, graceful platform failure all exit 0 —
+> a nonzero exit would be misread by the platform as a crash and re-detonated);
+> load-time ConfigError and uncaught exceptions (startup-impossible / process
+> corruption) still exit 1; usage errors (bad target, benchmark args) stay 1
+> regardless of mode. Local mode (`ozzgraph run TARGET`) byte-for-byte unchanged
+> (0/130/1/3). Internal distinctions preserved: JSONL termination event still
+> records the structured `reason` (budget_exhausted etc.) even when the process
+> exits 0 — model never collapsed. Docs: CHANGES_v2.md +20, USAGE.md exit-code
+> section rewritten, RELEASE/TESTING_AND_QA/IMAGE_HARDENING + adr/0007 updated,
+> new docs/adr/0012-process-boundary-exit-policy.md (81 lines). Gate: ruff/
+> format/mypy strict clean, 1271 tests pass (233s, +6 e2e in test_e2e_run.py:
+> halctf budget-exhausted → exit 0 + TERMINATION: budget_exhausted + event
+> reason, unsolved → 0, missing HAL_USER_ID → 1, invalid HAL_TARGET_PORT → 1,
+> local exit-3/exit-1 unchanged). Worker dispatched via hermes chat
+> (deepseek-v4-flash @ openrouter), committed f1a2a2d + pushed (16/16 ad-hoc
+> verification). Judge PASS f55fee81 (5/5 criteria, tier1 lint/tests/secrets
+> PASS, verdict committed on gitreins branch). gitreins task deleted, tasks.yaml
+> clean. HAL-009..HAL-011 pending → cooldown stays 900s. Next: HAL-009 (skills
+> port).
+>
 > **Tick 2026-08-09: HAL-007 closed (judge PASS 52fb4801, commit 44a52d9 — verified**
 > this tick). HalCTF flag pattern generalized: `HalCTFEnvironment` gains
 > `HALCTF_DEFAULT_FLAG_PATTERN = r"[A-Za-z][A-Za-z0-9_]{1,14}\{[^{}\s]+\}"` — the
@@ -228,7 +253,6 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 | HAL-011 | halctf-real-contract regression fixture — mirror Tottori's committed live-run env shapes + /submit responses into the suite | High | 4±1 | HAL-001..008 | +++tests, ++halctf | DS-V4-Flash | Medium | Kimi-K3 |
 | HAL-010 | Wire SpecialistFleet into Supervisor production composition (currently test-only) | High | 4±1 | V07 | ++specialists, ++supervisor | DS-V4-Flash | Medium | Kimi-K3 |
 | HAL-009 | Port Tottori live-run exploitation lessons into skills (SQLi/JWT/SSRF/XXE/deser/protocol/forensics/cloud-IAM), kernel-external | High | 4±1 | V17 | +++skills, ++halctf | DS-V4-Flash | Medium | Kimi-K3 |
-| HAL-008 | HalCTF process semantics — budget-exhausted / unsolved / gave-up / graceful failure exit 0; keep structured reason in events | High | 3±1 | — | ++lifecycle, ++cli | DS-V4-Flash | Medium | Kimi-K3 |
 
 ## [x] HAL-001 — HalCTFRuntimeSnapshot: env → graph targets + scope allowlist (real HalCTF runtime)
 
@@ -403,7 +427,16 @@ gitreins task deleted, tasks.yaml clean. Next: HAL-008 (process/exit semantics).
 2. Local default unchanged.
 3. Tests: HALCTF{}, flag{}, and non-match (JS/CSS braces) fixtures.
 
-## [ ] HAL-008 — HalCTF process/exit semantics
+## [x] HAL-008 — HalCTF process/exit semantics
+
+**Tick 2026-08-09: HAL-008 closed (judge PASS f55fee81, commit f1a2a2d).**
+`_exit_code_for()` (__main__.py) — HalCTF-mode-aware process-boundary mapping:
+in HalCTF mode (any HALCTF_MODE_VARS non-blank) EVERY structured
+TerminationReason → exit 0; load-time ConfigError + uncaught exceptions
+(startup-impossible / process corruption) → exit 1; usage errors stay 1;
+local mode byte-for-byte unchanged (0/130/1/3). Termination event keeps
+structured reason (model not collapsed). Gate: ruff/format/mypy clean, 1271
+tests pass (+6 e2e). gitreins task deleted, tasks.yaml clean.
 
 **Source:** Verified — `__main__.py` maps `{COMPLETED:0, INTERRUPTED:130, FAILED:1, BUDGET_EXHAUSTED:3}`. Tottori found a nonzero exit is interpreted by the platform as a crash → reruns the detonation (wasting time, marking run FAILED even when scored). It returns 0 on any ordinary completed attempt.
 
@@ -447,6 +480,7 @@ gitreins task deleted, tasks.yaml clean. Next: HAL-008 (process/exit semantics).
 
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
+| HAL-008 | HalCTF process/exit semantics — _exit_code_for() HalCTF-mode-aware mapping (any HALCTF_MODE_VARS non-blank: every structured TerminationReason → exit 0; startup-impossible/process corruption (ConfigError/uncaught) → 1; usage errors 1; local mode byte-for-byte unchanged 0/130/1/3), termination event keeps structured reason, docs/adr/0012-process-boundary-exit-policy.md (judge PASS f55fee81, all 5 criteria, tier1 lint/tests/secrets PASS) | High | 3±1 | f1a2a2d | DS-V4-Flash |
 | HAL-007 | HalCTF flag pattern generalized — HALCTF_DEFAULT_FLAG_PATTERN r"[A-Za-z][A-Za-z0-9_]{1,14}\{[^{}\s]+\}" (identifier-style prefixes flag{}/HALCTF{}...), __init__ resolves effective pattern (operator non-blank OZZGRAPH_FLAG_PATTERN wins, blank-means-unset like load_config, else HalCTF default), flag_extractor wired, exported from ozzgraph.environments.halctf, local default + benchmarks/matrix/lab byte-for-byte unchanged (judge PASS 52fb4801, all 3 criteria, tier1 lint/tests/secrets PASS) | Medium | 2±1 | 44a52d9 | DS-V4-Flash |
 | HAL-001 | HalCTFRuntimeSnapshot from env — HAL_TARGET_<NAME>_IP/_PORT + single-form + HAL_CHALLENGE_* + HAL_AGENT_MODEL/HAL_RUN_ID/HAL_TEAM_UUID + flag-like env + OPENAI_BASE_URL/MCP_ENDPOINT → real-URL graph targets + Scope.hosts/urls + ScopePolicy target_allowlist (atomic), infra exclusion (sidecar 127.0.0.1:9000/model/MCP) (judge PASS a495fe1, all 5 criteria, tier1 lint/tests/secrets PASS) | Critical | 5±1 | 9fca71a | DS-V4-Flash |
 | HAL-002 | MCP optional/fallback for HalCTF startup — OPENAI_BASE_URL out of HALCTF_ENDPOINT_CANDIDATES (model service /llm, never MCP), load_config + HalCTFEnvironment construct endpoint=None env-only, require_halctf_endpoint retained for genuine endpoint consumers, fail-loud scoped to unrecoverable config, hal_client localhost default unchanged (judge PASS d0e00cb, all 5 criteria, tier1 lint/tests/secrets PASS) | Critical | 3±1 | cbbffe5 | DS-V4-Flash |
