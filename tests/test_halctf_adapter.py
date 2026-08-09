@@ -20,6 +20,14 @@ Covers the milestone's five slices:
    renders the V08 report bundle.
 5. Kernel decoupling — no module outside ``ozzgraph.environments``
    imports the moved hint/submission/flag/scoreboard modules.
+6. HAL-001 real-runtime target snapshot — the platform-injected
+   ``HAL_TARGET_*`` service pairs (Tottori's exact env shape) parse
+   into one real-URL / bare-IP Target per service with service +
+   challenge metadata, the scope carries hosts/urls + the merged
+   ``target_allowlist`` constraint, sidecar/model/MCP infrastructure
+   is excluded, the single ``HAL_TARGET_IP``/``HAL_TARGET_PORT``
+   variant works, and challenge-id-only environments keep the V09
+   fallback.
 """
 
 from __future__ import annotations
@@ -40,7 +48,10 @@ from ozzgraph.config import (
     OzzGraphConfig,
     discover_halctf_challenge_id,
     discover_halctf_endpoint,
+    discover_halctf_services,
+    halctf_infra_authorities,
     halctf_mode_selected,
+    halctf_target_allowlist,
     load_config,
 )
 from ozzgraph.environments import HalCTFEnvironment
@@ -534,3 +545,195 @@ def test_kernel_never_imports_moved_halctf_modules() -> None:
             if fragment in text:
                 offenders.append((str(path.relative_to(root)), fragment))
     assert offenders == []
+
+
+# ---------------------------------------------------------------------------
+# 6. HAL-001: real-runtime target snapshot (HAL_TARGET_* services)
+# ---------------------------------------------------------------------------
+
+#: Tottori's exact platform-injected env shape (verified cross-repo from
+#: kazuki005276ssh/halctf-team-tottori committed live-run logs): named
+#: service IP/PORT pairs, challenge metadata, runtime identity, and the
+#: sidecar model/MCP infrastructure endpoints.
+TOTTORI_ENV: dict[str, str] = {
+    "HAL_TARGET_FERRY_IP": "10.0.0.11",
+    "HAL_TARGET_FERRY_PORT": "8080",
+    "HAL_TARGET_UNDERWORLD_IP": "10.0.0.12",
+    "HAL_TARGET_UNDERWORLD_PORT": "3000",
+    "HAL_CHALLENGE_ID": "18",
+    "HAL_CHALLENGE_NAME": "underworld",
+    "HAL_CHALLENGE_CATEGORY": "web",
+    "HAL_AGENT_MODEL": "gpt-4o-mini",
+    "HAL_RUN_ID": "run-2026-08-09",
+    "HAL_TEAM_UUID": "team-42",
+    "OPENAI_BASE_URL": "http://127.0.0.1:9000/llm",
+    "MCP_ENDPOINT": "http://127.0.0.1:9000/mcp",
+    "BONUS_FLAG": "flag{bonus}",
+}
+
+
+def test_halctf_services_parsed_from_tottori_env_shape() -> None:
+    """The named HAL_TARGET_<NAME>_IP/_PORT pairs parse into ordered
+    services; the allowlist carries each bare IP and IP:PORT authority."""
+    services = discover_halctf_services(TOTTORI_ENV)
+    assert [(s.name, s.ip, s.port) for s in services] == [
+        ("ferry", "10.0.0.11", 8080),
+        ("underworld", "10.0.0.12", 3000),
+    ]
+    assert halctf_target_allowlist(TOTTORI_ENV) == (
+        "10.0.0.11",
+        "10.0.0.11:8080",
+        "10.0.0.12",
+        "10.0.0.12:3000",
+    )
+
+
+def test_halctf_infra_authorities_include_sidecar_model_mcp() -> None:
+    """The sidecar, OPENAI_BASE_URL, and MCP_ENDPOINT authorities are
+    infrastructure — a HAL_TARGET_* entry matching one is excluded."""
+    infra = halctf_infra_authorities(TOTTORI_ENV)
+    assert "127.0.0.1:9000" in infra  # sidecar + model + MCP all resolve here
+    env = {
+        **TOTTORI_ENV,
+        # A service pointing at the sidecar / model service is dropped.
+        "HAL_TARGET_SIDECAR_IP": "127.0.0.1",
+        "HAL_TARGET_SIDECAR_PORT": "9000",
+        # A service matching the OPENAI_BASE_URL authority is dropped.
+        "HAL_TARGET_LLM_IP": "10.0.0.99",
+        "HAL_TARGET_LLM_PORT": "8000",
+        "OPENAI_BASE_URL": "http://10.0.0.99:8000/v1",
+    }
+    services = discover_halctf_services(env)
+    assert [(s.name, s.ip, s.port) for s in services] == [
+        ("ferry", "10.0.0.11", 8080),
+        ("underworld", "10.0.0.12", 3000),
+    ]
+
+
+def test_halctf_invalid_port_fails_loudly() -> None:
+    """A set-but-invalid HAL_TARGET_PORT is a loud ConfigError (fail
+    loudly, AGENTS.md rule #9) — never a silent host-only guess."""
+    with pytest.raises(ConfigError, match="HAL_TARGET_PORT"):
+        discover_halctf_services(
+            _halctf_env(HAL_TARGET_IP="10.0.0.21", HAL_TARGET_PORT="not-a-port")
+        )
+
+
+@pytest.mark.asyncio
+async def test_halctf_targets_are_real_urls_with_services() -> None:
+    """With platform-injected services the targets are REAL URLs (never
+    the bare challenge id '18'), each carrying its service name and the
+    challenge id in metadata."""
+    environment = HalCTFEnvironment(_config(Path("/tmp/x")), environ=TOTTORI_ENV)
+    targets = await environment.discover_targets()
+    assert [t.address for t in targets] == [
+        "http://10.0.0.11:8080",
+        "http://10.0.0.12:3000",
+    ]
+    assert all(t.type == "url" for t in targets)
+    assert all(t.address != "18" for t in targets)
+    assert [t.id for t in targets] == ["halctf-service-ferry", "halctf-service-underworld"]
+    assert targets[0].metadata == {"service": "ferry", "challenge_id": "18"}
+    assert targets[1].metadata == {"service": "underworld", "challenge_id": "18"}
+
+
+@pytest.mark.asyncio
+async def test_halctf_scope_carries_service_surface_and_merged_allowlist() -> None:
+    """The scope carries the service surface (bare-IP hosts, http URLs)
+    and the merged target_allowlist constraint: operator-configured
+    entries still merge; sidecar infra never appears."""
+    environment = HalCTFEnvironment(
+        _config(Path("/tmp/x"), target_allowlist=("192.168.1.5",)),
+        environ=TOTTORI_ENV,
+    )
+    scope = await environment.discover_scope()
+    assert scope.hosts == ("10.0.0.11", "10.0.0.12")
+    assert scope.urls == ("http://10.0.0.11:8080", "http://10.0.0.12:3000")
+    allowlist = scope.constraints["target_allowlist"]
+    assert isinstance(allowlist, tuple)
+    assert set(allowlist) == {
+        "192.168.1.5",  # operator-configured entry still merges
+        "10.0.0.11",
+        "10.0.0.11:8080",
+        "10.0.0.12",
+        "10.0.0.12:3000",
+    }
+    assert "127.0.0.1:9000" not in allowlist  # sidecar infra never authorized
+    assert scope.constraints["challenge_id"] == "18"
+    assert scope.constraints["mode"] == "halctf"
+
+
+@pytest.mark.asyncio
+async def test_halctf_single_service_ip_port_variant() -> None:
+    """The single-service HAL_TARGET_IP/HAL_TARGET_PORT form yields one
+    'default' URL target and one host/url in the scope."""
+    environment = HalCTFEnvironment(
+        _config(Path("/tmp/x")),
+        environ=_halctf_env(HAL_TARGET_IP="10.0.0.21", HAL_TARGET_PORT="4444"),
+    )
+    targets = await environment.discover_targets()
+    assert len(targets) == 1
+    assert targets[0].type == "url"
+    assert targets[0].address == "http://10.0.0.21:4444"
+    assert targets[0].metadata["service"] == "default"
+    scope = await environment.discover_scope()
+    assert scope.hosts == ("10.0.0.21",)
+    assert scope.urls == ("http://10.0.0.21:4444",)
+
+
+@pytest.mark.asyncio
+async def test_halctf_host_only_service_without_port() -> None:
+    """A service with an IP but no PORT stays a bare-IP host target (no
+    port is ever invented)."""
+    environment = HalCTFEnvironment(
+        _config(Path("/tmp/x"), target_allowlist=()),
+        environ=_halctf_env(HAL_TARGET_IP="10.0.0.21"),
+    )
+    targets = await environment.discover_targets()
+    assert len(targets) == 1
+    assert targets[0].type == "host"
+    assert targets[0].address == "10.0.0.21"
+    scope = await environment.discover_scope()
+    assert scope.hosts == ("10.0.0.21",)
+    assert scope.urls == ()
+    assert scope.constraints["target_allowlist"] == ("10.0.0.21",)
+
+
+@pytest.mark.asyncio
+async def test_halctf_challenge_id_only_env_keeps_v09_fallback() -> None:
+    """Without HAL_TARGET_* services the challenge-id-only behavior is
+    unchanged: one URL target carrying the challenge id itself."""
+    environment = HalCTFEnvironment(_config(Path("/tmp/x")), environ=_halctf_env())
+    targets = await environment.discover_targets()
+    assert len(targets) == 1
+    assert targets[0].id == "halctf-challenge-web-01"
+    assert targets[0].address == "web-01"
+    scope = await environment.discover_scope()
+    # Today's surface: the configured allowlist as hosts, no merged
+    # target_allowlist constraint (no services to derive).
+    assert scope.hosts == ("127.0.0.1",)
+    assert scope.urls == ()
+    assert "target_allowlist" not in scope.constraints
+
+
+def test_load_config_merges_halctf_service_allowlist() -> None:
+    """In HalCTF mode load_config merges the platform-injected service
+    allowlist into config.target_allowlist — no manual
+    OZZGRAPH_TARGET_ALLOWLIST step is needed for the policy gate."""
+    config = load_config(environ={"HAL_USER_ID": "user-42", **TOTTORI_ENV})
+    assert set(config.target_allowlist) == {
+        "10.0.0.11",
+        "10.0.0.11:8080",
+        "10.0.0.12",
+        "10.0.0.12:3000",
+    }
+    # Operator-configured entries still merge alongside the services.
+    config = load_config(
+        environ={
+            "HAL_USER_ID": "user-42",
+            **TOTTORI_ENV,
+            "OZZGRAPH_TARGET_ALLOWLIST": "192.168.1.5",
+        }
+    )
+    assert "192.168.1.5" in config.target_allowlist
+    assert "10.0.0.11:8080" in config.target_allowlist

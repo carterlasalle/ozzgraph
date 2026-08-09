@@ -37,6 +37,17 @@ contract, NOT a kernel phase. V09 completes the adapter:
   submission routed DONE, or all objectives completed) terminates the
   run COMPLETED and renders the V08 report bundle — a HalCTF run can
   complete gracefully with zero kernel HalCTF knowledge.
+- **Real-runtime target snapshot** (HAL-001): the competition platform
+  injects named service targets as ``HAL_TARGET_<NAME>_IP`` /
+  ``HAL_TARGET_<NAME>_PORT`` pairs (plus a single-service
+  ``HAL_TARGET_IP`` / ``HAL_TARGET_PORT`` form). Discovery parses them
+  via :func:`ozzgraph.config.discover_halctf_services` into one
+  :class:`~ozzgraph.environments.models.Target` per service — a real
+  URL (``http://IP:PORT``) or a bare-IP host when no port is injected —
+  and the scope carries the service surface (hosts, urls, merged
+  ``target_allowlist`` constraint). Sidecar / model / MCP authorities
+  are infrastructure and are never targets. Challenge-id-only
+  environments keep the V09 single-target fallback.
 
 Discovery performs NO I/O in this adapter (it derives everything from
 configuration), so discovery is deterministic and testable without an
@@ -54,6 +65,8 @@ from ozzgraph.config import (
     ConfigError,
     OzzGraphConfig,
     discover_halctf_challenge_id,
+    discover_halctf_services,
+    halctf_target_allowlist,
     require_halctf_endpoint,
 )
 from ozzgraph.environments.halctf.flags import FlagCandidateExtractor
@@ -224,31 +237,89 @@ class HalCTFEnvironment:
     async def discover_scope(self) -> Scope:
         """The authorized surface: the challenge's policy surface.
 
-        Derived from ``config.target_allowlist`` (the same allowlist the
-        policy gate enforces); constraints carry the challenge id and
-        the ``halctf`` mode so downstream context can render it. No MCP
-        I/O.
+        With platform-injected ``HAL_TARGET_*`` services (HAL-001), the
+        scope carries the service surface directly: ``hosts`` are the
+        bare service IPs, ``urls`` the ``http://IP:PORT`` forms of
+        port-bearing services, and ``constraints["target_allowlist"]``
+        is the merged policy allowlist — the platform-injected entries
+        (:func:`ozzgraph.config.halctf_target_allowlist`) union the
+        operator-configured ``config.target_allowlist``, sorted and
+        deduplicated, so scope data and the policy gate can never
+        disagree. Without injected services the scope is today's
+        surface: the configured allowlist as hosts plus the challenge
+        id and mode constraints. No MCP I/O.
         """
+        constraints: dict[str, object] = {
+            "challenge_id": self.challenge_id,
+            "mode": "halctf",
+        }
+        services = discover_halctf_services(self._environ)
+        if services:
+            hosts = tuple(sorted({service.ip for service in services}))
+            urls = tuple(
+                sorted(
+                    f"http://{service.ip}:{service.port}"
+                    for service in services
+                    if service.port is not None
+                )
+            )
+            # HAL-001: operator-configured entries still merge — the
+            # gate authorizes exactly the union of both sources.
+            allowlist = tuple(
+                sorted(
+                    set(self._config.target_allowlist) | set(halctf_target_allowlist(self._environ))
+                )
+            )
+            constraints["target_allowlist"] = allowlist
+            return Scope(
+                name="halctf",
+                hosts=hosts,
+                urls=urls,
+                constraints=constraints,
+            )
         return Scope(
             name="halctf",
             hosts=tuple(sorted(self._config.target_allowlist)),
-            constraints={"challenge_id": self.challenge_id, "mode": "halctf"},
+            constraints=constraints,
         )
 
     async def discover_targets(self) -> list[Target]:
-        """Exactly one target: the challenge itself.
+        """The discovered assessment targets.
 
-        A configured challenge id is required — without it there is
-        nothing to assess and discovery fails loudly
-        (:class:`~ozzgraph.config.ConfigError`), matching the kernel's
-        fail-loud convention (AGENTS.md rule #9). The challenge id is
-        discovered from ``HAL_CTF_ID`` / ``HAL_CHALLENGE_ID`` / the
-        legacy ``OZZGRAPH_CHALLENGE_ID`` (V09).
+        With platform-injected ``HAL_TARGET_*`` services (HAL-001), one
+        :class:`Target` per parsed service — a port-bearing service is
+        a real URL target (``http://IP:PORT``) and a host-only service
+        (no port) is a bare-IP host target, with metadata linking the
+        service name and the challenge id. Infra authorities (sidecar,
+        model, MCP) are excluded by the parser
+        (:func:`ozzgraph.config.discover_halctf_services`). Without
+        injected services the V09 fallback stays: exactly one URL
+        target carrying the challenge id itself (``HAL_CTF_ID`` /
+        ``HAL_CHALLENGE_ID`` / the legacy ``OZZGRAPH_CHALLENGE_ID``),
+        failing loudly when no challenge id is configured.
 
         Raises:
             ozzgraph.config.ConfigError: If no challenge id is
-                configured.
+                configured and no services were injected.
         """
+        services = discover_halctf_services(self._environ)
+        if services:
+            return [
+                Target(
+                    id=f"halctf-service-{service.name}",
+                    type="url" if service.port is not None else "host",
+                    address=(
+                        f"http://{service.ip}:{service.port}"
+                        if service.port is not None
+                        else service.ip
+                    ),
+                    metadata={
+                        "service": service.name,
+                        "challenge_id": self.challenge_id,
+                    },
+                )
+                for service in services
+            ]
         challenge_id = self.challenge_id
         if not challenge_id:
             raise ConfigError(

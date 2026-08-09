@@ -22,7 +22,9 @@ import os
 import re
 import tomllib
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import yaml
 from pydantic import (
@@ -115,6 +117,34 @@ HALCTF_MODE_VARS: tuple[str, ...] = (
     HAL_ENDPOINT_ENV,
     MCP_ENDPOINT_ENV,
 )
+
+# HAL-001 (HalCTF real-runtime snapshot): the competition platform
+# injects named service targets as ``HAL_TARGET_<NAME>_IP`` /
+# ``HAL_TARGET_<NAME>_PORT`` pairs (one pair per named service) plus a
+# single-service ``HAL_TARGET_IP`` / ``HAL_TARGET_PORT`` form, challenge
+# metadata (``HAL_CHALLENGE_*``), runtime identity (``HAL_AGENT_MODEL`` /
+# ``HAL_RUN_ID`` / ``HAL_TEAM_UUID``), flag-like variables
+# (``BONUS_FLAG``, ``FLAG_*``), and infrastructure endpoints
+# (``OPENAI_BASE_URL`` / ``MCP_ENDPOINT``) that are model/MCP
+# infrastructure — never attack targets. The exact shape was verified
+# cross-repo from kazuki005276ssh/halctf-team-tottori committed
+# live-run logs.
+HAL_TARGET_IP_ENV = "HAL_TARGET_IP"
+HAL_TARGET_PORT_ENV = "HAL_TARGET_PORT"
+HAL_TARGET_ENV_PREFIX = "HAL_TARGET_"
+HAL_TARGET_IP_SUFFIX = "_IP"
+HAL_TARGET_PORT_SUFFIX = "_PORT"
+HAL_CHALLENGE_NAME_ENV = "HAL_CHALLENGE_NAME"
+HAL_CHALLENGE_CATEGORY_ENV = "HAL_CHALLENGE_CATEGORY"
+HAL_AGENT_MODEL_ENV = "HAL_AGENT_MODEL"
+HAL_RUN_ID_ENV = "HAL_RUN_ID"
+HAL_TEAM_UUID_ENV = "HAL_TEAM_UUID"
+BONUS_FLAG_ENV = "BONUS_FLAG"
+FLAG_LIKE_PREFIX = "FLAG_"
+
+#: The HalCTF sidecar MCP authority (verified from live-run logs): the
+#: sidecar is infrastructure, never an attack target.
+HALCTF_SIDECAR_AUTHORITY = "127.0.0.1:9000"
 
 #: Accepted document suffixes for scope/credentials files, by format.
 _SCOPE_FILE_SUFFIXES = (".json", ".yaml", ".yml", ".toml")
@@ -366,6 +396,138 @@ def require_halctf_endpoint(environ: Mapping[str, str]) -> str:
     return endpoint
 
 
+@dataclass(frozen=True)
+class HalCTFTargetService:
+    """One named HalCTF target service parsed from ``HAL_TARGET_*`` env (HAL-001).
+
+    Attributes:
+        name: Service name — ``"default"`` for the single-service
+            ``HAL_TARGET_IP`` form, otherwise the ``<NAME>`` of the
+            ``HAL_TARGET_<NAME>_IP`` pair (casefolded).
+        ip: The injected service IP address.
+        port: The injected service port, or ``None`` when
+            ``HAL_TARGET_<NAME>_PORT`` is unset/blank — a host-only
+            entry; no port is ever invented.
+    """
+
+    name: str
+    ip: str
+    port: int | None
+
+
+def _url_authority(value: str) -> str:
+    """Normalized ``host[:port]`` authority of a URL or bare host[:port]."""
+    text = value.strip()
+    if "://" in text:
+        text = urlsplit(text).netloc
+    if "@" in text:  # strip userinfo
+        text = text.rsplit("@", 1)[1]
+    return text.casefold()
+
+
+def halctf_infra_authorities(environ: Mapping[str, str]) -> frozenset[str]:
+    """Authorities that are HalCTF infrastructure, never attack targets (HAL-001).
+
+    The sidecar (``127.0.0.1:9000``), the model service
+    (``OPENAI_BASE_URL``), the MCP server (``MCP_ENDPOINT``), and the
+    resolved MCP endpoint itself — all ``host[:port]`` normalized. A
+    ``HAL_TARGET_*`` service whose host[:port] matches one of these is
+    infrastructure, not an assessment target, and is excluded.
+    """
+    authorities = {HALCTF_SIDECAR_AUTHORITY}
+    for key in (OPENAI_BASE_URL_ENV, MCP_ENDPOINT_ENV):
+        value = _first_nonempty(environ, key)
+        if value is not None:
+            authorities.add(_url_authority(value))
+    endpoint = discover_halctf_endpoint(environ)
+    if endpoint is not None:
+        authorities.add(_url_authority(endpoint))
+    return frozenset(authorities)
+
+
+def _optional_port(environ: Mapping[str, str], key: str) -> int | None:
+    """Optional port env: unset/blank -> ``None``; invalid -> ``ConfigError``.
+
+    Raises:
+        ConfigError: If the variable is set but not a valid integer
+            (fail loudly, AGENTS.md rule #9).
+    """
+    raw = _first_nonempty(environ, key)
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        raise ConfigError(f"environment variable {key} must be an integer, got {raw!r}") from None
+
+
+def discover_halctf_services(environ: Mapping[str, str]) -> tuple[HalCTFTargetService, ...]:
+    """Parse ``HAL_TARGET_*`` env into the ordered target services (HAL-001).
+
+    Sources, in deterministic (name-sorted) order:
+
+    - the single-service form ``HAL_TARGET_IP`` with the optional
+      ``HAL_TARGET_PORT`` -> service named ``"default"``;
+    - every ``HAL_TARGET_<NAME>_IP`` / ``HAL_TARGET_<NAME>_PORT`` pair
+      -> service named ``<NAME>``.
+
+    A service with an IP but no PORT stays a host-only entry (no port is
+    invented); a set-but-invalid PORT fails loudly (``ConfigError``).
+    Services whose host[:port] matches a HalCTF infrastructure
+    authority (:func:`halctf_infra_authorities`) are excluded — the
+    sidecar, model service, and MCP server are not attack targets.
+    """
+    raw: dict[str, HalCTFTargetService] = {}
+    ip = _first_nonempty(environ, HAL_TARGET_IP_ENV)
+    if ip is not None:
+        raw["default"] = HalCTFTargetService(
+            name="default",
+            ip=ip,
+            port=_optional_port(environ, HAL_TARGET_PORT_ENV),
+        )
+    for key, value in environ.items():
+        if not key.startswith(HAL_TARGET_ENV_PREFIX) or not key.endswith(HAL_TARGET_IP_SUFFIX):
+            continue
+        name = key[len(HAL_TARGET_ENV_PREFIX) : -len(HAL_TARGET_IP_SUFFIX)]
+        if not name:
+            continue  # the bare HAL_TARGET_IP form, handled above
+        ip_value = value.strip()
+        if not ip_value:
+            continue
+        port_key = f"{HAL_TARGET_ENV_PREFIX}{name}{HAL_TARGET_PORT_SUFFIX}"
+        raw[name.casefold()] = HalCTFTargetService(
+            name=name.casefold(),
+            ip=ip_value,
+            port=_optional_port(environ, port_key),
+        )
+    infra = halctf_infra_authorities(environ)
+    services: list[HalCTFTargetService] = []
+    for service_name in sorted(raw):
+        service = raw[service_name]
+        authority = f"{service.ip}:{service.port}" if service.port is not None else service.ip
+        if authority.casefold() in infra:
+            continue
+        services.append(service)
+    return tuple(services)
+
+
+def halctf_target_allowlist(environ: Mapping[str, str]) -> tuple[str, ...]:
+    """The policy allowlist entries derived from ``HAL_TARGET_*`` (HAL-001).
+
+    Each service contributes its bare IP (so bare-IP destinations such
+    as ``nmap 10.0.0.5`` pass the policy gate) and, when it carries a
+    port, its ``IP:PORT`` authority (so URL destinations such as
+    ``curl http://10.0.0.5:8080`` pass the gate). Sorted and
+    deduplicated; deterministic.
+    """
+    entries: set[str] = set()
+    for service in discover_halctf_services(environ):
+        entries.add(service.ip)
+        if service.port is not None:
+            entries.add(f"{service.ip}:{service.port}")
+    return tuple(sorted(entries))
+
+
 def _env_str(environ: Mapping[str, str], key: str, default: str) -> str:
     """Read a string environment variable, falling back to a default.
 
@@ -550,6 +712,15 @@ def load_config(environ: Mapping[str, str] | None = None) -> OzzGraphConfig:
     # Scope-file entries MERGE into the allowlist (docs/adr/0010);
     # the merged set is sorted so the result is deterministic.
     merged_allowlist = tuple(sorted(set(allowlist) | set(scope_entries)))
+    # HAL-001: the platform-injected HAL_TARGET_* services ARE the
+    # operator's targets — derive their allowlist entries at load time so
+    # the supervisor's ScopePolicy (built from config.target_allowlist)
+    # authorizes exactly the discovered services with no manual
+    # OZZGRAPH_TARGET_ALLOWLIST step. The environment adapter derives the
+    # same entries from the same parser, so scope data and the gate can
+    # never disagree.
+    if halctf_mode_selected(env):
+        merged_allowlist = tuple(sorted(set(merged_allowlist) | set(halctf_target_allowlist(env))))
 
     try:
         return OzzGraphConfig(
