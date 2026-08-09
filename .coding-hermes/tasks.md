@@ -32,6 +32,17 @@ non-same-name test files; docs complete). Board idle → cooldown 43200s.**
 
 ## Active
 
+> **Tick 2026-08-09: HAL-001 closed (judge PASS a495fe1, commits 985950e + 9fca71a —**
+> verified this tick). Board-staleness close: work was committed + judged by prior
+> ticks but never marked [x]; git-history cross-reference surfaced it. Verified:
+> HalCTFRuntimeSnapshot env parsing (HAL_TARGET_<NAME>_IP/_PORT, HAL_CHALLENGE_*,
+> HAL_AGENT_MODEL, HAL_RUN_ID, HAL_TEAM_UUID, BONUS_FLAG/FLAG_*, OPENAI_BASE_URL,
+> MCP_ENDPOINT), discover_targets → real-URL Targets, discover_scope → hosts/urls +
+> target_allowlist atomic, infra exclusion (127.0.0.1:9000/model/MCP). 30/30 HAL
+> tests pass locally, ruff/format clean, CI green on 9fca71a, judge PASS a495fe1
+> (all 5 criteria, tier1 lint/tests/secrets PASS). gitreins task deleted.
+> HAL-002..HAL-011 pending → cooldown stays 900s. Next: HAL-002 (MCP optional).
+
 > E2E-001 tick ran 2026-08-07: 65P/1F/1U, finding FLAGLEAK-001 fixed (a667733, judge PASS) — see Completed.
 
 **Tick 2026-08-07: DOCS-000 done — documentation gate PASS (judge 1913c392).**
@@ -172,9 +183,11 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 | HAL-004 | Sidecar transport adapter — /submit + /done, normalize observed {status,points_awarded} → SubmissionResult | High | 4±1 | V09 | ++http, ++halctf | DS-V4-Flash | Medium | Kimi-K3 |
 | HAL-003 | Model routing in HalCTF mode — map OPENAI_BASE_URL → model service, HAL_AGENT_MODEL → model id | High | 3±1 | HAL-001 | ++model, ++env | DS-V4-Flash | Medium | Kimi-K3 |
 | HAL-002 | Make MCP optional/fallback for HalCTF startup — env-first challenge discovery; MCP may enhance, never a prerequisite | Critical | 3±1 | HAL-001 | ++config, ++env | DS-V4-Flash | High | DS-V4-Pro |
-| HAL-001 | HalCTFRuntimeSnapshot from env — parse HAL_CHALLENGE_*, HAL_AGENT_MODEL, HAL_RUN_ID, HAL_TEAM_UUID, all HAL_TARGET_<NAME>_IP/_PORT, flag-like env, OPENAI_BASE_URL, MCP_ENDPOINT → graph targets + Scope.hosts/urls + ScopePolicy allowlist; exclude sidecar/model/MCP infra | Critical | 5±1 | V09 | +++env, ++graph, ++policy | DS-V4-Flash | High | DS-V4-Pro |
 
-## [ ] HAL-001 — HalCTFRuntimeSnapshot: env → graph targets + scope allowlist (real HalCTF runtime)
+## [x] HAL-001 — HalCTFRuntimeSnapshot: env → graph targets + scope allowlist (real HalCTF runtime)
+
+**Tick 2026-08-09: HAL-001 closed — board-staleness close, all work verified this tick (judge PASS a495fe1, commits 985950e + 9fca71a).**
+Work was committed + judged by prior ticks but the board never marked it `[x]` — git-history cross-reference surfaced it. Verified this tick: `HalCTFRuntimeSnapshot` parses every `HAL_TARGET_<NAME>_IP/_PORT` pair + single `HAL_TARGET_IP/PORT`, `HAL_CHALLENGE_*`, `HAL_AGENT_MODEL`, `HAL_RUN_ID`, `HAL_TEAM_UUID`, flag-like env (BONUS_FLAG/FLAG_*), OPENAI_BASE_URL, MCP_ENDPOINT (config.py:122-142); `discover_targets()` emits one Target per named service as a real URL (http://IP:PORT), never the challenge id; `discover_scope()` populates hosts/urls + ScopePolicy target_allowlist merged from `halctf_target_allowlist` in one atomic adapter op (environment.py:262-319); infra authorities (sidecar 127.0.0.1:9000, model, MCP) excluded via `halctf_infra_authorities` (config.py:428,503). Tottori env-shape fixture tests: 30/30 pass locally, ruff/format clean, full suite green in CI (success on 9fca71a). Judge lifecycle: first run FAIL c229ca7a (2:52AM, judged only commit 985950e before metadata parsing landed — honest sequential), re-run after 9fca71a → PASS e4df7742/a495fe1 (all 5 criteria, tier1 lint/tests/secrets PASS, evaluated 10:33Z). gitreins task deleted, tasks.yaml clean. Board still has HAL-002..HAL-011 pending → cooldown stays 900s. Next: HAL-002 (MCP optional/fallback for HalCTF startup).
 
 **Source:** Cross-repo assessment of `kazuki005276ssh/halctf-team-tottori` committed live-run logs vs current OzzGraph code (verified this session, no code changed). Tottori's real detonation injected `HAL_AGENT_MODEL`, `HAL_CHALLENGE_ID=18`, `HAL_CHALLENGE_NAME="Charon's Ferry"`, `HAL_CHALLENGE_CATEGORY="Web / SSRF"`, `HAL_TARGET_FERRY_IP/PORT`, `HAL_TARGET_UNDERWORLD_IP/PORT`, `HAL_RUN_ID`, `HAL_TEAM_UUID`, `OPENAI_BASE_URL`, `MCP_ENDPOINT`. OzzGraph's `discover_targets()` currently returns `Target(address=challenge_id)` — the graph target is literally `"18"`, not `http://10.244.x.x:9004`. And `DEFAULT_TARGET_ALLOWLIST=()` (fail-closed) is never derived from `HAL_TARGET_*`, so even a correct address would be refused.
 
@@ -288,6 +301,7 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
+| HAL-001 | HalCTFRuntimeSnapshot from env — HAL_TARGET_<NAME>_IP/_PORT + single-form + HAL_CHALLENGE_* + HAL_AGENT_MODEL/HAL_RUN_ID/HAL_TEAM_UUID + flag-like env + OPENAI_BASE_URL/MCP_ENDPOINT → real-URL graph targets + Scope.hosts/urls + ScopePolicy target_allowlist (atomic), infra exclusion (sidecar 127.0.0.1:9000/model/MCP) (judge PASS a495fe1, all 5 criteria, tier1 lint/tests/secrets PASS) | Critical | 5±1 | 9fca71a | DS-V4-Flash |
 | DOCS-000 | v2 documentation pass re-run — README refreshed for completed v2 milestone (release status v1.0.0 + v2 V01–V10, v2 modules in capabilities/layout: environments/, findings.py, observations.py, security_brain.py, specialists.py, profile_store.py/profile_data/, matrix.py, benchmarks/, lab/), v2 docs added to Documentation table (CHANGES_v2.md, OBSERVATIONS.md, BENCHMARKS.md, SYNTHETIC_LAB.md), repo description + 7 topics updated via gh repo edit, formatting bar intact (judge PASS 8ae01605, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 3±1 | c436427 | DS-V4-Flash |
 | V10 | full-regression: benchmarks/ package (registry + OzzGraph harness vs plain ReAct + scripted model + scoring + deterministic report), dead-end lab target with pivot proof (hypothesis_abandoned + PIVOT, bounded turns), tool-contract test (every required_capability resolves to installed provider), benchmark CLI (--target/--react/--max-turns/--out + OZZGRAPH_BENCHMARK_* env), docs/BENCHMARKS.md (judge PASS 9ce33342, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 5±1 | 498a214 | DS-V4-Flash |
 | INT-CI-001 | E2E driver imports V09-moved flag modules from canonical homes (ozzgraph.entities / ozzgraph.environments.halctf) — fixes CI Lint failure (ruff I001 on e2e_001_driver.py, symptom of deleted ozzgraph.flags regression) | High | 1±0 | 5628bf4 | DS-V4-Flash |
