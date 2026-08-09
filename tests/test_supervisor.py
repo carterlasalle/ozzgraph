@@ -562,6 +562,67 @@ def test_make_environment_halctf_without_endpoint(tmp_path, monkeypatch) -> None
     assert environment.endpoint is None
 
 
+# ---------------------------------------------------------------------------
+# HAL-003: HalCTF model routing
+# ---------------------------------------------------------------------------
+
+
+def test_model_routing_local_mode_returns_none(tmp_path, monkeypatch) -> None:
+    """Local mode: no model routing — the runner keeps its defaults
+    (OZZGRAPH_MODEL_ID / OZZGRAPH_MODEL_BASE_URL / defaults)."""
+    for var in (
+        "OZZGRAPH_CHALLENGE_ID",
+        "HAL_CTF_ID",
+        "HAL_CHALLENGE_ID",
+        "HAL_ENDPOINT",
+        "HAL_MCP_ENDPOINT",
+        "MCP_ENDPOINT",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    supervisor = Supervisor(_config(tmp_path))
+    assert supervisor._model_routing() == (None, None)
+
+
+def test_model_routing_halctf_uses_platform_env(tmp_path, monkeypatch) -> None:
+    """HAL-003: in HalCTF mode HAL_AGENT_MODEL maps to the model id and
+    OPENAI_BASE_URL maps to the model client base URL."""
+    monkeypatch.setenv("HAL_CTF_ID", "web-01")
+    monkeypatch.setenv("HAL_AGENT_MODEL", "google/gemma-4-26b-a4b-it-maas")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://127.0.0.1:9000/llm")
+    supervisor = Supervisor(_config(tmp_path))
+    model_id, base_url = supervisor._model_routing()
+    assert model_id == "google/gemma-4-26b-a4b-it-maas"
+    assert base_url == "http://127.0.0.1:9000/llm"
+
+
+def test_model_routing_halctf_without_platform_vars_degrades(tmp_path, monkeypatch) -> None:
+    """HAL-003: HalCTF mode without HAL_AGENT_MODEL / OPENAI_BASE_URL
+    resolves to None, and the supervisor-built ModelService(base_url=None)
+    falls back to OZZGRAPH_MODEL_BASE_URL / the default URL (no crash)."""
+    from ozzgraph.model_client import DEFAULT_MODEL_BASE_URL, MODEL_BASE_URL_ENV, ModelService
+
+    monkeypatch.setenv("HAL_CTF_ID", "web-01")
+    monkeypatch.delenv("HAL_AGENT_MODEL", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    supervisor = Supervisor(_config(tmp_path))
+    model_id, base_url = supervisor._model_routing()
+    assert model_id is None
+    assert base_url is None
+    # The exact ModelService wiring the supervisor builds in HalCTF mode.
+    monkeypatch.setenv(MODEL_BASE_URL_ENV, "http://127.0.0.1:8001/v1")
+    service = ModelService(base_url=base_url, max_retries=0)
+    try:
+        assert service.base_url == "http://127.0.0.1:8001/v1"
+    finally:
+        asyncio.run(service.aclose())
+    monkeypatch.delenv(MODEL_BASE_URL_ENV)
+    service = ModelService(base_url=base_url, max_retries=0)
+    try:
+        assert service.base_url == DEFAULT_MODEL_BASE_URL
+    finally:
+        asyncio.run(service.aclose())
+
+
 @pytest.mark.asyncio
 async def test_print_local_scope_prints_scope_and_objectives(tmp_path, capsys) -> None:
     """The local-mode bootstrap summary prints scope, targets, and

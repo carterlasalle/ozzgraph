@@ -305,6 +305,15 @@ class ModelService:
             transport=transport,
         )
 
+    @property
+    def base_url(self) -> str:
+        """The resolved base URL (after env fallback and trailing-slash strip).
+
+        Read-only: the runner logs the ACTUAL URL the client talks to
+        (HAL-003) instead of the ``DEFAULT_MODEL_BASE_URL`` constant.
+        """
+        return self._base_url
+
     async def aclose(self) -> None:
         """Close the underlying httpx client, releasing pooled connections."""
         await self._client.aclose()

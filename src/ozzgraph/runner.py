@@ -497,7 +497,12 @@ class AutonomousRunner:
                 "run_id": self._run_id,
                 "model_id": self._model_id,
                 "profile_family": self._profile.family,
-                "base_url": DEFAULT_MODEL_BASE_URL,
+                # HAL-003: log the ACTUAL resolved base URL the model
+                # client talks to (env fallback applied), never the
+                # DEFAULT_MODEL_BASE_URL constant. getattr keeps
+                # protocol test doubles without a base_url attribute
+                # (e.g. ScriptedModelService) on the default.
+                "base_url": getattr(self._model_service, "base_url", DEFAULT_MODEL_BASE_URL),
             },
         )
         while True:

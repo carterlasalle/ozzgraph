@@ -50,6 +50,7 @@ from ozzgraph.budgets import Budgets
 from ozzgraph.config import (
     ConfigError,
     OzzGraphConfig,
+    build_halctf_runtime_snapshot,
     discover_halctf_challenge_id,
     halctf_mode_selected,
 )
@@ -68,6 +69,7 @@ from ozzgraph.evaluator import Evaluator
 from ozzgraph.events import BOOTSTRAP, TERMINATION, Event, EventLog
 from ozzgraph.hal_client import HalClient, HintResult, SubmissionResult
 from ozzgraph.heartbeat import Heartbeat
+from ozzgraph.model_client import ModelService
 from ozzgraph.policy import ScopePolicy
 from ozzgraph.runner import AutonomousRunner, RunnerStatus
 from ozzgraph.state_graph import StateGraph
@@ -228,6 +230,11 @@ class Supervisor:
                 # (AGENTS.md rule #9).
                 return self.stop(reason=TerminationReason.FAILED)
             self._environment = environment
+            # HAL-003: when HalCTF mode routes model config from the
+            # platform env, the supervisor constructs and OWNS the model
+            # service — it is closed in the finally below (runner.aclose()
+            # only closes runner-owned services).
+            model_service: ModelService | None = None
             try:
                 await self._print_local_scope(environment)
                 assert self._event_log is not None  # start() set it
@@ -245,6 +252,22 @@ class Supervisor:
                     # (docs/adr/0008, "Harder"). Deterministic-only:
                     # no model fallback client, no extra model calls.
                     evaluator = Evaluator(run_id=self._run_id, event_log=self._event_log)
+                    # HAL-003: in HalCTF mode the platform-injected
+                    # HAL_AGENT_MODEL / OPENAI_BASE_URL drive the model
+                    # id and client base URL (parsed via the HAL-001
+                    # snapshot); absent variables degrade gracefully —
+                    # model_id=None falls back to OZZGRAPH_MODEL_ID /
+                    # "default" in the runner, and ModelService(
+                    # base_url=None) falls back to
+                    # OZZGRAPH_MODEL_BASE_URL / the default. Local mode
+                    # passes nothing extra; runner defaults unchanged.
+                    model_id, model_base_url = self._model_routing()
+                    if halctf_mode_selected(os.environ):
+                        model_service = ModelService(
+                            base_url=model_base_url,
+                            event_log=self._event_log,
+                            run_id=self._run_id,
+                        )
                     runner = AutonomousRunner(
                         config=cfg,
                         graph=graph,
@@ -254,6 +277,8 @@ class Supervisor:
                         environment=environment,
                         stop_event=stop_event,
                         run_id=self._run_id,
+                        model_id=model_id,
+                        model_service=model_service,
                         policy=policy,
                         evaluator=evaluator,
                     )
@@ -263,6 +288,8 @@ class Supervisor:
                         await runner.aclose()
                 return self.stop(reason=self._map_status(status))
             finally:
+                if model_service is not None:
+                    await model_service.aclose()
                 await environment.aclose()
         finally:
             heartbeat.stop()
@@ -290,6 +317,29 @@ class Supervisor:
         if halctf_mode_selected(os.environ):
             return HalCTFEnvironment(self._config)
         return LocalEnvironment(self._config)
+
+    def _model_routing(self) -> tuple[str | None, str | None]:
+        """Resolve the run's model id and client base URL (HAL-003).
+
+        In HalCTF mode the platform-injected ``HAL_AGENT_MODEL`` and
+        ``OPENAI_BASE_URL`` (parsed through the HAL-001 snapshot,
+        :func:`~ozzgraph.config.build_halctf_runtime_snapshot`) drive
+        the model routing. Absent platform variables resolve to
+        ``None`` and degrade gracefully: the runner falls back to
+        ``OZZGRAPH_MODEL_ID`` / ``"default"``, and the supervisor-built
+        :class:`~ozzgraph.model_client.ModelService` falls back to
+        ``OZZGRAPH_MODEL_BASE_URL`` / the default URL. Local mode
+        returns ``(None, None)`` — the runner keeps its defaults
+        unchanged.
+
+        Returns:
+            The resolved ``(model_id, base_url)`` pair; either may be
+            ``None`` to signal env/default fallback.
+        """
+        if not halctf_mode_selected(os.environ):
+            return None, None
+        snapshot = build_halctf_runtime_snapshot(os.environ)
+        return snapshot.agent_model, snapshot.openai_base_url
 
     async def _print_local_scope(self, environment: EnvironmentAdapter) -> None:
         """Print the local-mode bootstrap summary (scope/objectives).

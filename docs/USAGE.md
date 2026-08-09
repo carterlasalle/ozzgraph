@@ -95,6 +95,13 @@ status, smoke flag, submissions, hints, scoreboard).
 | `OZZGRAPH_MODEL_TIMEOUT_S` | `60` | Per-request timeout. |
 | `OZZGRAPH_MODEL_MAX_RETRIES` | `3` | Bounded exponential-backoff retries (max 10). |
 
+**HalCTF model routing (HAL-003):** on the live competition platform
+`OPENAI_BASE_URL` maps the model client base URL (`http://127.0.0.1:9000/llm`)
+and `HAL_AGENT_MODEL` maps the model id (`google/gemma-4-26b-a4b-it-maas`) —
+both override the `OZZGRAPH_MODEL_*` / defaults above in HalCTF mode. When
+either is absent the run degrades gracefully to `OZZGRAPH_MODEL_ID` /
+`OZZGRAPH_MODEL_BASE_URL` / the defaults. Local mode is unchanged.
+
 ### 2.4 Minimal working example
 
 ```bash

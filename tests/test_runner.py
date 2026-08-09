@@ -22,7 +22,13 @@ from ozzgraph.budgets import Budgets
 from ozzgraph.config import OzzGraphConfig
 from ozzgraph.environments import EnvironmentAdapter, Objective, Scope, Target
 from ozzgraph.events import EventLog
-from ozzgraph.model_client import ModelService
+from ozzgraph.model_client import (
+    DEFAULT_MODEL_BASE_URL,
+    ModelClient,
+    ModelRequest,
+    ModelResponse,
+    ModelService,
+)
 from ozzgraph.phases import Phase
 from ozzgraph.policy import ScopePolicy
 from ozzgraph.profiles import GPT_PROFILE
@@ -142,7 +148,8 @@ def _runner(
     graph: StateGraph,
     *,
     environment: EnvironmentAdapter | None = None,
-    model_service: ModelService | None = None,
+    model_service: ModelClient | None = None,
+    model_id: str | None = "test-model",
     stop_event=None,
     budgets: Budgets | None = None,
     inventory: ToolInventory | None = None,
@@ -162,7 +169,7 @@ def _runner(
         environment=environment if environment is not None else FakeEnvironment(),
         stop_event=stop_event,
         run_id=RUN,
-        model_id="test-model",
+        model_id=model_id,
         profile=GPT_PROFILE,
         model_service=model_service,
         policy=ScopePolicy(target_allowlist=("127.0.0.1",)),
@@ -225,6 +232,87 @@ async def test_seeding_is_idempotent(tmp_path: Path) -> None:
         # Every graph mutation was mirrored as a graph.* event.
         created = [e for e in _read_events(tmp_path) if e["event_type"] == "graph.entity_created"]
         assert any(e["payload"]["entity_id"] == "objective-fake-1" for e in created)
+
+
+# ---------------------------------------------------------------------------
+# HAL-003: model routing (model id fallback + started-event base URL)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_model_id_resolution_falls_back_to_env_then_default(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """HAL-003: with model_id=None the runner honors OZZGRAPH_MODEL_ID,
+    then the default id — the graceful fallback for HalCTF mode without
+    HAL_AGENT_MODEL and for local mode."""
+    from ozzgraph.runner import DEFAULT_MODEL_ID, MODEL_ID_ENV
+
+    monkeypatch.setenv(MODEL_ID_ENV, "env-model-1")
+    async with StateGraph(":memory:") as graph:
+        runner = _runner(tmp_path, graph, model_id=None)
+        try:
+            assert runner._model_id == "env-model-1"
+        finally:
+            await runner.aclose()
+    monkeypatch.delenv(MODEL_ID_ENV)
+    async with StateGraph(":memory:") as graph:
+        runner = _runner(tmp_path, graph, model_id=None)
+        try:
+            assert runner._model_id == DEFAULT_MODEL_ID
+        finally:
+            await runner.aclose()
+
+
+@pytest.mark.asyncio
+async def test_run_started_event_carries_resolved_base_url(tmp_path: Path) -> None:
+    """HAL-003: runner.started logs the ACTUAL resolved model base URL,
+    never the DEFAULT_MODEL_BASE_URL constant."""
+    service = ModelService(
+        base_url="http://127.0.0.1:9999/v1",
+        max_retries=0,
+        event_log=EventLog.for_run(tmp_path / "state"),
+        run_id=RUN,
+    )
+    stop_event = __import__("asyncio").Event()
+    stop_event.set()
+    async with StateGraph(":memory:") as graph:
+        runner = _runner(tmp_path, graph, model_service=service, stop_event=stop_event)
+        try:
+            status = await runner.run()
+        finally:
+            await runner.aclose()
+        assert status is RunnerStatus.STOPPED
+    started = (await _events_of(tmp_path, "runner.started"))[0]
+    assert started["payload"]["base_url"] == "http://127.0.0.1:9999/v1"
+
+
+@pytest.mark.asyncio
+async def test_run_started_event_default_base_url_for_protocol_doubles(
+    tmp_path: Path,
+) -> None:
+    """HAL-003: a model client double without a base_url attribute (the
+    ModelClient protocol, e.g. ScriptedModelService) keeps the default
+    constant in runner.started — no protocol breakage."""
+
+    class _NoUrlClient:
+        async def complete(self, request: ModelRequest) -> ModelResponse:
+            raise AssertionError("no model call expected (stopped before any turn)")
+
+        async def aclose(self) -> None:
+            pass
+
+    stop_event = __import__("asyncio").Event()
+    stop_event.set()
+    async with StateGraph(":memory:") as graph:
+        runner = _runner(tmp_path, graph, model_service=_NoUrlClient(), stop_event=stop_event)
+        try:
+            status = await runner.run()
+        finally:
+            await runner.aclose()
+        assert status is RunnerStatus.STOPPED
+    started = (await _events_of(tmp_path, "runner.started"))[0]
+    assert started["payload"]["base_url"] == DEFAULT_MODEL_BASE_URL
 
 
 # ---------------------------------------------------------------------------
