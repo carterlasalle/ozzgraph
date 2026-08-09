@@ -32,6 +32,33 @@ non-same-name test files; docs complete). Board idle → cooldown 43200s.**
 
 ## Active
 
+> **Tick 2026-08-09: HAL-010 closed (judge PASS 8d303648, commit a582b25 — verified**
+> this tick). SpecialistFleet wired into PRODUCTION composition — the V07
+> bounded-parallel batch path is no longer test-only. `Supervisor.run`
+> composes `SpecialistFleet(artifacts, event_log, run_id, policy,
+> max_workers, state_dir)` into `AutonomousRunner(specialists=...)` behind
+> the new `OZZGRAPH_SPECIALISTS_ENABLED` toggle (`config.specialists_enabled`,
+> `_env_bool` parser — 1/true/yes/on, default OFF: existing runs keep the V06
+> model path byte-for-byte, ADR-0009 consequence). Fleet owns no async
+> resources — plain construction, no aclose. Runner side already existed
+> (gate runner.py:598 `_is_hypothesis_batch` → `_run_specialist_batch_turn`,
+> ZERO LLM calls). Tests: test_supervisor.py captures the AutonomousRunner
+> kwargs via monkeypatch — enabled ⇒ isinstance SpecialistFleet with the run's
+> artifacts/event_log/run_id/max_workers/state_dir wired; default ⇒
+> specialists=None; test_runner.py `_one_turn` gate test: batch decision →
+> StubFleet dispatched, `_NoModelCallsService.calls == 0`; test_config.py 4
+> env-toggle tests. Docs: CHANGES_v2.md HAL-010 line, USAGE.md env table row.
+> Gate: ruff format/check clean, mypy src strict (62 files), full suite 1301
+> passed (+7). Worker dispatched via hermes chat (deepseek-v4-flash @
+> openrouter), committed a582b25 (Tier-1 guard PASS — full suite in hook) +
+> pushed (origin/main..HEAD=0 verified). Judge PASS 8d303648 (4/4 criteria,
+> tier1 lint/tests/secrets PASS — first two judge runs FAILed spurious tier1
+> `ruff: not found` (bare-shell PATH), resolved by exporting
+> `.venv/bin` on the judge PATH; evaluator re-ran ruff/mypy + full pytest
+> 1301 passed fresh; verdict committed on gitreins branch). gitreins task
+> deleted, tasks.yaml clean. HAL-011 pending → cooldown stays 900s.
+> Next: HAL-011 (per board).
+
 > **Tick 2026-08-09: HAL-009 closed (judge PASS 9ab0a5c9, commit de5d9a4 — verified**
 > this tick). Tottori live-run exploitation lessons ported into skill cards,
 > kernel-external: 8 new cards registered in the SKILLS registry (skills.py)
