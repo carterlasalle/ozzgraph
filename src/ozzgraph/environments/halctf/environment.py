@@ -70,6 +70,8 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 
+import httpx
+
 from ozzgraph.artifacts import ArtifactStore
 from ozzgraph.config import (
     ConfigError,
@@ -84,6 +86,7 @@ from ozzgraph.config import (
 from ozzgraph.environments.halctf.flags import FlagCandidateExtractor
 from ozzgraph.environments.halctf.hints import HintClient, HintCoordinator, HintPolicy
 from ozzgraph.environments.halctf.scoreboard import ScoreboardClient, ScoreboardCoordinator
+from ozzgraph.environments.halctf.sidecar import SidecarSubmissionClient
 from ozzgraph.environments.halctf.submissions import SubmissionClient, SubmissionCoordinator
 from ozzgraph.environments.models import Objective, Scope, Target
 from ozzgraph.events import EventLog
@@ -269,6 +272,41 @@ class HalCTFEnvironment:
     ) -> ScoreboardCoordinator:
         """The scoreboard service for this run (read-only, not privileged)."""
         return ScoreboardCoordinator(client=client, run_id=run_id, event_log=event_log)
+
+    def sidecar_submission_client(
+        self,
+        *,
+        run_id: str = "",
+        event_log: EventLog | None = None,
+        base_url: str | None = None,
+        privileged: bool | None = None,
+        timeout_s: float | None = None,
+        max_retries: int | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> SidecarSubmissionClient:
+        """The plain-HTTP sidecar submission transport for this run (HAL-004).
+
+        The sidecar base URL resolves env-first from the environment's
+        own view (:func:`ozzgraph.environments.halctf.sidecar.discover_halctf_sidecar_base_url`
+        — explicit arg, then ``OZZGRAPH_SIDECAR_BASE_URL``, then the MCP
+        endpoint's origin, then the localhost default), so a live
+        sidecar sharing the MCP host:port (the real deployment shape)
+        is picked up without extra configuration. The returned client
+        implements the :class:`SubmissionClient` protocol and drives the
+        supervisor-only coordinator unchanged; ``privileged`` defaults
+        to the shared ``OZZGRAPH_HAL_PRIVILEGED`` flag (only the
+        supervisor sets it, AGENTS.md invariant 5).
+        """
+        return SidecarSubmissionClient(
+            base_url=base_url,
+            timeout_s=timeout_s,
+            max_retries=max_retries,
+            privileged=privileged,
+            event_log=event_log,
+            run_id=run_id,
+            transport=transport,
+            environ=self._environ,
+        )
 
     # -- EnvironmentAdapter protocol -----------------------------------
 

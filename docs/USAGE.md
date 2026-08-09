@@ -74,6 +74,9 @@ constructor-injected with environment fallback in `ozzgraph.model_client` and
 | `OZZGRAPH_MCP_TIMEOUT_S` | `60` | Per-request timeout. |
 | `OZZGRAPH_MCP_MAX_RETRIES` | `3` | Bounded retries on transient failures (429/5xx/transport; max 10). |
 | `OZZGRAPH_HAL_PRIVILEGED` | — | When set, `halctl` privileged operations (submit, paid hints, exit) are allowed. Only the supervisor sets this. |
+| `OZZGRAPH_SIDECAR_BASE_URL` | MCP origin, else `http://127.0.0.1:9000` | The real competition sidecar's plain-HTTP root (HAL-004): `POST /submit` + `POST /done`. Env-first discovery — an explicit value wins, then the ORIGIN of the resolved MCP endpoint (the sidecar shares the MCP host:port in the real deployment: `MCP_ENDPOINT=http://127.0.0.1:9000/mcp` -> `http://127.0.0.1:9000`), then the localhost default. `OPENAI_BASE_URL` is never consulted (it is the model service). |
+| `OZZGRAPH_SIDECAR_TIMEOUT_S` | `60` | Per-request timeout for sidecar `/submit` + `/done`. |
+| `OZZGRAPH_SIDECAR_MAX_RETRIES` | `3` | Bounded retries on transient sidecar failures (429/5xx/transport; max 10). |
 
 HalCTF mode is selected when ANY HalCTF runtime variable is set
 (`HAL_CTF_ID`, `HAL_CHALLENGE_ID`, `HAL_ENDPOINT`, `HAL_MCP_ENDPOINT`,
@@ -85,6 +88,21 @@ platform-injected `HAL_TARGET_*` services and `HAL_CHALLENGE_*`
 metadata starts without one — MCP is enrichment/fallback. Set one of
 the endpoint candidates above to enable MCP features (bootstrap
 status, smoke flag, submissions, hints, scoreboard).
+
+**Sidecar submission transport (HAL-004):** the real competition
+sidecar speaks PLAIN HTTP at the MCP host:port's root (not JSON-RPC):
+`POST /submit` with `{"challenge_id", "flag"}` yields
+`{"status": "correct", "points_awarded": 1}`, and `POST /done` signals
+run teardown. `SidecarSubmissionClient` (via the environment's
+`sidecar_submission_client()` factory) is the transport adapter at that
+boundary: it normalizes every observed response form into the internal
+`SubmissionResult` schema (status strings `correct`/`accepted`/`solved`/
+`success`/`already_solved`, boolean verdict fields, and points > 0 all
+accept deterministically), retries bounded on transient failures, and
+enforces the same supervisor-only privilege boundary as the MCP client
+(`submit_flag` and `done` require `OZZGRAPH_HAL_PRIVILEGED`). `/done` is
+best-effort — failures are recorded as `sidecar.done_failed` events and
+never fail the run.
 
 ### 2.3 Model endpoint (OpenAI-compatible)
 

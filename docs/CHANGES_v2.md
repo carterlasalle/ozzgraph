@@ -199,7 +199,32 @@ independently implemented components.
    > imports the moved modules. Graceful completion: the objective's
    > `success_hint` names the deterministic signal, an accepted
    > submission routes the graph DONE, and the run terminates COMPLETED
-   > with the V08 report bundle.
+   > with the V08 report bundle. HAL-004 (2026-08-09): sidecar transport
+   > adapter — `src/ozzgraph/environments/halctf/sidecar.py` adds
+   > `SidecarSubmissionClient` (with the environment factory
+   > `sidecar_submission_client()`), the plain-HTTP adapter at the real
+   > competition sidecar's process boundary: `POST /submit` +
+   > `POST /done` at `127.0.0.1:9000`, NOT JSON-RPC (verified from the
+   > halctf-team-tottori deployment's live-run logs). It implements the
+   > `SubmissionClient` protocol (privileged / submit_flag / aclose), so
+   > the supervisor-only `SubmissionCoordinator` drives it unchanged, and
+   > normalizes every observed response form into the internal
+   > `SubmissionResult` schema deterministically (`ACCEPT_STATUSES` =
+   > correct / accepted / solved / success / already_solved; then explicit
+   > boolean verdict fields; then points > 0; wrong-typed verdicts fail
+   > loudly as `HalServiceError`, never coerced). Base URL resolution is
+   > env-first (explicit `OZZGRAPH_SIDECAR_BASE_URL` -> the resolved MCP
+   > endpoint's ORIGIN — the sidecar shares the MCP host:port in the real
+   > deployment — -> the localhost default; `OPENAI_BASE_URL` never
+   > consulted); `OZZGRAPH_SIDECAR_TIMEOUT_S` / `OZZGRAPH_SIDECAR_MAX_RETRIES`
+   > bound the client, and the shared `OZZGRAPH_HAL_PRIVILEGED` flag keeps
+   > the supervisor-only boundary (`submit_flag` and `done` raise
+   > `HalPrivilegeError` otherwise). Failures are typed
+   > (`HalServiceError` with provider/status_code/retryable/message),
+   > retried bounded on transient failures only (429/5xx/transport), and
+   > recorded as `sidecar.failure` events; `/done` is BEST-EFFORT
+   > (`sidecar.done` / `sidecar.done_failed` events, never raises — a run
+   > must not fail because the sidecar was unreachable at teardown).
 10. `v2/full-regression` — real benchmark suite across the model matrix.
     > V10 (2026-08-08): implemented — `src/ozzgraph/benchmarks/` +
     > `ozzgraph benchmark` CLI + docs/BENCHMARKS.md. The full-regression

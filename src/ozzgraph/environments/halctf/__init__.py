@@ -81,6 +81,14 @@ from ozzgraph.environments.halctf.scoreboard import (
     ScoreboardCoordinator,
     ScoreboardError,
 )
+from ozzgraph.environments.halctf.sidecar import (
+    ACCEPT_STATUSES,
+    SIDECAR_DONE_EVENT,
+    SIDECAR_DONE_FAILED_EVENT,
+    SIDECAR_FAILURE_EVENT,
+    SidecarSubmissionClient,
+    discover_halctf_sidecar_base_url,
+)
 from ozzgraph.environments.halctf.submissions import (
     SUBMISSIONS_PRODUCER,
     SubmissionClient,
@@ -93,6 +101,7 @@ from ozzgraph.environments.halctf.submissions import (
 )
 
 __all__ = [
+    "ACCEPT_STATUSES",
     "DEFAULT_HALCTF_CAPABILITIES",
     "EDGE_EVIDENCE_EXTRACTED_FROM_OBSERVATION",
     "EDGE_FLAG_CANDIDATE_OBSERVED_IN_EVIDENCE",
@@ -124,6 +133,9 @@ __all__ = [
     "RULE_SUFFICIENT_EV",
     "RULE_TWO_RECOMMENDATIONS",
     "SCOREBOARD_PRODUCER",
+    "SIDECAR_DONE_EVENT",
+    "SIDECAR_DONE_FAILED_EVENT",
+    "SIDECAR_FAILURE_EVENT",
     "SUBMISSIONS_PRODUCER",
     "FlagCandidate",
     "FlagCandidateExtractor",
@@ -143,6 +155,7 @@ __all__ = [
     "ScoreboardClient",
     "ScoreboardCoordinator",
     "ScoreboardError",
+    "SidecarSubmissionClient",
     "SubmissionClient",
     "SubmissionCoordinator",
     "SubmissionError",
@@ -150,6 +163,7 @@ __all__ = [
     "SubmissionPrivilegeError",
     "SubmissionRejectedError",
     "SubmissionStateError",
+    "discover_halctf_sidecar_base_url",
     "flag_candidate_id",
     "hint_recommendation_id",
 ]
