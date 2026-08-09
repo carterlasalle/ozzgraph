@@ -108,7 +108,7 @@ Configuration is constructor-injected with environment fallback; the
 | Env var | Default | Meaning |
 |---|---|---|
 | `OZZGRAPH_MCP_BASE_URL` | `http://127.0.0.1:9000/mcp` | Base URL including the MCP endpoint path — the FIRST of the deterministic V09 discovery candidates. |
-| `HAL_MCP_ENDPOINT` / `HAL_ENDPOINT` / `MCP_ENDPOINT` / `OPENAI_BASE_URL` | — | Additional endpoint candidates, consulted in order after `OZZGRAPH_MCP_BASE_URL` (first non-blank wins; see `ozzgraph.config.discover_halctf_endpoint`). |
+| `HAL_MCP_ENDPOINT` / `HAL_ENDPOINT` / `MCP_ENDPOINT` | — | Additional endpoint candidates, consulted in order after `OZZGRAPH_MCP_BASE_URL` (first non-blank wins; `OPENAI_BASE_URL` is the model service and is never a candidate; see `ozzgraph.config.discover_halctf_endpoint`). |
 | `OZZGRAPH_MCP_TIMEOUT_S` | `60` | Request timeout in seconds |
 | `OZZGRAPH_MCP_MAX_RETRIES` | `3` | Retries for transient failures; `0` disables, bounded to max 10 |
 | `OZZGRAPH_HAL_PRIVILEGED` | *(unset)* | Supervisor flag; only a privileged `halctl`/`HalClient` may submit flags, buy paid hints, or exit the run |

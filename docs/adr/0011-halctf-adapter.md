@@ -49,21 +49,26 @@ between the V01 slice and a complete adapter:
   (`discover_halctf_challenge_id`).
 - The MCP endpoint is the first non-blank of the ordered candidates
   `OZZGRAPH_MCP_BASE_URL` / `HAL_MCP_ENDPOINT` / `HAL_ENDPOINT` /
-  `MCP_ENDPOINT` / `OPENAI_BASE_URL` (`discover_halctf_endpoint`).
-  `OPENAI_BASE_URL` can carry the endpoint once another variable
-  selected the mode but never selects HalCTF mode itself (it is a model
-  endpoint in local mode).
+  `MCP_ENDPOINT` (`discover_halctf_endpoint`). `OPENAI_BASE_URL` is
+  deliberately NOT a candidate — it is the model service (`/llm`), not
+  the MCP server (`/mcp/`) — and it never selects HalCTF mode itself
+  (it is a model endpoint in local mode).
 - `HAL_USER_ID` is operator identity, required for EVERY run (local
   included) — it is deliberately NOT a mode selector, so the local
   default is unchanged (docs/adr/0010: with no HalCTF runtime variable
   the run uses `LocalEnvironment` and the V08 `OZZGRAPH_TARGET`
   classification stays authoritative).
 
-**Fail loudly**: HalCTF mode selected but the endpoint missing is a
-`ConfigError` (`require_halctf_endpoint`). It fires at `load_config`
-time (the CLI fails at startup) and again at
-`HalCTFEnvironment.__init__` (defense in depth for direct
-construction). The supervisor maps the construction failure to a
+**Fail loudly** (HAL-002 amendment, 2026-08-09): the MCP endpoint is
+OPTIONAL. An env-only detonation — platform-injected `HAL_TARGET_*`
+services and `HAL_CHALLENGE_*` metadata, no endpoint — starts without
+one: `load_config` and `HalCTFEnvironment.__init__` construct with
+`endpoint=None` and MCP stays enrichment/fallback.
+`require_halctf_endpoint` remains the loud helper (`ConfigError`) for
+callers that genuinely need the endpoint (explicit submission /
+HalClient construction), so fail-loud is preserved for truly
+unrecoverable configuration (e.g. a set-but-invalid `HAL_TARGET_*`
+port). The supervisor maps any construction `ConfigError` to a
 structured `FAILED` termination.
 
 `hal_client` resolves its base URL through the same discovery
@@ -164,9 +169,10 @@ Easier:
   (`submit_verified_candidate`, `request_paid_hint`) but now build
   their coordinators through the environment when one is active, so the
   discovered challenge id and config budgets are applied in one place.
-- Discovery is deterministic and loudly validated: a platform-injected
-  `HAL_*`/`MCP_ENDPOINT`/`OPENAI_BASE_URL` environment needs no
-  OzzGraph-specific variable beyond the challenge id.
+- Discovery is deterministic and validated: a platform-injected
+  `HAL_*`/`MCP_ENDPOINT` environment needs no OzzGraph-specific
+  variable beyond the challenge id, and the MCP endpoint is optional
+  (HAL-002) — env-derived challenge metadata alone starts a run.
 
 Harder:
 

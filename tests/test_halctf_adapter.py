@@ -3,11 +3,13 @@
 Covers the milestone's five slices:
 
 1. Discovery — deterministic HalCTF runtime discovery from ``HAL_*`` /
-   ``MCP_ENDPOINT`` / ``OPENAI_BASE_URL`` variables in config, with
-   HalCTF mode failing loudly (``ConfigError``) when the MCP endpoint is
-   missing. The local default is unchanged (no HalCTF runtime variable
-   means a local assessment; ``HAL_USER_ID`` alone never selects HalCTF
-   mode).
+   ``MCP_ENDPOINT`` variables in config, with the MCP endpoint OPTIONAL
+   (HAL-002): an env-only detonation (HAL_TARGET_* services + challenge
+   metadata, no endpoint) constructs with ``endpoint=None`` and never
+   fails at startup — fail-loud stays reserved for truly unrecoverable
+   configuration and for callers that genuinely need the endpoint. The
+   local default is unchanged (no HalCTF runtime variable means a local
+   assessment; ``HAL_USER_ID`` alone never selects HalCTF mode).
 2. Official tool set — ``hal_client`` exposes ``list_ctfs``,
    ``challenges``, ``status``, ``submit_flag``, ``request_hint``,
    ``scoreboard`` (``OFFICIAL_HALCTF_TOOLS``), wiring ``ctf.list`` /
@@ -54,6 +56,7 @@ from ozzgraph.config import (
     halctf_mode_selected,
     halctf_target_allowlist,
     load_config,
+    require_halctf_endpoint,
 )
 from ozzgraph.environments import HalCTFEnvironment
 from ozzgraph.events import BOOTSTRAP_CHALLENGE_STATUS, SCOREBOARD_RETRIEVED, EventLog
@@ -129,35 +132,41 @@ def test_discovery_challenge_id_and_endpoint_priority() -> None:
         "HAL_MCP_ENDPOINT": "http://second:9000/mcp",
         "HAL_ENDPOINT": "http://third:9000/mcp",
         "MCP_ENDPOINT": "http://fourth:9000/mcp",
+        # OPENAI_BASE_URL is the model service — present but never an
+        # MCP endpoint candidate (HAL-002).
         "OPENAI_BASE_URL": "http://fifth:8000/v1",
     }
     assert discover_halctf_challenge_id(env) == "ctf-id"  # first non-blank wins
     assert discover_halctf_endpoint(env) == "http://first:9000/mcp"
-    # The candidate list is exactly the documented order.
+    # The candidate list is exactly the documented order — OPENAI_BASE_URL
+    # is NOT a candidate (it is the model service at /llm, not the MCP
+    # server at /mcp/).
     assert HALCTF_ENDPOINT_CANDIDATES == (
         "OZZGRAPH_MCP_BASE_URL",
         "HAL_MCP_ENDPOINT",
         "HAL_ENDPOINT",
         "MCP_ENDPOINT",
-        "OPENAI_BASE_URL",
     )
 
 
-def test_discovery_openai_base_url_resolves_endpoint_only() -> None:
-    """OPENAI_BASE_URL can carry the endpoint once another variable
-    selected HalCTF mode, but never selects the mode itself."""
+def test_discovery_openai_base_url_is_not_mcp_endpoint() -> None:
+    """HAL-002: OPENAI_BASE_URL is the model service (/llm), never the
+    MCP server (/mcp/) — discovery ignores it entirely (requirement (c))."""
     env = {"HAL_CTF_ID": "web-01", "OPENAI_BASE_URL": "http://platform:9000/mcp"}
-    assert halctf_mode_selected(env) is True
-    assert discover_halctf_endpoint(env) == "http://platform:9000/mcp"
+    assert halctf_mode_selected(env) is True  # mode selected by HAL_CTF_ID
+    assert discover_halctf_endpoint(env) is None  # ...but no MCP endpoint
+    # OPENAI_BASE_URL alone neither selects the mode nor resolves one.
     assert halctf_mode_selected({"OPENAI_BASE_URL": "http://x:8000/v1"}) is False
+    assert discover_halctf_endpoint({"OPENAI_BASE_URL": "http://x:8000/v1"}) is None
 
 
-def test_load_config_fails_loudly_when_halctf_mode_without_endpoint() -> None:
-    """V09: HalCTF mode selected but the endpoint is missing -> ConfigError
-    at load time (fail loudly, AGENTS.md rule #9)."""
-    with pytest.raises(ConfigError, match="endpoint"):
-        load_config(environ={"HAL_USER_ID": "user-42", "HAL_CTF_ID": "web-01"})
-    # With an endpoint the same configuration loads.
+def test_load_config_halctf_mode_without_endpoint_does_not_raise() -> None:
+    """HAL-002: HalCTF mode selected but no MCP endpoint configured is
+    NOT a load-time error — env-derived challenge metadata alone starts
+    a run (requirement (b))."""
+    config = load_config(environ={"HAL_USER_ID": "user-42", "HAL_CTF_ID": "web-01"})
+    assert config.hal_user_id == "user-42"
+    # With an endpoint the same configuration still loads unchanged.
     config = load_config(
         environ={
             "HAL_USER_ID": "user-42",
@@ -175,9 +184,56 @@ def test_load_config_local_mode_needs_no_endpoint() -> None:
     assert config.hal_user_id == "user-42"
 
 
-def test_environment_fails_loudly_without_endpoint() -> None:
+@pytest.mark.asyncio
+async def test_environment_constructs_with_zero_endpoint_vars() -> None:
+    """HAL-002: an env-only HalCTF detonation — HAL_*/HAL_TARGET_* env
+    with ZERO endpoint candidates — constructs without ConfigError:
+    endpoint is None, the runtime snapshot still parses, the challenge
+    id is discovered, and the targets resolve from the env services
+    (requirement (a))."""
+    env = {
+        "HAL_CTF_ID": "18",
+        "HAL_CHALLENGE_ID": "18",
+        "HAL_CHALLENGE_NAME": "underworld",
+        "HAL_CHALLENGE_CATEGORY": "web",
+        "HAL_AGENT_MODEL": "gpt-4o-mini",
+        "HAL_RUN_ID": "run-2026-08-09",
+        "HAL_TEAM_UUID": "team-42",
+        "HAL_TARGET_UNDERWORLD_IP": "10.0.0.12",
+        "HAL_TARGET_UNDERWORLD_PORT": "3000",
+        "BONUS_FLAG": "flag{bonus}",
+    }
+    environment = HalCTFEnvironment(_config(Path("/tmp/x")), environ=env)
+    assert environment.endpoint is None
+    assert environment.challenge_id == "18"
+    snapshot = environment.snapshot
+    assert snapshot.challenge_name == "underworld"
+    assert snapshot.services[0].name == "underworld"
+    assert snapshot.mcp_endpoint is None
+    targets = await environment.discover_targets()
+    assert [t.address for t in targets] == ["http://10.0.0.12:3000"]
+
+
+def test_environment_explicit_endpoint_wins_over_env() -> None:
+    """HAL-002: an explicitly passed endpoint always wins over any
+    discoverable candidate (existing behavior preserved, requirement (d))."""
+    env = {"HAL_CTF_ID": "web-01", "MCP_ENDPOINT": "http://env:9000/mcp"}
+    environment = HalCTFEnvironment(
+        _config(Path("/tmp/x")),
+        environ=env,
+        endpoint="http://explicit:9000/mcp",
+    )
+    assert environment.endpoint == "http://explicit:9000/mcp"
+
+
+def test_require_halctf_endpoint_still_fails_loudly() -> None:
+    """HAL-002: require_halctf_endpoint stays a loud helper for callers
+    that genuinely need the endpoint (explicit submission / HalClient
+    construction) — fail-loud is not weakened, just moved off the
+    startup path."""
     with pytest.raises(ConfigError, match="endpoint"):
-        HalCTFEnvironment(_config(Path("/tmp/x")), environ={"HAL_CTF_ID": "web-01"})
+        require_halctf_endpoint({"HAL_CTF_ID": "web-01"})
+    assert require_halctf_endpoint({"MCP_ENDPOINT": ENDPOINT}) == ENDPOINT
 
 
 # ---------------------------------------------------------------------------
@@ -761,8 +817,8 @@ def test_halctf_runtime_snapshot_parses_tottori_env() -> None:
     # BONUS_FLAG first, then FLAG_* variables (sorted by name).
     assert snapshot.flag_like == ("flag{bonus}", "flag{underworld-main}")
     assert snapshot.openai_base_url == "http://127.0.0.1:9000/llm"
-    # The resolved MCP endpoint (MCP_ENDPOINT wins over OPENAI_BASE_URL
-    # in the candidate order) — the same value the environment drives.
+    # The resolved MCP endpoint (the MCP_ENDPOINT candidate) — the same
+    # value the environment drives.
     assert snapshot.mcp_endpoint == "http://127.0.0.1:9000/mcp"
     assert (
         snapshot.mcp_endpoint

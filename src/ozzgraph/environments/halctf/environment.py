@@ -9,19 +9,22 @@ flag objective as ONE
 :class:`~ozzgraph.environments.models.Objective` — a plain completion
 contract, NOT a kernel phase. V09 completes the adapter:
 
-- **Deterministic runtime discovery** (docs/adr/0011): HalCTF mode is
-  selected by the presence of any HalCTF runtime variable (``HAL_CTF_ID``,
-  ``HAL_CHALLENGE_ID``, ``HAL_ENDPOINT``, ``HAL_MCP_ENDPOINT``,
-  ``MCP_ENDPOINT``, or the legacy ``OZZGRAPH_CHALLENGE_ID``), and the
-  MCP endpoint is resolved from the first non-blank of
-  ``OZZGRAPH_MCP_BASE_URL`` / ``HAL_MCP_ENDPOINT`` / ``HAL_ENDPOINT`` /
-  ``MCP_ENDPOINT`` / ``OPENAI_BASE_URL``
-  (:func:`ozzgraph.config.discover_halctf_endpoint`). HalCTF mode
-  WITHOUT a discoverable endpoint fails loudly at construction
-  (:class:`~ozzgraph.config.ConfigError` — the run cannot reach the
-  platform). The local default is unchanged: with no HalCTF runtime
-  variable the supervisor selects :class:`~ozzgraph.environments.local.LocalEnvironment`
-  and the V08 ``OZZGRAPH_TARGET`` classification stays authoritative.
+- **Deterministic runtime discovery** (docs/adr/0011, HAL-002): HalCTF
+  mode is selected by the presence of any HalCTF runtime variable
+  (``HAL_CTF_ID``, ``HAL_CHALLENGE_ID``, ``HAL_ENDPOINT``,
+  ``HAL_MCP_ENDPOINT``, ``MCP_ENDPOINT``, or the legacy
+  ``OZZGRAPH_CHALLENGE_ID``), and the MCP endpoint is resolved from the
+  first non-blank of ``OZZGRAPH_MCP_BASE_URL`` / ``HAL_MCP_ENDPOINT`` /
+  ``HAL_ENDPOINT`` / ``MCP_ENDPOINT``
+  (:func:`ozzgraph.config.discover_halctf_endpoint`; ``OPENAI_BASE_URL``
+  is the model service and never a candidate). The endpoint is
+  OPTIONAL: an env-only detonation (HAL_TARGET_* services + challenge
+  metadata, no MCP endpoint) constructs with ``endpoint=None`` and the
+  MCP path is enrichment/fallback — construction never raises for a
+  missing endpoint. The local default is unchanged: with no HalCTF
+  runtime variable the supervisor selects
+  :class:`~ozzgraph.environments.local.LocalEnvironment` and the V08
+  ``OZZGRAPH_TARGET`` classification stays authoritative.
 - **Environment-provided services**: the adapter owns the HalCTF
   behavior — the flag candidate extractor, the supervisor-only
   submission coordinator, the paid-hint coordinator (with the
@@ -74,9 +77,9 @@ from ozzgraph.config import (
     OzzGraphConfig,
     build_halctf_runtime_snapshot,
     discover_halctf_challenge_id,
+    discover_halctf_endpoint,
     discover_halctf_services,
     halctf_target_allowlist,
-    require_halctf_endpoint,
 )
 from ozzgraph.environments.halctf.flags import FlagCandidateExtractor
 from ozzgraph.environments.halctf.hints import HintClient, HintCoordinator, HintPolicy
@@ -110,7 +113,7 @@ HALCTF_OBJECTIVE_SUCCESS_HINT = "submission accepted for the challenge"
 
 
 class HalCTFEnvironment:
-    """Full HalCTF runtime environment (V09, docs/adr/0011).
+    """Full HalCTF runtime environment (V09, HAL-002, docs/adr/0011).
 
     Args:
         config: The validated runtime configuration; its
@@ -121,12 +124,13 @@ class HalCTFEnvironment:
             ``os.environ``.
         endpoint: Explicit MCP endpoint override; when ``None`` the
             endpoint is discovered from ``environ``
-            (:func:`ozzgraph.config.discover_halctf_endpoint`).
-
-    Raises:
-        ConfigError: If no MCP endpoint is discoverable — HalCTF mode
-            without an endpoint is a configuration error (AGENTS.md
-            rule #9, fail loudly).
+            (:func:`ozzgraph.config.discover_halctf_endpoint`) and may
+            be ``None`` — the MCP endpoint is optional (HAL-002), so an
+            env-only detonation constructs with ``endpoint=None`` and
+            MCP stays enrichment/fallback. No ConfigError is raised at
+            construction for a missing endpoint; only genuinely
+            unrecoverable configuration fails loudly (e.g. a
+            set-but-invalid ``HAL_TARGET_*`` port).
     """
 
     def __init__(
@@ -138,12 +142,15 @@ class HalCTFEnvironment:
     ) -> None:
         self._config = config
         self._environ = os.environ if environ is None else environ
-        # V09: the endpoint is REQUIRED — HalCTF mode without a
-        # discoverable MCP endpoint cannot reach the platform, so the
-        # adapter fails loudly at construction (never a silent
-        # mid-run failure). An explicit endpoint wins (tests).
+        # V09 + HAL-002: the MCP endpoint is OPTIONAL. An explicit
+        # endpoint always wins; otherwise discovery resolves the first
+        # non-blank candidate, and an env-only detonation (no candidate
+        # set) constructs with None — MCP is enrichment/fallback, never
+        # a construction-time requirement. Callers that genuinely need
+        # the endpoint (submission, hint, HalClient construction) fail
+        # loudly only when they actually use it.
         self._endpoint = (
-            endpoint if endpoint is not None else require_halctf_endpoint(self._environ)
+            endpoint if endpoint is not None else discover_halctf_endpoint(self._environ)
         )
         # HAL-001: the full platform-injected runtime snapshot, parsed
         # once at construction so every discovery method reads the same
@@ -152,8 +159,14 @@ class HalCTFEnvironment:
         self._snapshot = build_halctf_runtime_snapshot(self._environ)
 
     @property
-    def endpoint(self) -> str:
-        """The resolved HalCTF MCP endpoint this environment drives."""
+    def endpoint(self) -> str | None:
+        """The resolved HalCTF MCP endpoint this environment drives.
+
+        ``None`` when no endpoint candidate is set and none was passed
+        explicitly — an env-only detonation (HAL-002): challenge
+        metadata comes from the env snapshot, and MCP is optional
+        enrichment/fallback.
+        """
         return self._endpoint
 
     @property

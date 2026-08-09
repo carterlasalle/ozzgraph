@@ -86,22 +86,21 @@ HAL_MCP_ENDPOINT_ENV = "HAL_MCP_ENDPOINT"
 MCP_ENDPOINT_ENV = "MCP_ENDPOINT"
 OPENAI_BASE_URL_ENV = "OPENAI_BASE_URL"
 
-#: Ordered endpoint candidates for the HalCTF MCP runtime (V09): the
-#: first non-blank wins. ``OZZGRAPH_MCP_BASE_URL`` is the explicit
+#: Ordered endpoint candidates for the HalCTF MCP runtime (V09, HAL-002):
+#: the first non-blank wins. ``OZZGRAPH_MCP_BASE_URL`` is the explicit
 #: legacy knob (its literal mirrors ``hal_client.MCP_BASE_URL_ENV`` —
 #: hal_client consults this discovery function, so the two cannot
 #: disagree); the ``HAL_*`` family is the platform-injected shape;
-#: ``MCP_ENDPOINT`` and ``OPENAI_BASE_URL`` are generic platform
-#: variables that may carry the endpoint. ``OPENAI_BASE_URL`` alone
-#: does NOT select HalCTF mode (it is a model endpoint in local mode) —
-#: it only resolves the endpoint once another variable selected the
-#: mode.
+#: ``MCP_ENDPOINT`` is the generic platform MCP variable. The MCP
+#: endpoint is OPTIONAL (HAL-002): env-derived challenge metadata alone
+#: starts a run, and MCP is enrichment/fallback. ``OPENAI_BASE_URL`` is
+#: deliberately NOT a candidate — it is the model service (``/llm``),
+#: never the MCP server (``/mcp/``) — and it never selects HalCTF mode.
 HALCTF_ENDPOINT_CANDIDATES: tuple[str, ...] = (
     "OZZGRAPH_MCP_BASE_URL",
     HAL_MCP_ENDPOINT_ENV,
     HAL_ENDPOINT_ENV,
     MCP_ENDPOINT_ENV,
-    OPENAI_BASE_URL_ENV,
 )
 
 #: Variables that select HalCTF mode (V09): any non-blank value means
@@ -368,9 +367,12 @@ def discover_halctf_endpoint(environ: Mapping[str, str]) -> str | None:
 
     Deterministic first-non-blank over
     :data:`HALCTF_ENDPOINT_CANDIDATES` (``OZZGRAPH_MCP_BASE_URL``,
-    ``HAL_MCP_ENDPOINT``, ``HAL_ENDPOINT``, ``MCP_ENDPOINT``,
-    ``OPENAI_BASE_URL``). None means HalCTF mode cannot reach the
-    platform — the caller fails loudly.
+    ``HAL_MCP_ENDPOINT``, ``HAL_ENDPOINT``, ``MCP_ENDPOINT``).
+    ``OPENAI_BASE_URL`` is never consulted — it is the model service
+    (``/llm``), not the MCP server. The endpoint is OPTIONAL (HAL-002):
+    None means env-derived challenge metadata alone drives the run and
+    MCP enrichment is unavailable; callers that genuinely need the
+    endpoint use :func:`require_halctf_endpoint`.
     """
     return _first_nonempty(environ, *HALCTF_ENDPOINT_CANDIDATES)
 
@@ -378,11 +380,12 @@ def discover_halctf_endpoint(environ: Mapping[str, str]) -> str | None:
 def require_halctf_endpoint(environ: Mapping[str, str]) -> str:
     """Resolve the HalCTF MCP endpoint, failing loudly when missing.
 
-    HalCTF mode without a discoverable endpoint is a configuration
-    error (AGENTS.md rule #9): the adapter cannot reach the platform,
-    so the run must not start. The environment adapter calls this at
-    construction; ``load_config`` calls it whenever
-    :func:`halctf_mode_selected` is true, so the CLI fails at startup.
+    A helper for callers that genuinely need an endpoint (explicit
+    submission / HalClient construction). It is NOT invoked at startup
+    (HAL-002): ``load_config`` and ``HalCTFEnvironment`` construct with
+    ``endpoint=None`` when only env-derived challenge metadata is
+    present — the MCP endpoint is optional enrichment/fallback, and
+    fail-loud stays reserved for truly unrecoverable configuration.
 
     Raises:
         ConfigError: If no endpoint candidate is set.
@@ -778,12 +781,12 @@ def load_config(environ: Mapping[str, str] | None = None) -> OzzGraphConfig:
     if user_id is None:
         raise ConfigError(f"missing required environment variable {HAL_USER_ID_ENV}")
 
-    # V09: HalCTF mode without a discoverable MCP endpoint is a
-    # configuration error (fail loudly at startup, AGENTS.md rule #9).
-    # The local default is untouched: no HalCTF runtime variable means
-    # the run is a local assessment and no endpoint is required.
-    if halctf_mode_selected(env):
-        require_halctf_endpoint(env)
+    # V09 + HAL-002: the MCP endpoint is OPTIONAL. HalCTF mode selected
+    # with only env-derived challenge metadata (HAL_TARGET_* services,
+    # HAL_CHALLENGE_*, runtime identity) starts without an endpoint —
+    # MCP is enrichment/fallback, never a startup requirement. Fail
+    # loudly stays reserved for truly unrecoverable config (e.g. a
+    # set-but-invalid HAL_TARGET_* port, below).
 
     state_dir = Path(env.get(STATE_DIR_ENV, DEFAULT_STATE_DIR))
     artifact_dir = Path(env.get(ARTIFACT_DIR_ENV, str(state_dir / "artifacts")))

@@ -165,9 +165,14 @@ independently implemented components.
    > `HAL_MCP_ENDPOINT` / `MCP_ENDPOINT` / legacy `OZZGRAPH_CHALLENGE_ID`
    > variable; the MCP endpoint is the first non-blank of
    > `OZZGRAPH_MCP_BASE_URL` / `HAL_MCP_ENDPOINT` / `HAL_ENDPOINT` /
-   > `MCP_ENDPOINT` / `OPENAI_BASE_URL`; HalCTF mode without an endpoint
-   > raises `ConfigError` loudly at `load_config` and at
-   > `HalCTFEnvironment` construction; `HAL_USER_ID` never selects the
+   > `MCP_ENDPOINT`). HAL-002 (2026-08-09): the endpoint became OPTIONAL —
+   > an env-only detonation (HAL_TARGET_* services + HAL_CHALLENGE_*
+   > metadata, no endpoint) starts without one: `load_config` and
+   > `HalCTFEnvironment` no longer raise for a missing endpoint,
+   > `OPENAI_BASE_URL` is NOT an endpoint candidate (it is the model
+   > service at `/llm`, not the MCP server at `/mcp/`), and
+   > `require_halctf_endpoint` remains a loud helper for callers that
+   > genuinely need the endpoint. `HAL_USER_ID` never selects the
    > mode, so the local default — V08 `OZZGRAPH_TARGET` classification —
    > is unchanged). The official HalCTF MCP tool set is exposed by
    > `hal_client` (`OFFICIAL_HALCTF_TOOLS`: `list_ctfs` -> `ctf.list`,

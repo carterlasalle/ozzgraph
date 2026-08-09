@@ -540,10 +540,11 @@ def test_make_environment_uses_halctf_from_hal_vars(tmp_path, monkeypatch) -> No
     assert environment.endpoint == "http://halctf:9000/mcp"
 
 
-def test_make_environment_fails_loudly_without_endpoint(tmp_path, monkeypatch) -> None:
-    """V09: HalCTF mode without a discoverable MCP endpoint is a loud
-    ConfigError at construction (fail loudly, AGENTS.md rule #9)."""
-    from ozzgraph.config import ConfigError
+def test_make_environment_halctf_without_endpoint(tmp_path, monkeypatch) -> None:
+    """HAL-002: HalCTF mode without a discoverable MCP endpoint is NOT
+    an error — an env-only detonation builds the HalCTF environment
+    with endpoint None (MCP is optional enrichment/fallback)."""
+    from ozzgraph.environments import HalCTFEnvironment
 
     monkeypatch.delenv("OZZGRAPH_CHALLENGE_ID", raising=False)
     monkeypatch.setenv("HAL_CTF_ID", "web-01")
@@ -556,8 +557,9 @@ def test_make_environment_fails_loudly_without_endpoint(tmp_path, monkeypatch) -
     ):
         monkeypatch.delenv(var, raising=False)
     supervisor = Supervisor(_config(tmp_path))
-    with pytest.raises(ConfigError, match="endpoint"):
-        supervisor._make_environment()
+    environment = supervisor._make_environment()
+    assert isinstance(environment, HalCTFEnvironment)
+    assert environment.endpoint is None
 
 
 @pytest.mark.asyncio

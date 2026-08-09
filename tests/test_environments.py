@@ -225,11 +225,14 @@ def _halctf_env(**overrides) -> dict[str, str]:
     return env
 
 
-def test_halctf_requires_endpoint_fails_loudly() -> None:
-    """V09: HalCTF mode without a discoverable MCP endpoint is a loud
-    ConfigError at construction (fail loudly, AGENTS.md rule #9)."""
-    with pytest.raises(ConfigError, match="endpoint"):
-        HalCTFEnvironment(_config(), environ={})
+def test_halctf_constructs_without_endpoint() -> None:
+    """HAL-002: HalCTF mode without a discoverable MCP endpoint is NOT
+    a construction error — the environment builds with endpoint None
+    (MCP is optional enrichment/fallback; env metadata drives the run)."""
+    environment = HalCTFEnvironment(_config(), environ={"HAL_CTF_ID": "web-01"})
+    assert environment.endpoint is None
+    assert environment.challenge_id == "web-01"
+    assert environment.snapshot.challenge_id == "web-01"
 
 
 def test_halctf_requires_challenge_id() -> None:
@@ -304,14 +307,15 @@ def test_halctf_endpoint_candidate_priority() -> None:
     assert env.endpoint == "http://explicit:9000/mcp"
 
 
-def test_halctf_openai_base_url_resolves_endpoint() -> None:
-    """V09: OPENAI_BASE_URL alone resolves the endpoint once another
-    variable selected HalCTF mode, but never selects the mode itself."""
-    env = HalCTFEnvironment(
+def test_halctf_openai_base_url_is_not_mcp_endpoint() -> None:
+    """HAL-002: OPENAI_BASE_URL is the model service (/llm), never the
+    MCP server (/mcp/) — it never resolves the environment endpoint."""
+    environment = HalCTFEnvironment(
         _config(),
         environ={"HAL_CHALLENGE_ID": "web-01", "OPENAI_BASE_URL": "http://platform:9000/mcp"},
     )
-    assert env.endpoint == "http://platform:9000/mcp"
+    assert environment.endpoint is None
+    assert environment.challenge_id == "web-01"
 
 
 def test_halctf_environment_service_factories() -> None:

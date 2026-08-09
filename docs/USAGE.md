@@ -70,7 +70,7 @@ constructor-injected with environment fallback in `ozzgraph.model_client` and
 | `OZZGRAPH_TARGET_<NS>` | — | Namespaced targets, e.g. `OZZGRAPH_TARGET_HTTP`, `OZZGRAPH_TARGET_DNS` (namespaces `HTTP`/`HTTPS`/`DNS` select the probe category). |
 | `OZZGRAPH_SMOKE_FLAG` | — | When set, submitted once at startup through the privileged client as a pipeline smoke test (requires a challenge id). |
 | `OZZGRAPH_MCP_BASE_URL` | `http://127.0.0.1:9000/mcp` | JSON-RPC 2.0 MCP endpoint (base URL including the path) — the FIRST of the deterministic discovery candidates. |
-| `HAL_MCP_ENDPOINT` / `HAL_ENDPOINT` / `MCP_ENDPOINT` / `OPENAI_BASE_URL` | — | Additional endpoint candidates, consulted in that order after `OZZGRAPH_MCP_BASE_URL` (first non-blank wins). `OPENAI_BASE_URL` can carry the endpoint once HalCTF mode is selected but never selects the mode itself. |
+| `HAL_MCP_ENDPOINT` / `HAL_ENDPOINT` / `MCP_ENDPOINT` | — | Additional endpoint candidates, consulted in that order after `OZZGRAPH_MCP_BASE_URL` (first non-blank wins). `OPENAI_BASE_URL` is NOT a candidate — it is the model service (`/llm`), not the MCP server. |
 | `OZZGRAPH_MCP_TIMEOUT_S` | `60` | Per-request timeout. |
 | `OZZGRAPH_MCP_MAX_RETRIES` | `3` | Bounded retries on transient failures (429/5xx/transport; max 10). |
 | `OZZGRAPH_HAL_PRIVILEGED` | — | When set, `halctl` privileged operations (submit, paid hints, exit) are allowed. Only the supervisor sets this. |
@@ -79,9 +79,12 @@ HalCTF mode is selected when ANY HalCTF runtime variable is set
 (`HAL_CTF_ID`, `HAL_CHALLENGE_ID`, `HAL_ENDPOINT`, `HAL_MCP_ENDPOINT`,
 `MCP_ENDPOINT`, or `OZZGRAPH_CHALLENGE_ID`). With none of them set the
 run is a **local assessment** (V08 `OZZGRAPH_TARGET` classification).
-`HAL_USER_ID` is identity and never selects HalCTF mode. **HalCTF mode
-without a discoverable endpoint fails loudly** (`ConfigError` at
-startup): set one of the endpoint candidates above.
+`HAL_USER_ID` is identity and never selects HalCTF mode. The MCP
+endpoint is **optional** (HAL-002): an env-only detonation with
+platform-injected `HAL_TARGET_*` services and `HAL_CHALLENGE_*`
+metadata starts without one — MCP is enrichment/fallback. Set one of
+the endpoint candidates above to enable MCP features (bootstrap
+status, smoke flag, submissions, hints, scoreboard).
 
 ### 2.3 Model endpoint (OpenAI-compatible)
 

@@ -219,10 +219,13 @@ class Supervisor:
             try:
                 environment = self._make_environment()
             except ConfigError:
-                # V09: HalCTF mode without a discoverable MCP endpoint
-                # fails loudly as a structured FAILED termination (the
-                # environment adapter raises ConfigError at
-                # construction; AGENTS.md rule #9).
+                # V09 + HAL-002: construction fails loudly only for
+                # genuinely unrecoverable configuration (e.g. a
+                # set-but-invalid HAL_TARGET_* port) — a missing MCP
+                # endpoint is NOT an error (the endpoint is optional
+                # enrichment/fallback for env-only detonations). Any
+                # ConfigError here is a structured FAILED termination
+                # (AGENTS.md rule #9).
                 return self.stop(reason=TerminationReason.FAILED)
             self._environment = environment
             try:
@@ -279,9 +282,10 @@ class Supervisor:
         assessment and the
         :class:`~ozzgraph.environments.local.LocalEnvironment` is used
         (the V08 ``OZZGRAPH_TARGET`` classification stays
-        authoritative). A missing MCP endpoint in HalCTF mode raises
-        :class:`~ozzgraph.config.ConfigError` loudly at construction
-        (fail loudly, AGENTS.md rule #9).
+        authoritative). The MCP endpoint is optional (HAL-002): an
+        env-only HalCTF detonation constructs normally with
+        ``endpoint=None`` — construction raises ConfigError only for
+        genuinely unrecoverable configuration.
         """
         if halctf_mode_selected(os.environ):
             return HalCTFEnvironment(self._config)

@@ -42,8 +42,9 @@ or settings enter the ``OzzGraphConfig`` model): the MCP endpoint is
 resolved with the deterministic V09 discovery
 (:func:`ozzgraph.config.discover_halctf_endpoint` — first non-blank of
 ``OZZGRAPH_MCP_BASE_URL`` / ``HAL_MCP_ENDPOINT`` / ``HAL_ENDPOINT`` /
-``MCP_ENDPOINT`` / ``OPENAI_BASE_URL``, falling back to the localhost
-default for standalone ``halctl`` use), plus ``OZZGRAPH_MCP_TIMEOUT_S``,
+``MCP_ENDPOINT``; ``OPENAI_BASE_URL`` is the model service and is never
+a candidate — falling back to the localhost default for standalone
+``halctl`` use), plus ``OZZGRAPH_MCP_TIMEOUT_S``,
 ``OZZGRAPH_MCP_MAX_RETRIES``, and ``OZZGRAPH_HAL_PRIVILEGED``.
 
 Failure policy mirrors the model client (docs/API_AND_INTEGRATIONS.md,
@@ -370,10 +371,14 @@ class HalClient:
                                                                  ``HAL_MCP_
                                                                  ENDPOINT``,
                                                                  ``HAL_ENDPOINT``,
-                                                                 ``MCP_ENDPOINT``,
-                                                                 ``OPENAI_BASE_URL``;
+                                                                 ``MCP_ENDPOINT``;
                                                                  first non-blank
-                                                                 wins)
+                                                                 wins;
+                                                                 ``OPENAI_BASE_URL``
+                                                                 is the model
+                                                                 service and is
+                                                                 never a
+                                                                 candidate)
     ``OZZGRAPH_MCP_TIMEOUT_S``   ``60``                        Request
                                                                  timeout in
                                                                  seconds
@@ -435,10 +440,11 @@ class HalClient:
         sleeper: Sleeper = asyncio.sleep,
     ) -> None:
         env = os.environ
-        # V09: the endpoint is resolved through the deterministic
-        # discovery (first non-blank of OZZGRAPH_MCP_BASE_URL /
-        # HAL_MCP_ENDPOINT / HAL_ENDPOINT / MCP_ENDPOINT /
-        # OPENAI_BASE_URL — ozzgraph.config.discover_halctf_endpoint),
+        # V09 + HAL-002: the endpoint is resolved through the
+        # deterministic discovery (first non-blank of
+        # OZZGRAPH_MCP_BASE_URL / HAL_MCP_ENDPOINT / HAL_ENDPOINT /
+        # MCP_ENDPOINT — ozzgraph.config.discover_halctf_endpoint;
+        # OPENAI_BASE_URL is the model service, never a candidate),
         # falling back to the localhost default for standalone halctl
         # use. The explicit constructor argument always wins.
         resolved_url = discover_halctf_endpoint(env) or DEFAULT_MCP_BASE_URL
