@@ -162,7 +162,127 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 
 | ID | Task | Pri | Cpx | Deps | Tags | Model | Reasoning | Fallback |
 |----|------|-----|-----|------|------|-------|-----------|----------|
-| _(empty — all v2 phases done; E2E-001 + NEVER-DONE fixtures remain below)_ |
+| HAL-011 | halctf-real-contract regression fixture — mirror Tottori's committed live-run env shapes + /submit responses into the suite | High | 4±1 | HAL-001..008 | +++tests, ++halctf | DS-V4-Flash | Medium | Kimi-K3 |
+| HAL-010 | Wire SpecialistFleet into Supervisor production composition (currently test-only) | High | 4±1 | V07 | ++specialists, ++supervisor | DS-V4-Flash | Medium | Kimi-K3 |
+| HAL-009 | Port Tottori live-run exploitation lessons into skills (SQLi/JWT/SSRF/XXE/deser/protocol/forensics/cloud-IAM), kernel-external | High | 4±1 | V17 | +++skills, ++halctf | DS-V4-Flash | Medium | Kimi-K3 |
+| HAL-008 | HalCTF process semantics — budget-exhausted / unsolved / gave-up / graceful failure exit 0; keep structured reason in events | High | 3±1 | — | ++lifecycle, ++cli | DS-V4-Flash | Medium | Kimi-K3 |
+| HAL-007 | Generalize HalCTF flag pattern (flag{}, HALCTF{}, event prefixes) independent of local default | Medium | 2±1 | V09 | ++config, ++flags | DS-V4-Flash | Low | Kimi-K3 |
+| HAL-006 | Objective completion acceptance-gated — only an accepted /submit completes objective-halctf-flag; PlanVerdict.COMPLETE may create a finding but not complete it | Critical | 4±1 | HAL-005 | +++evaluator, ++objective | DS-V4-Flash | High | DS-V4-Pro |
+| HAL-005 | Wire flag extraction directly after _persist_execution → new verified candidate immediately enters supervisor submission (no LLM) | Critical | 5±1 | HAL-004 | +++submission, ++graph | DS-V4-Flash | High | DS-V4-Pro |
+| HAL-004 | Sidecar transport adapter — /submit + /done, normalize observed {status,points_awarded} → SubmissionResult | High | 4±1 | V09 | ++http, ++halctf | DS-V4-Flash | Medium | Kimi-K3 |
+| HAL-003 | Model routing in HalCTF mode — map OPENAI_BASE_URL → model service, HAL_AGENT_MODEL → model id | High | 3±1 | HAL-001 | ++model, ++env | DS-V4-Flash | Medium | Kimi-K3 |
+| HAL-002 | Make MCP optional/fallback for HalCTF startup — env-first challenge discovery; MCP may enhance, never a prerequisite | Critical | 3±1 | HAL-001 | ++config, ++env | DS-V4-Flash | High | DS-V4-Pro |
+| HAL-001 | HalCTFRuntimeSnapshot from env — parse HAL_CHALLENGE_*, HAL_AGENT_MODEL, HAL_RUN_ID, HAL_TEAM_UUID, all HAL_TARGET_<NAME>_IP/_PORT, flag-like env, OPENAI_BASE_URL, MCP_ENDPOINT → graph targets + Scope.hosts/urls + ScopePolicy allowlist; exclude sidecar/model/MCP infra | Critical | 5±1 | V09 | +++env, ++graph, ++policy | DS-V4-Flash | High | DS-V4-Pro |
+
+## [ ] HAL-001 — HalCTFRuntimeSnapshot: env → graph targets + scope allowlist (real HalCTF runtime)
+
+**Source:** Cross-repo assessment of `kazuki005276ssh/halctf-team-tottori` committed live-run logs vs current OzzGraph code (verified this session, no code changed). Tottori's real detonation injected `HAL_AGENT_MODEL`, `HAL_CHALLENGE_ID=18`, `HAL_CHALLENGE_NAME="Charon's Ferry"`, `HAL_CHALLENGE_CATEGORY="Web / SSRF"`, `HAL_TARGET_FERRY_IP/PORT`, `HAL_TARGET_UNDERWORLD_IP/PORT`, `HAL_RUN_ID`, `HAL_TEAM_UUID`, `OPENAI_BASE_URL`, `MCP_ENDPOINT`. OzzGraph's `discover_targets()` currently returns `Target(address=challenge_id)` — the graph target is literally `"18"`, not `http://10.244.x.x:9004`. And `DEFAULT_TARGET_ALLOWLIST=()` (fail-closed) is never derived from `HAL_TARGET_*`, so even a correct address would be refused.
+
+**Acceptance:**
+1. Build `HalCTFRuntimeSnapshot` parsing every `HAL_TARGET_<NAME>_IP` + `_PORT` pair, single `HAL_TARGET_IP/PORT`, `HAL_CHALLENGE_*`, `HAL_AGENT_MODEL`, `HAL_RUN_ID`, `HAL_TEAM_UUID`, flag-like env (`BONUS_FLAG`, `FLAG_*`), `OPENAI_BASE_URL`, `MCP_ENDPOINT`.
+2. `discover_targets()` emits one Target per named service as a real URL (`http://IP:PORT`), NOT the challenge id.
+3. `discover_scope()` populates `Scope.hosts` / `Scope.urls` AND the ScopePolicy `target_allowlist` from those targets (one atomic adapter operation, no separate manual config).
+4. Sidecar/model/MCP infrastructure (127.0.0.1:9000, OPENAI_BASE_URL, MCP_ENDPOINT) is explicitly excluded from candidate targets.
+5. Tests: fixture with Tottori's exact env shape asserts targets + allowlist + infra exclusion.
+
+## [ ] HAL-002 — Make MCP optional/fallback for HalCTF startup
+
+**Source:** Verified — `require_halctf_endpoint()` raises `ConfigError` at construction and `load_config` does the same whenever HalCTF mode is selected. The real platform injects challenge metadata via env (env-first); requiring an MCP endpoint to start is wrong. Tottori runs env-first with MCP as fallback.
+
+**Acceptance:**
+1. HalCTF mode starts with env-derived challenge metadata alone (no endpoint required).
+2. MCP becomes an optional enrichment path (challenge discovery fallback) if available.
+3. Remove `OPENAI_BASE_URL` from `HALCTF_ENDPOINT_CANDIDATES` (it is the model service, `/llm`, not the MCP server `/mcp/`).
+4. Tests: HalCTF env constructs with zero endpoint vars; fail-loud only preserved for truly unrecoverable config.
+
+## [ ] HAL-003 — Model routing in HalCTF mode
+
+**Source:** Verified — `model_client.py` defaults `DEFAULT_MODEL_BASE_URL=http://127.0.0.1:8000/v1`; `runner.py` reads `OZZGRAPH_MODEL_ID` (default `"default"`). Neither `OPENAI_BASE_URL` nor `HAL_AGENT_MODEL` is used. The real platform provides `OPENAI_BASE_URL=http://127.0.0.1:9000/llm` and `HAL_AGENT_MODEL=google/gemma-4-26b-a4b-it-maas`. Probable immediate failure on the event platform.
+
+**Acceptance:**
+1. In HalCTF mode, model client base URL maps from `OPENAI_BASE_URL`; model id maps from `HAL_AGENT_MODEL`.
+2. Local mode keeps the `OZZGRAPH_MODEL_*` defaults unchanged.
+3. Tests: HalCTF env resolves model config from platform vars; local mode unchanged.
+
+## [ ] HAL-004 — Sidecar transport adapter (/submit + /done)
+
+**Source:** Verified — Tottori discovered the real `/submit` response `{"status":"correct","points_awarded":1}` and normalizes multiple accept shapes. OzzGraph drives `flag.submit` over its own JSON-RPC `HalClient`. Add a real sidecar adapter at the process boundary; keep the excellent internal `SubmissionResult` schema.
+
+**Acceptance:**
+1. Adapter POSTs `/submit` and `/done` to the sidecar (127.0.0.1:9000); `/done` best-effort.
+2. Normalizes observed response forms (`status in {correct,accepted,solved,success,already_solved}`, `points_awarded>0`, boolean fields) into the existing `SubmissionResult`.
+3. No weakening of the internal coordinator/schema.
+4. Tests: mock responses for each accept/reject shape.
+
+## [ ] HAL-005 — Wire flag extraction + submission into the active loop
+
+**Source:** Verified — `FlagCandidateExtractor.extract()` and `Supervisor.submit_verified_candidate()` are implemented and tested but never called in `runner.run()`/`supervisor.run()`; grep for production callers returns only definitions/docstrings. The "last two arrows" (extraction→loop, candidate→submitter) are missing.
+
+**Acceptance:**
+1. After `_persist_execution()`, run `FlagCandidateExtractor.extract()`; a NEW verified candidate immediately enters supervisor-owned submission.
+2. Zero LLM turns between seeing a flag and submitting it.
+3. Accepted → objective COMPLETE → `/done`; rejected → candidate marked rejected → continue investigation.
+4. Preserve supervisor-only privilege, submission budget, duplicate/rejected handling, durable state.
+5. Tests: an observation containing a flag → accepted submission → objective completed, no model call.
+
+## [ ] HAL-006 — Objective completion acceptance-gated
+
+**Source:** Verified — `runner._evaluate` does `if evaluation.verdict is PlanVerdict.COMPLETE: await self._complete_objectives()`, and the evaluator's COMPLETE fires on "every plan step completed" OR "a hypothesis confirmed" — pure pentest semantics. A validated SQLi hypothesis can mark `objective-halctf-flag.completed=true` with no successful `/submit`, terminating the run COMPLETED (exit 0) unscored.
+
+**Acceptance:**
+1. Objective completion becomes an environment-specific predicate. For HalCTF, ONLY a `SubmissionAccepted(challenge_id)` satisfies `objective-halctf-flag`.
+2. `PlanVerdict.COMPLETE` may produce a Finding but must NOT complete the HalCTF objective.
+3. Local pentest semantics unchanged (validated finding may satisfy objective).
+4. Tests: evaluator COMPLETE with no submission leaves objective incomplete; accepted submission completes it.
+
+## [ ] HAL-007 — Generalize HalCTF flag pattern
+
+**Source:** Verified — `DEFAULT_FLAG_PATTERN=r"flag\{[^{}\s]+\}"`. Tottori's committed log shows real challenges use `HALCTF{...}` and `flag{...}`; its matcher generalizes to `[A-Za-z][A-Za-z0-9_]{1,14}\{...\}`. The platform doesn't inject `OZZGRAPH_FLAG_PATTERN`.
+
+**Acceptance:**
+1. HalCTF environment's default flag pattern generalizes to identifier-style prefixes (flag{}, HALCTF{}, etc.) independently of the local default.
+2. Local default unchanged.
+3. Tests: HALCTF{}, flag{}, and non-match (JS/CSS braces) fixtures.
+
+## [ ] HAL-008 — HalCTF process/exit semantics
+
+**Source:** Verified — `__main__.py` maps `{COMPLETED:0, INTERRUPTED:130, FAILED:1, BUDGET_EXHAUSTED:3}`. Tottori found a nonzero exit is interpreted by the platform as a crash → reruns the detonation (wasting time, marking run FAILED even when scored). It returns 0 on any ordinary completed attempt.
+
+**Acceptance:**
+1. Add a HalCTF process-boundary mapping: scored / unsolved / exhausted / gave-up / graceful platform failure → container exit 0.
+2. Preserve internal `RunnerStatus` distinctions in the JSONL events (do NOT collapse the model).
+3. Only actual process corruption / startup-impossible → exit 1.
+4. Tests: budget-exhausted and unsolved HalCTF runs exit 0; startup-impossible exits 1.
+
+## [ ] HAL-009 — Port Tottori live-run exploitation lessons into skills
+
+**Source:** Verified — Tottori's category playbooks encode hard-won event lessons (SQLi multi-DB enumeration, JWT PEM-as-HMAC-secret, SSRF multi-service + IP-obfuscation reasoning, XXE, deserialization, protocol reversing, forensics, cloud IAM role chaining). OzzGraph's skill system is architecturally superior (lazy skill cards, capability requirements, phase filtering); port the lessons, not the implementation.
+
+**Acceptance:**
+1. Add/expand skill cards for each category, kernel-external (skills/, not supervisor).
+2. Challenge category → TechniqueClassifier → relevant SkillSummaries only; lazy-load the chosen technique card.
+3. Keep instructions out of the kernel (AGENTS.md rule #10).
+4. Tests: category routing selects correct skill subset; lazy-load evidence-driven.
+
+## [ ] HAL-010 — Wire SpecialistFleet into Supervisor
+
+**Source:** Verified — `SpecialistFleet(` is constructed ONLY in `tests/test_specialists.py`. `supervisor.run()` builds `AutonomousRunner(...)` with no `specialists=` arg → `_specialists=None` → the V07 parallel path is dead in production. The implementation exists; the deployed execution graph doesn't turn it on.
+
+**Acceptance:**
+1. Supervisor wires a `SpecialistFleet` into the `AutonomousRunner` construction when configured.
+2. A pure independent-hypothesis StrategicDecision dispatches the bounded parallel batch (existing `_run_specialist_batch_turn`).
+3. Tests: production composition constructs the fleet; a hypothesis-batch decision routes to specialists, not the LLM.
+
+## [ ] HAL-011 — halctf-real-contract regression fixture
+
+**Source:** Verified — the existing benchmark suite runs the kernel against synthetic lab targets + scripted models, not an actual HalCTF runtime contract. Tottori's committed live logs give the exact env shapes and HTTP responses.
+
+**Acceptance:**
+1. Add a regression fixture reproducing Tottori's exact env shapes (HAL_TARGET_*_IP/PORT, HAL_CHALLENGE_*, HAL_AGENT_MODEL, OPENAI_BASE_URL, MCP_ENDPOINT) and observed HTTP responses (`/submit` `{status:correct,points_awarded:1}`, `/fetch` 403/404/502/200).
+2. The harness against this fixture scores as expected (no garbage target, no allowlist refusal, model routed correctly).
+3. Tests: full-harness run against the fixture ends scored/COMPLETED, not unexhausted-complete.
+
+
 
 ## Completed
 
