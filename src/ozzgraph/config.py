@@ -13,6 +13,13 @@ V08 (v2/local-assessment) adds the optional scope file
 plus the name of the environment variable holding the secret; the secret value
 itself never enters the file or the config, docs/adr/0010). Both load
 deterministically and fail loudly (``ConfigError``) on malformed input.
+
+V07 (v2/specialists, docs/adr/0009) adds the optional specialist-fleet
+toggle (``OZZGRAPH_SPECIALISTS_ENABLED``, HAL-010): when enabled the
+supervisor composes a
+:class:`~ozzgraph.specialists.SpecialistFleet` into the runner so a pure
+independent-hypothesis decision dispatches a bounded parallel micro-agent
+batch; the default (off) keeps the V06 model path unchanged.
 """
 
 from __future__ import annotations
@@ -53,6 +60,13 @@ MAX_MODEL_CALLS_ENV = "OZZGRAPH_MAX_MODEL_CALLS"
 MAX_TOOL_CALLS_ENV = "OZZGRAPH_MAX_TOOL_CALLS"
 MAX_WORKERS_ENV = "OZZGRAPH_MAX_WORKERS"
 MAX_HINTS_ENV = "OZZGRAPH_MAX_HINTS"
+
+# V07 (v2/specialists, docs/adr/0009): optional specialist-fleet toggle
+# (HAL-010). When enabled the supervisor composes a SpecialistFleet into
+# the runner so a pure independent-hypothesis StrategicDecision
+# dispatches a bounded parallel micro-agent batch; the default (off)
+# keeps the V06 model path byte-for-byte unchanged.
+SPECIALISTS_ENABLED_ENV = "OZZGRAPH_SPECIALISTS_ENABLED"
 
 # Scope-policy knobs (PR10): command-length limit, target allowlist,
 # and permitted command families. Defaults come from ozzgraph.policy so
@@ -170,6 +184,10 @@ DEFAULT_MAX_TOOL_CALLS = 0
 DEFAULT_MAX_WORKERS = 4
 # Paid hints are supervisor-only and bounded (max one per detonation).
 DEFAULT_MAX_HINTS = 1
+# V07 (docs/adr/0009): the specialist fleet is OFF by default — wiring
+# it in is a supervisor-level composition decision (HAL-010), and the
+# default runner keeps the V06 model path.
+DEFAULT_SPECIALISTS_ENABLED = False
 
 # Safe default flag pattern: `flag{...}` with no braces or whitespace
 # inside (docs/TECHNICAL_REQUIREMENTS.md, "Flag Submission": a candidate
@@ -263,6 +281,13 @@ class OzzGraphConfig(BaseModel):
         max_tool_calls: Cumulative tool-call budget; ``0`` = no cap.
         max_workers: Maximum concurrent workers.
         max_hints: Maximum paid hints the supervisor may purchase.
+        specialists_enabled: When True (``OZZGRAPH_SPECIALISTS_ENABLED``),
+            the supervisor composes a
+            :class:`~ozzgraph.specialists.SpecialistFleet` into the
+            runner so a pure independent-hypothesis decision dispatches
+            a bounded parallel specialist batch with zero LLM calls
+            (V07, docs/adr/0009); the default (False) keeps the V06
+            model path unchanged.
         max_command_length: Ceiling for a single command line, in
             characters; longer commands are rejected by the scope
             policy before execution.
@@ -293,6 +318,12 @@ class OzzGraphConfig(BaseModel):
     max_tool_calls: int = Field(default=DEFAULT_MAX_TOOL_CALLS, ge=0)
     max_workers: int = Field(default=DEFAULT_MAX_WORKERS, ge=1)
     max_hints: int = Field(default=DEFAULT_MAX_HINTS, ge=1)
+
+    # V07 (v2/specialists, docs/adr/0009): the bounded-parallel
+    # specialist fleet is a supervisor-level composition decision
+    # (HAL-010) — off by default so existing runs keep the V06 model
+    # path byte-for-byte.
+    specialists_enabled: bool = Field(default=DEFAULT_SPECIALISTS_ENABLED)
 
     max_command_length: int = Field(default=DEFAULT_MAX_COMMAND_LENGTH, ge=1)
     target_allowlist: tuple[str, ...] = Field(default=DEFAULT_TARGET_ALLOWLIST)
@@ -659,6 +690,19 @@ def _env_path(environ: Mapping[str, str], key: str) -> Path | None:
     return None if raw is None else Path(raw)
 
 
+def _env_bool(environ: Mapping[str, str], key: str, default: bool) -> bool:
+    """Parse a boolean environment variable, falling back to ``default``.
+
+    Accepts ``1``/``true``/``yes``/``on`` (case-insensitive) as true
+    (the hal_client convention); blank variables fall back to the
+    default.
+    """
+    raw = _env_str(environ, key, "").casefold()
+    if raw == "":
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _load_document(path: Path) -> object:
     """Parse a JSON / YAML / TOML document, selected by file suffix.
 
@@ -826,6 +870,9 @@ def load_config(environ: Mapping[str, str] | None = None) -> OzzGraphConfig:
             max_tool_calls=_env_int(env, MAX_TOOL_CALLS_ENV, DEFAULT_MAX_TOOL_CALLS),
             max_workers=_env_int(env, MAX_WORKERS_ENV, DEFAULT_MAX_WORKERS),
             max_hints=_env_int(env, MAX_HINTS_ENV, DEFAULT_MAX_HINTS),
+            specialists_enabled=_env_bool(
+                env, SPECIALISTS_ENABLED_ENV, DEFAULT_SPECIALISTS_ENABLED
+            ),
             max_command_length=_env_int(env, MAX_COMMAND_LENGTH_ENV, DEFAULT_MAX_COMMAND_LENGTH),
             target_allowlist=merged_allowlist,
             allowed_command_families=_env_csv(

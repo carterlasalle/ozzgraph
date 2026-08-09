@@ -662,3 +662,66 @@ def test_map_status_matches_termination_reasons() -> None:
     assert (
         Supervisor._map_status(RunnerStatus.BUDGET_EXHAUSTED) == TerminationReason.BUDGET_EXHAUSTED
     )
+
+
+# ---------------------------------------------------------------------------
+# HAL-010: specialist fleet production composition (docs/adr/0009)
+# ---------------------------------------------------------------------------
+
+
+def _capture_runner_kwargs(monkeypatch) -> list[dict[str, object]]:
+    """Swap the supervisor's AutonomousRunner for a recording double.
+
+    The double stops the run immediately (RunnerStatus.STOPPED) so the
+    composition under test is exercised without driving the loop; the
+    kwargs the supervisor would pass to the real runner are captured.
+    """
+    from ozzgraph.runner import RunnerStatus
+
+    captured: list[dict[str, object]] = []
+
+    class _RecordingRunner:
+        def __init__(self, **kwargs: object) -> None:
+            captured.append(kwargs)
+
+        async def run(self) -> RunnerStatus:
+            return RunnerStatus.STOPPED
+
+        async def aclose(self) -> None:
+            pass
+
+    monkeypatch.setattr("ozzgraph.supervisor.AutonomousRunner", _RecordingRunner)
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_run_wires_specialist_fleet_when_enabled(tmp_path, monkeypatch) -> None:
+    """HAL-010: with the toggle enabled, the supervisor composes a
+    SpecialistFleet into the runner — the fleet is a supervisor-level
+    composition decision (ADR-0009), and the run's artifacts, event log,
+    run id, policy, worker bound, and state dir are wired through."""
+    from ozzgraph.specialists import SpecialistFleet
+
+    captured = _capture_runner_kwargs(monkeypatch)
+    supervisor = Supervisor(_config(tmp_path, specialists_enabled=True))
+    assert await supervisor.run() == TerminationReason.INTERRUPTED
+    assert captured, "the runner must be constructed"
+    fleet = captured[0]["specialists"]
+    assert isinstance(fleet, SpecialistFleet)
+    assert fleet._artifacts is supervisor._artifact_store
+    assert fleet._event_log is supervisor._event_log
+    assert fleet._run_id == supervisor.run_id
+    assert fleet._max_workers == supervisor.config.max_workers
+    assert fleet._state_dir == supervisor.config.state_dir
+
+
+@pytest.mark.asyncio
+async def test_run_leaves_fleet_disabled_by_default(tmp_path, monkeypatch) -> None:
+    """HAL-010: without the toggle the runner receives specialists=None —
+    the V06 model path is byte-for-byte unchanged and no fleet is ever
+    constructed (ADR-0009 consequence)."""
+    captured = _capture_runner_kwargs(monkeypatch)
+    supervisor = Supervisor(_config(tmp_path))
+    assert await supervisor.run() == TerminationReason.INTERRUPTED
+    assert captured, "the runner must be constructed"
+    assert captured[0]["specialists"] is None

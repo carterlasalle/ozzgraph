@@ -160,6 +160,7 @@ def _runner(
     inventory: ToolInventory | None = None,
     shell: ShellRunner | FakeShell | None = None,
     specialists=None,
+    brain=None,
 ) -> AutonomousRunner:
     state = tmp_path / "state"
     state.mkdir(parents=True, exist_ok=True)
@@ -184,6 +185,7 @@ def _runner(
         # probe ever spawns a subprocess (deterministic, fast).
         inventory=inventory if inventory is not None else ToolInventory(paths=()),
         specialists=specialists,
+        brain=brain,
     )
 
 
@@ -846,3 +848,52 @@ async def test_specialist_batch_turn_dispatches_fleet_without_model_call(
         assert any(e["event_type"] == "runner.specialist_batch" for e in events)
         assert any(e["event_type"] == "runner.turn" for e in events)
         await runner.aclose()
+
+
+class _BatchDecisionBrain:
+    """A brain that always returns a pure hypothesis-batch decision."""
+
+    def __init__(self, decision: StrategicDecision) -> None:
+        self._decision = decision
+
+    async def decide(self, graph, route, *, failed_actions=()):
+        return self._decision
+
+
+class _NoModelCallsService:
+    """Model client that fails the test if a completion is requested."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(self, request):
+        self.calls += 1
+        raise AssertionError("no model call expected: the batch path is deterministic")
+
+    async def aclose(self) -> None:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_one_turn_routes_hypothesis_batch_to_fleet_not_llm(
+    tmp_path: Path,
+) -> None:
+    """HAL-010: the turn gate dispatches a pure independent-hypothesis
+    decision to the fleet — the LLM is never called (ADR-0009)."""
+    stub = StubFleet()
+    model = _NoModelCallsService()
+    async with StateGraph(":memory:") as graph:
+        runner = _runner(
+            tmp_path,
+            graph,
+            specialists=stub,
+            brain=_BatchDecisionBrain(_batch_decision()),
+            model_service=model,
+        )
+        try:
+            outcome = await runner._one_turn()
+        finally:
+            await runner.aclose()
+        assert outcome is None  # continue the loop
+        assert stub.calls and stub.calls[0][0] == ("h-1", "h-2")
+        assert model.calls == 0  # ZERO LLM calls on the batch path

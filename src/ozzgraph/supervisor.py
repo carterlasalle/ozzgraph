@@ -86,6 +86,7 @@ from ozzgraph.model_client import ModelService
 from ozzgraph.policy import ScopePolicy
 from ozzgraph.router import MissingRequiredStateError
 from ozzgraph.runner import AutonomousRunner, RunnerStatus
+from ozzgraph.specialists import SpecialistFleet
 from ozzgraph.state_graph import StateGraph
 
 
@@ -297,6 +298,27 @@ class Supervisor:
                             event_log=self._event_log,
                             run_id=self._run_id,
                         )
+                    # V07 (docs/adr/0009): the specialist fleet is a
+                    # supervisor-level composition decision (HAL-010).
+                    # When enabled, the runner receives a SpecialistFleet
+                    # so a pure independent-hypothesis StrategicDecision
+                    # dispatches a bounded parallel micro-agent batch
+                    # (ZERO LLM calls) instead of the StrategicPlanner;
+                    # the default keeps the V06 model path byte-for-byte
+                    # unchanged. The fleet owns no async resources (no
+                    # aclose) — plain construction is sufficient.
+                    specialists = (
+                        SpecialistFleet(
+                            artifacts=self._artifact_store,
+                            event_log=self._event_log,
+                            run_id=self._run_id,
+                            policy=policy,
+                            max_workers=cfg.max_workers,
+                            state_dir=cfg.state_dir,
+                        )
+                        if cfg.specialists_enabled
+                        else None
+                    )
                     runner = AutonomousRunner(
                         config=cfg,
                         graph=graph,
@@ -317,6 +339,7 @@ class Supervisor:
                         # (the privileged client never leaves the supervisor,
                         # AGENTS.md invariant 5).
                         flag_submitter=self._submit_flag_candidates,
+                        specialists=specialists,
                     )
                     try:
                         status = await runner.run()

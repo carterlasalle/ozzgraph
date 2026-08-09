@@ -156,6 +156,16 @@ independently implemented components.
    > `StrategicDecision` is a pure independent-hypothesis batch AND a fleet
    > is wired in (`specialists=`); the strategic LLM path and the
    > deterministic single-obvious-action path are unchanged.
+   > HAL-010 (2026-08-09): the fleet is wired into PRODUCTION composition —
+   > `Supervisor.run` composes a `SpecialistFleet` (artifacts, event log,
+   > run id, scope policy, `max_workers`, `state_dir`) into the
+   > `AutonomousRunner` when `OZZGRAPH_SPECIALISTS_ENABLED` is set
+   > (`config.specialists_enabled`, any of `1`/`true`/`yes`/`on`, default
+   > off): a pure independent-hypothesis `StrategicDecision` then dispatches
+   > the bounded parallel micro-agent batch in real runs, not just in tests.
+   > The fleet owns no async resources (no `aclose`), so plain construction
+   > is sufficient; the default keeps the V06 model path byte-for-byte
+   > unchanged (ADR-0009 consequence).
 8. `v2/local-assessment` — URL/network/repository/Docker-Compose/hybrid modes,
    credentials, scope files, reporting, SARIF; default OzzGraph experience.
    > V08 (2026-08-08): implemented — `src/ozzgraph/reporting.py` renders the

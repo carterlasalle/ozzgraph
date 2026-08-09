@@ -108,6 +108,34 @@ def test_load_config_ignores_blank_budget_env() -> None:
     assert config.max_workers == 4
 
 
+def test_load_config_specialists_disabled_by_default() -> None:
+    """V07 (HAL-010): the specialist fleet is off by default, keeping
+    the V06 model path byte-for-byte unchanged (ADR-0009 consequence)."""
+    config = load_config(environ={"HAL_USER_ID": "user-42"})
+    assert config.specialists_enabled is False
+
+
+def test_load_config_specialists_enabled_via_env() -> None:
+    """OZZGRAPH_SPECIALISTS_ENABLED (truthy spelling) turns the fleet on."""
+    config = load_config(environ={"HAL_USER_ID": "user-42", "OZZGRAPH_SPECIALISTS_ENABLED": "true"})
+    assert config.specialists_enabled is True
+
+
+def test_load_config_specialists_env_truthy_spellings() -> None:
+    """Any accepted truthy spelling enables the fleet (hal_client convention)."""
+    for value in ("1", "TRUE", "Yes", "on"):
+        config = load_config(
+            environ={"HAL_USER_ID": "user-42", "OZZGRAPH_SPECIALISTS_ENABLED": value}
+        )
+        assert config.specialists_enabled is True
+
+
+def test_load_config_specialists_env_blank_falls_back() -> None:
+    """A blank toggle env var falls back to the default (disabled)."""
+    config = load_config(environ={"HAL_USER_ID": "user-42", "OZZGRAPH_SPECIALISTS_ENABLED": "  "})
+    assert config.specialists_enabled is False
+
+
 def test_config_model_validates_budget_ranges() -> None:
     """Budget fields enforce their gt/ge constraints via pydantic."""
     with pytest.raises(ValueError):

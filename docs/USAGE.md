@@ -52,6 +52,7 @@ constructor-injected with environment fallback in `ozzgraph.model_client` and
 | `OZZGRAPH_MAX_MODEL_CALLS` | `0` (unlimited) | Cumulative model-call budget. |
 | `OZZGRAPH_MAX_TOOL_CALLS` | `0` (unlimited) | Cumulative tool-call budget. |
 | `OZZGRAPH_MAX_WORKERS` | `4` | Maximum concurrent scheduled tasks. |
+| `OZZGRAPH_SPECIALISTS_ENABLED` | *(off)* | When set (any of `1`/`true`/`yes`/`on`), the supervisor composes the V07 specialist fleet into the runner: a pure independent-hypothesis decision dispatches a bounded parallel micro-agent batch with zero LLM calls instead of the StrategicPlanner (HAL-010, docs/adr/0009). Off by default — the V06 model path is unchanged. |
 | `OZZGRAPH_MAX_HINTS` | `1` | Maximum paid hints the supervisor may purchase. |
 | `OZZGRAPH_MAX_COMMAND_LENGTH` | `4096` | Ceiling for one command line (chars); longer commands are rejected by the scope policy. |
 | `OZZGRAPH_TARGET_ALLOWLIST` | *(empty — fail closed)* | Comma-separated hosts/IPs/CIDRs commands may address. Empty means **no** external destination is permitted. |
