@@ -528,6 +528,93 @@ def halctf_target_allowlist(environ: Mapping[str, str]) -> tuple[str, ...]:
     return tuple(sorted(entries))
 
 
+@dataclass(frozen=True)
+class HalCTFRuntimeSnapshot:
+    """Full platform-injected HalCTF runtime metadata (HAL-001).
+
+    One frozen value object capturing EVERYTHING the competition
+    platform injects for a live run, parsed deterministically from
+    ``environ`` by :func:`build_halctf_runtime_snapshot`: the
+    ``HAL_TARGET_*`` services (already infra-filtered), the challenge
+    metadata (``HAL_CHALLENGE_ID`` / ``HAL_CHALLENGE_NAME`` /
+    ``HAL_CHALLENGE_CATEGORY``), runtime identity (``HAL_AGENT_MODEL``
+    / ``HAL_RUN_ID`` / ``HAL_TEAM_UUID``), the flag-like variables
+    (``BONUS_FLAG`` + every ``FLAG_*``), and the model/MCP
+    infrastructure endpoints (``OPENAI_BASE_URL`` /
+    ``MCP_ENDPOINT``). Absent metadata is ``None`` — never invented;
+    ``flag_like`` is empty when no flag-like variable is set.
+
+    Attributes:
+        services: The infra-filtered ``HAL_TARGET_*`` services
+            (:func:`discover_halctf_services`).
+        challenge_id: The resolved challenge id (first non-blank of
+            :data:`HALCTF_CHALLENGE_ID_VARS`), or ``None``.
+        challenge_name: ``HAL_CHALLENGE_NAME``, or ``None``.
+        challenge_category: ``HAL_CHALLENGE_CATEGORY``, or ``None``.
+        agent_model: ``HAL_AGENT_MODEL``, or ``None``.
+        run_id: ``HAL_RUN_ID``, or ``None``.
+        team_uuid: ``HAL_TEAM_UUID``, or ``None``.
+        flag_like: Non-blank values of ``BONUS_FLAG`` then every
+            ``FLAG_*`` variable (sorted by variable name) — the
+            platform-injected flag-like environment, in deterministic
+            order.
+        openai_base_url: ``OPENAI_BASE_URL``, or ``None``.
+        mcp_endpoint: The resolved MCP endpoint
+            (:func:`discover_halctf_endpoint` — the same resolution the
+            environment adapter drives), or ``None``.
+    """
+
+    services: tuple[HalCTFTargetService, ...]
+    challenge_id: str | None
+    challenge_name: str | None
+    challenge_category: str | None
+    agent_model: str | None
+    run_id: str | None
+    team_uuid: str | None
+    flag_like: tuple[str, ...]
+    openai_base_url: str | None
+    mcp_endpoint: str | None
+
+
+def build_halctf_runtime_snapshot(environ: Mapping[str, str]) -> HalCTFRuntimeSnapshot:
+    """Parse the full platform-injected HalCTF runtime from ``environ`` (HAL-001).
+
+    Every field comes from the existing deterministic discovery helpers
+    (first non-blank wins), so the snapshot and the environment adapter
+    / policy gate can never disagree: services via
+    :func:`discover_halctf_services` (infra-excluded), challenge id
+    first-non-blank over :data:`HALCTF_CHALLENGE_ID_VARS`, the MCP
+    endpoint via :func:`discover_halctf_endpoint`. Absent or blank
+    metadata parses to ``None`` — challenge metadata is never required
+    for a run, so its absence is graceful; the only loud failure is
+    truly unrecoverable configuration (``ConfigError`` from
+    :func:`discover_halctf_services` on a set-but-invalid
+    ``HAL_TARGET_*`` port).
+    """
+    flag_like: list[str] = []
+    bonus_flag = _first_nonempty(environ, BONUS_FLAG_ENV)
+    if bonus_flag is not None:
+        flag_like.append(bonus_flag)
+    for key in sorted(environ):
+        if not key.startswith(FLAG_LIKE_PREFIX):
+            continue
+        value = _first_nonempty(environ, key)
+        if value is not None:
+            flag_like.append(value)
+    return HalCTFRuntimeSnapshot(
+        services=discover_halctf_services(environ),
+        challenge_id=_first_nonempty(environ, *HALCTF_CHALLENGE_ID_VARS),
+        challenge_name=_first_nonempty(environ, HAL_CHALLENGE_NAME_ENV),
+        challenge_category=_first_nonempty(environ, HAL_CHALLENGE_CATEGORY_ENV),
+        agent_model=_first_nonempty(environ, HAL_AGENT_MODEL_ENV),
+        run_id=_first_nonempty(environ, HAL_RUN_ID_ENV),
+        team_uuid=_first_nonempty(environ, HAL_TEAM_UUID_ENV),
+        flag_like=tuple(flag_like),
+        openai_base_url=_first_nonempty(environ, OPENAI_BASE_URL_ENV),
+        mcp_endpoint=discover_halctf_endpoint(environ),
+    )
+
+
 def _env_str(environ: Mapping[str, str], key: str, default: str) -> str:
     """Read a string environment variable, falling back to a default.
 

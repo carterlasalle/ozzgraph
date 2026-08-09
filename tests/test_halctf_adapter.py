@@ -46,6 +46,7 @@ from ozzgraph.config import (
     HALCTF_ENDPOINT_CANDIDATES,
     ConfigError,
     OzzGraphConfig,
+    build_halctf_runtime_snapshot,
     discover_halctf_challenge_id,
     discover_halctf_endpoint,
     discover_halctf_services,
@@ -553,7 +554,8 @@ def test_kernel_never_imports_moved_halctf_modules() -> None:
 
 #: Tottori's exact platform-injected env shape (verified cross-repo from
 #: kazuki005276ssh/halctf-team-tottori committed live-run logs): named
-#: service IP/PORT pairs, challenge metadata, runtime identity, and the
+#: service IP/PORT pairs, challenge metadata, runtime identity,
+#: flag-like variables (BONUS_FLAG + a FLAG_* variable), and the
 #: sidecar model/MCP infrastructure endpoints.
 TOTTORI_ENV: dict[str, str] = {
     "HAL_TARGET_FERRY_IP": "10.0.0.11",
@@ -569,6 +571,7 @@ TOTTORI_ENV: dict[str, str] = {
     "OPENAI_BASE_URL": "http://127.0.0.1:9000/llm",
     "MCP_ENDPOINT": "http://127.0.0.1:9000/mcp",
     "BONUS_FLAG": "flag{bonus}",
+    "FLAG_MAIN": "flag{underworld-main}",
 }
 
 
@@ -737,3 +740,84 @@ def test_load_config_merges_halctf_service_allowlist() -> None:
     )
     assert "192.168.1.5" in config.target_allowlist
     assert "10.0.0.11:8080" in config.target_allowlist
+
+
+def test_halctf_runtime_snapshot_parses_tottori_env() -> None:
+    """build_halctf_runtime_snapshot parses the FULL platform-injected
+    runtime from TOTTORI_ENV: services, challenge metadata, runtime
+    identity, flag-like env values (BONUS_FLAG + FLAG_*), and the
+    model/MCP infrastructure endpoints."""
+    snapshot = build_halctf_runtime_snapshot(TOTTORI_ENV)
+    assert [(s.name, s.ip, s.port) for s in snapshot.services] == [
+        ("ferry", "10.0.0.11", 8080),
+        ("underworld", "10.0.0.12", 3000),
+    ]
+    assert snapshot.challenge_id == "18"
+    assert snapshot.challenge_name == "underworld"
+    assert snapshot.challenge_category == "web"
+    assert snapshot.agent_model == "gpt-4o-mini"
+    assert snapshot.run_id == "run-2026-08-09"
+    assert snapshot.team_uuid == "team-42"
+    # BONUS_FLAG first, then FLAG_* variables (sorted by name).
+    assert snapshot.flag_like == ("flag{bonus}", "flag{underworld-main}")
+    assert snapshot.openai_base_url == "http://127.0.0.1:9000/llm"
+    # The resolved MCP endpoint (MCP_ENDPOINT wins over OPENAI_BASE_URL
+    # in the candidate order) — the same value the environment drives.
+    assert snapshot.mcp_endpoint == "http://127.0.0.1:9000/mcp"
+    assert (
+        snapshot.mcp_endpoint
+        == HalCTFEnvironment(_config(Path("/tmp/x")), environ=TOTTORI_ENV).endpoint
+    )
+
+
+def test_halctf_runtime_snapshot_graceful_without_metadata() -> None:
+    """An env WITHOUT the platform-injected metadata parses gracefully:
+    every optional field is None and flag_like is empty — never a loud
+    failure for absent metadata."""
+    snapshot = build_halctf_runtime_snapshot({})
+    assert snapshot.services == ()
+    assert snapshot.challenge_id is None
+    assert snapshot.challenge_name is None
+    assert snapshot.challenge_category is None
+    assert snapshot.agent_model is None
+    assert snapshot.run_id is None
+    assert snapshot.team_uuid is None
+    assert snapshot.flag_like == ()
+    assert snapshot.openai_base_url is None
+    assert snapshot.mcp_endpoint is None
+    # Blank metadata is treated exactly like unset.
+    blank = build_halctf_runtime_snapshot(
+        {
+            "HAL_CHALLENGE_NAME": "   ",
+            "BONUS_FLAG": " ",
+            "FLAG_MAIN": "",
+        }
+    )
+    assert blank.challenge_name is None
+    assert blank.flag_like == ()
+
+
+@pytest.mark.asyncio
+async def test_halctf_environment_exposes_runtime_snapshot() -> None:
+    """HalCTFEnvironment builds the snapshot at construction and surfaces
+    the parsed metadata in the scope constraints (challenge name /
+    category ride alongside challenge_id and mode)."""
+    environment = HalCTFEnvironment(_config(Path("/tmp/x")), environ=TOTTORI_ENV)
+    snapshot = environment.snapshot
+    assert snapshot.challenge_name == "underworld"
+    assert snapshot.challenge_category == "web"
+    assert snapshot.agent_model == "gpt-4o-mini"
+    assert snapshot.run_id == "run-2026-08-09"
+    assert snapshot.team_uuid == "team-42"
+    assert snapshot.flag_like == ("flag{bonus}", "flag{underworld-main}")
+    scope = await environment.discover_scope()
+    assert scope.constraints["challenge_id"] == "18"
+    assert scope.constraints["mode"] == "halctf"
+    assert scope.constraints["challenge_name"] == "underworld"
+    assert scope.constraints["challenge_category"] == "web"
+    # Without injected metadata the constraints carry only id + mode.
+    bare = HalCTFEnvironment(_config(Path("/tmp/x")), environ=_halctf_env())
+    bare_scope = await bare.discover_scope()
+    assert bare_scope.constraints["challenge_id"] == "web-01"
+    assert "challenge_name" not in bare_scope.constraints
+    assert "challenge_category" not in bare_scope.constraints

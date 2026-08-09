@@ -46,8 +46,15 @@ contract, NOT a kernel phase. V09 completes the adapter:
   URL (``http://IP:PORT``) or a bare-IP host when no port is injected —
   and the scope carries the service surface (hosts, urls, merged
   ``target_allowlist`` constraint). Sidecar / model / MCP authorities
-  are infrastructure and are never targets. Challenge-id-only
-  environments keep the V09 single-target fallback.
+  are infrastructure and are never targets. The environment also
+  builds the full platform-injected runtime snapshot
+  (:class:`~ozzgraph.config.HalCTFRuntimeSnapshot` via
+  :func:`ozzgraph.config.build_halctf_runtime_snapshot`) — challenge
+  metadata (name/category), runtime identity (agent model, run id,
+  team uuid), flag-like env values, and the model/MCP endpoints —
+  surfacing it as ``environment.snapshot`` and in the scope
+  constraints. Challenge-id-only environments keep the V09
+  single-target fallback.
 
 Discovery performs NO I/O in this adapter (it derives everything from
 configuration), so discovery is deterministic and testable without an
@@ -63,7 +70,9 @@ from collections.abc import Mapping
 from ozzgraph.artifacts import ArtifactStore
 from ozzgraph.config import (
     ConfigError,
+    HalCTFRuntimeSnapshot,
     OzzGraphConfig,
+    build_halctf_runtime_snapshot,
     discover_halctf_challenge_id,
     discover_halctf_services,
     halctf_target_allowlist,
@@ -136,11 +145,27 @@ class HalCTFEnvironment:
         self._endpoint = (
             endpoint if endpoint is not None else require_halctf_endpoint(self._environ)
         )
+        # HAL-001: the full platform-injected runtime snapshot, parsed
+        # once at construction so every discovery method reads the same
+        # view of the environment (services, challenge metadata, runtime
+        # identity, flag-like values, model/MCP endpoints).
+        self._snapshot = build_halctf_runtime_snapshot(self._environ)
 
     @property
     def endpoint(self) -> str:
         """The resolved HalCTF MCP endpoint this environment drives."""
         return self._endpoint
+
+    @property
+    def snapshot(self) -> HalCTFRuntimeSnapshot:
+        """The full platform-injected runtime snapshot (HAL-001).
+
+        Parsed once at construction from ``environ`` by
+        :func:`ozzgraph.config.build_halctf_runtime_snapshot`; the
+        discovery methods surface this same view, so the environment
+        can never disagree with the config module's parsing.
+        """
+        return self._snapshot
 
     @property
     def challenge_id(self) -> str:
@@ -245,14 +270,22 @@ class HalCTFEnvironment:
         (:func:`ozzgraph.config.halctf_target_allowlist`) union the
         operator-configured ``config.target_allowlist``, sorted and
         deduplicated, so scope data and the policy gate can never
-        disagree. Without injected services the scope is today's
-        surface: the configured allowlist as hosts plus the challenge
-        id and mode constraints. No MCP I/O.
+        disagree. ``constraints`` also carries the parsed challenge
+        metadata (``challenge_name`` / ``challenge_category``) whenever
+        the platform injected it (HAL-001). Without injected services
+        the scope is today's surface: the configured allowlist as hosts
+        plus the challenge id and mode constraints. No MCP I/O.
         """
         constraints: dict[str, object] = {
             "challenge_id": self.challenge_id,
             "mode": "halctf",
         }
+        # HAL-001: the parsed challenge metadata rides the scope when the
+        # platform injected it — never invented, never required.
+        if self._snapshot.challenge_name is not None:
+            constraints["challenge_name"] = self._snapshot.challenge_name
+        if self._snapshot.challenge_category is not None:
+            constraints["challenge_category"] = self._snapshot.challenge_category
         services = discover_halctf_services(self._environ)
         if services:
             hosts = tuple(sorted({service.ip for service in services}))
