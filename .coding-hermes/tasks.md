@@ -32,30 +32,32 @@ non-same-name test files; docs complete). Board idle → cooldown 43200s.**
 
 ## Active
 
-> **Tick 2026-08-09: HAL-004 closed (judge PASS ab4d87a9, commit 66cf337 — verified**
-> this tick). Sidecar transport adapter: new `sidecar.py` (626 lines) in the halctf
-> environment — `SidecarSubmissionClient` speaks PLAIN HTTP to the real competition
-> sidecar (`POST /submit` with bounded `{challenge_id, flag}` + `POST /done`
-> best-effort, never fatal), resolving its base URL env-first
-> (`OZZGRAPH_SIDECAR_BASE_URL` → origin of the resolved MCP endpoint → localhost
-> default; `OPENAI_BASE_URL` never consulted); `_normalize_submission` maps every
-> observed response form into the UNCHANGED `SubmissionResult` schema with
-> deterministic precedence (status string in ACCEPT_STATUSES
-> {correct,accepted,solved,success,already_solved} → explicit boolean verdict
-> fields accepted/success/solved/correct → points_awarded/points > 0), wrong-typed
-> verdict fields fail loudly (HalServiceError); bounded retries on transient
-> failures only (429/5xx/transport), privilege guard (OZZGRAPH_HAL_PRIVILEGED,
-> HalPrivilegeError before the wire), events sidecar.failure/sidecar.done/
-> sidecar.done_failed. Implements the existing `SubmissionClient` protocol so the
-> supervisor-only SubmissionCoordinator drives it unchanged — coordinator/schema
-> zero-line diff. Wired as `HalCTFEnvironment.sidecar_submission_client()` factory
-> + exported from the halctf shim. Gate: ruff/format/mypy strict clean, 1243 tests
-> pass (215s, +42 new in tests/test_sidecar.py incl. coordinator integration).
-> Worker interrupted once mid-implementation (exit 130); continuation worker
-> finished + committed + pushed. Judge PASS ab4d87a9 (4/4 criteria, tier1
-> lint/tests/secrets PASS). gitreins task deleted, tasks.yaml clean. CI green on
-> 66cf337. HAL-005..HAL-011 pending → cooldown stays 900s. Next: HAL-005 (wire
-> flag extraction + submission into the active loop).
+> **Tick 2026-08-09: HAL-005 closed (judge PASS 45694ccf, commit ded08d4 — verified**
+> this tick). Flag extraction + submission wired into the active loop: the runner
+> invokes a supervisor-owned hook (`flag_submitter` → `_process_flag_candidates`)
+> after EVERY executed turn's `_persist_execution()` (all three observation-
+> persisting paths: deterministic/strategic/fallback, runner.py:640-645, 752-753,
+> 903-904), so a newly observed flag is extracted (`FlagCandidateExtractor.extract`)
+> and submitted (`Supervisor.submit_verified_candidate` via the supervisor-owned
+> privileged sidecar client) with ZERO LLM turns — the integration test asserts
+> `terminated.model_calls == 1` (only the observing turn). Accepted submission →
+> router DONE → `objective-halctf-flag` completed → COMPLETED → best-effort sidecar
+> `/done` fired once (`_notify_platform_done`, never fatal). Rejection →
+> coordinator marks candidate `rejected: true` + `attempts` (never re-submitted),
+> investigation continues non-fatally. No-candidate / MissingRequiredStateError →
+> silent no-op; limit/privilege/corrupt-state refusals → loud
+> `supervisor.flag_submission_failed` events, loop continues under budgets.
+> Privilege/budget/durability invariants untouched (SubmissionPrivilegeError before
+> wire, per-candidate + total budgets, replay-identical graph state). Gate:
+> ruff/format/mypy strict clean, 1253 tests pass (227s, +10 new in
+> tests/test_flag_loop.py incl. real runner loop + scripted plain-HTTP sidecar).
+> Worker dispatched via hermes chat (deepseek-v4-flash @ openrouter), committed
+> ded08d4 + pushed (verified origin/main..HEAD == 0). Judge PASS 45694ccf (4/4
+> criteria, tier1 lint/tests/secrets PASS — first run hit an evaluator-side
+> skylos_scan tool signature error, recovered; verdict committed 6cb49e4d on
+> gitreins branch). gitreins task deleted, tasks.yaml clean. CI green on ded08d4.
+> HAL-006..HAL-011 pending → cooldown stays 900s. Next: HAL-006 (objective
+> completion acceptance-gated).
 
 > **Tick 2026-08-09: HAL-002 closed (judge PASS d0e00cb, commit cbbffe5 — verified**
 > this tick). MCP optional/fallback for HalCTF startup: `OPENAI_BASE_URL` removed
@@ -210,7 +212,6 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 | HAL-008 | HalCTF process semantics — budget-exhausted / unsolved / gave-up / graceful failure exit 0; keep structured reason in events | High | 3±1 | — | ++lifecycle, ++cli | DS-V4-Flash | Medium | Kimi-K3 |
 | HAL-007 | Generalize HalCTF flag pattern (flag{}, HALCTF{}, event prefixes) independent of local default | Medium | 2±1 | V09 | ++config, ++flags | DS-V4-Flash | Low | Kimi-K3 |
 | HAL-006 | Objective completion acceptance-gated — only an accepted /submit completes objective-halctf-flag; PlanVerdict.COMPLETE may create a finding but not complete it | Critical | 4±1 | HAL-005 | +++evaluator, ++objective | DS-V4-Flash | High | DS-V4-Pro |
-| HAL-005 | Wire flag extraction directly after _persist_execution → new verified candidate immediately enters supervisor submission (no LLM) | Critical | 5±1 | HAL-004 | +++submission, ++graph | DS-V4-Flash | High | DS-V4-Pro |
 
 ## [x] HAL-001 — HalCTFRuntimeSnapshot: env → graph targets + scope allowlist (real HalCTF runtime)
 
@@ -301,7 +302,34 @@ deleted, tasks.yaml clean.
 3. No weakening of the internal coordinator/schema.
 4. Tests: mock responses for each accept/reject shape.
 
-## [ ] HAL-005 — Wire flag extraction + submission into the active loop
+## [x] HAL-005 — Wire flag extraction + submission into the active loop
+
+**Tick 2026-08-09: HAL-005 closed (judge PASS 45694ccf, commit ded08d4 — verified this tick).**
+Flag extraction + submission wired into the active loop: `AutonomousRunner` gains a
+supervisor-owned `flag_submitter` hook invoked as `_process_flag_candidates()` after EVERY
+executed turn's `_persist_execution()` (deterministic :640-645, specialist :752-753,
+fallback :903-904 — the only observation-persisting paths, which satisfy the extractor's
+provenance gate); `Supervisor._submit_flag_candidates` runs
+`environment.flag_extractor().extract(graph)` → `submit_verified_candidate(graph, ...,
+client=supervisor-owned privileged sidecar)` — ZERO LLM calls between seeing a flag and
+submitting it (integration test asserts `terminated.model_calls == 1`, only the observing
+turn). Accepted → `has_accepted_submission` routes DONE → `objective-halctf-flag`
+completed → COMPLETED → `_notify_platform_done()` fires the best-effort sidecar `/done`
+once (never fatal). Rejected → coordinator already marks the candidate `rejected: true` +
+`attempts` (never re-submitted, `graph.entity_updated` + `submission.rejected` events),
+hook returns non-fatally, investigation continues. No-candidate /
+`MissingRequiredStateError` → silent no-op; limit/privilege/corrupt-state refusals → loud
+`supervisor.flag_submission_failed` events, loop continues under budgets. Invariants
+preserved: `SubmissionPrivilegeError` before the wire, per-candidate attempt + total
+submission budgets, idempotent extraction (existing/rejected/at-budget skipped), durable
+replay-identical graph state. Local mode untouched (hook None → loop byte-for-byte
+unchanged). Gate: ruff/format/mypy strict clean, 1253 tests pass (227s, +10 new in
+tests/test_flag_loop.py: real runner loop + real supervisor hook against a scripted
+plain-HTTP sidecar — zero-LLM happy path, rejection-never-resubmitted, failure path
+continues to BUDGET_EXHAUSTED). Worker dispatched via hermes chat (deepseek-v4-flash @
+openrouter), committed ded08d4 + pushed. Judge PASS 45694ccf (4/4 criteria, tier1
+lint/tests/secrets PASS — evaluator-side skylos_scan tool signature error recovered;
+verdict committed 6cb49e4d on gitreins branch). gitreins task deleted, tasks.yaml clean.
 
 **Source:** Verified — `FlagCandidateExtractor.extract()` and `Supervisor.submit_verified_candidate()` are implemented and tested but never called in `runner.run()`/`supervisor.run()`; grep for production callers returns only definitions/docstrings. The "last two arrows" (extraction→loop, candidate→submitter) are missing.
 
@@ -379,6 +407,7 @@ deleted, tasks.yaml clean.
 | HAL-002 | MCP optional/fallback for HalCTF startup — OPENAI_BASE_URL out of HALCTF_ENDPOINT_CANDIDATES (model service /llm, never MCP), load_config + HalCTFEnvironment construct endpoint=None env-only, require_halctf_endpoint retained for genuine endpoint consumers, fail-loud scoped to unrecoverable config, hal_client localhost default unchanged (judge PASS d0e00cb, all 5 criteria, tier1 lint/tests/secrets PASS) | Critical | 3±1 | cbbffe5 | DS-V4-Flash |
 | HAL-003 | Model routing in HalCTF mode — Supervisor._model_routing resolves HAL_AGENT_MODEL → model id + OPENAI_BASE_URL → client base URL via HAL-001 snapshot, supervisor-owned ModelService wired into runner (closed in finally), absent platform vars degrade to OZZGRAPH_MODEL_*/defaults, local mode unchanged, runner.started logs actual base_url via ModelService.base_url property (judge PASS 469be7f1, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 3±1 | e9c421e | DS-V4-Flash |
 | HAL-004 | Sidecar transport adapter — plain-HTTP /submit + /done to 127.0.0.1:9000 (best-effort done, never fatal), env-first base URL (OZZGRAPH_SIDECAR_BASE_URL → MCP origin → localhost default), normalizes {status:correct/accepted/solved/success/already_solved, points_awarded>0, boolean verdict fields} into UNCHANGED SubmissionResult via deterministic precedence, bounded transient retries, privilege guard, sidecar.* events, implements SubmissionClient protocol (coordinator/schema zero-line diff), HalCTFEnvironment.sidecar_submission_client factory (judge PASS ab4d87a9, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 4±1 | 66cf337 | DS-V4-Flash |
+| HAL-005 | Flag loop wired into active loop — runner invokes supervisor-owned hook (flag_submitter → _process_flag_candidates) after every executed turn's _persist_execution (all 3 observation-persisting paths), FlagCandidateExtractor.extract → Supervisor.submit_verified_candidate via supervisor-owned privileged sidecar client, ZERO LLM turns (test asserts model_calls == 1), accepted → objective-halctf-flag completed → COMPLETED → best-effort sidecar /done once, rejected → coordinator marks rejected:true (never re-submitted) → continue, no-candidate/no-op, limit/privilege refusals loud non-fatal events, privilege/budget/durability invariants preserved (judge PASS 45694ccf, all 4 criteria, tier1 lint/tests/secrets PASS) | Critical | 5±1 | ded08d4 | DS-V4-Flash |
 | DOCS-000 | v2 documentation pass re-run — README refreshed for completed v2 milestone (release status v1.0.0 + v2 V01–V10, v2 modules in capabilities/layout: environments/, findings.py, observations.py, security_brain.py, specialists.py, profile_store.py/profile_data/, matrix.py, benchmarks/, lab/), v2 docs added to Documentation table (CHANGES_v2.md, OBSERVATIONS.md, BENCHMARKS.md, SYNTHETIC_LAB.md), repo description + 7 topics updated via gh repo edit, formatting bar intact (judge PASS 8ae01605, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 3±1 | c436427 | DS-V4-Flash |
 | V10 | full-regression: benchmarks/ package (registry + OzzGraph harness vs plain ReAct + scripted model + scoring + deterministic report), dead-end lab target with pivot proof (hypothesis_abandoned + PIVOT, bounded turns), tool-contract test (every required_capability resolves to installed provider), benchmark CLI (--target/--react/--max-turns/--out + OZZGRAPH_BENCHMARK_* env), docs/BENCHMARKS.md (judge PASS 9ce33342, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 5±1 | 498a214 | DS-V4-Flash |
 | INT-CI-001 | E2E driver imports V09-moved flag modules from canonical homes (ozzgraph.entities / ozzgraph.environments.halctf) — fixes CI Lint failure (ruff I001 on e2e_001_driver.py, symptom of deleted ozzgraph.flags regression) | High | 1±0 | 5628bf4 | DS-V4-Flash |
