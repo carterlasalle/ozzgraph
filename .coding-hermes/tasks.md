@@ -32,6 +32,47 @@ non-same-name test files; docs complete). Board idle → cooldown 43200s.**
 
 ## Active
 
+> **Tick 2026-08-09: HAL-009 closed (judge PASS 9ab0a5c9, commit de5d9a4 — verified**
+> this tick). Tottori live-run exploitation lessons ported into skill cards,
+> kernel-external: 8 new cards registered in the SKILLS registry (skills.py)
+> — exploit_sqli_enumeration (multi-DB fingerprinting/enumeration, bounded
+> sqlmap after evidenced hypothesis), exploit_jwt (alg confusion, PEM-as-
+> HMAC-secret, kid injection, weak-secret brute within policy), exploit_ssrf
+> (multi-service probing, IP obfuscation — decimal/hex/octal/IPv6/rebinding,
+> file:// + gopher://, side-channel reasoning), exploit_xxe (entity in XML
+> bodies, file read, SSRF via http:// entities, blind OOB only with authorized
+> listener), exploit_deserialization (sink identification pickle/yaml/jackson/
+> php unserialize, gadget chains evidence-driven, never execute untrusted
+> payloads on harness host), exploit_protocol_reversing (capture/parse custom
+> protocols, field fuzzing, length-prefix, checksum/CRC bypass), forensics_
+> file_analysis (carving, strings/entropy, stego, archive/disk-image
+> enumeration, timeline), exploit_cloud_iam (role chaining, metadata service
+> 169.254.169.254 via SSRF, credential validation — authorized scopes only).
+> New src/ozzgraph/techniques.py: deterministic TechniqueClassifier maps a
+> challenge-category string (case-insensitive substring matching: ssrf/sql/
+> jwt/web/forensic/cloud/iam/...) → ordered skill_id subset; unknown/None →
+> DEFAULT_CATEGORY_SKILL_IDS (recon/enum core); unregistered mapping fails
+> loudly (SkillRegistryError). SkillRegistry.list_for_category(category)
+> returns category-constrained SkillSummaries sorted by skill_id — lazy:
+> summaries only, full cards exclusively via load() (AGENTS.md rule #6);
+> instructions stay in card DATA, zero supervisor/executor/context references
+> to exploit_* ids (rule #10). Router wired (middle-out): router.py
+> skills_for(phase, category=None) intersects phase + category, category-less
+> behavior unchanged. Docs: CHANGES_v2.md +29, API_AND_INTEGRATIONS.md skill
+> table 9→17 rows, CUSTOMIZATION.md refreshed. Gate: ruff/format/mypy strict
+> clean (62 files), 1294 tests pass (239.96s, +23: tests/test_technique_
+> classifier.py 300 lines — category routing incl. EXPLOITATION 'Web / SSRF'
+> → exactly [exploit_auth_bypass, exploit_jwt, exploit_ssrf], forensics,
+> cloud IAM, unknown/None default, lazy-summary + load() evidence, loud
+> unregistered mapping; test_skills.py + test_toolplane.py extended for the
+> 17-skill registry). Worker dispatched via hermes chat (deepseek-v4-flash @
+> openrouter), committed de5d9a4 (Tier-1 guard PASS — full suite in hook) +
+> pushed (origin/main..HEAD=0 verified). Judge PASS 9ab0a5c9 (4/4 criteria,
+> tier1 lint/tests/secrets PASS, evaluator re-ran ruff/mypy + full pytest
+> 1294 passed fresh; verdict committed on gitreins branch). gitreins task
+> deleted, tasks.yaml clean. HAL-010..HAL-011 pending → cooldown stays 900s.
+> Next: HAL-010 (wire SpecialistFleet into Supervisor production composition).
+
 > **Tick 2026-08-09: HAL-008 closed (judge PASS f55fee81, commit f1a2a2d — verified**
 > this tick). HalCTF process/exit semantics: `_exit_code_for()` in `__main__.py`
 > makes the process-boundary mapping HalCTF-mode-aware — in HalCTF mode (any
@@ -252,7 +293,6 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 |----|------|-----|-----|------|------|-------|-----------|----------|
 | HAL-011 | halctf-real-contract regression fixture — mirror Tottori's committed live-run env shapes + /submit responses into the suite | High | 4±1 | HAL-001..008 | +++tests, ++halctf | DS-V4-Flash | Medium | Kimi-K3 |
 | HAL-010 | Wire SpecialistFleet into Supervisor production composition (currently test-only) | High | 4±1 | V07 | ++specialists, ++supervisor | DS-V4-Flash | Medium | Kimi-K3 |
-| HAL-009 | Port Tottori live-run exploitation lessons into skills (SQLi/JWT/SSRF/XXE/deser/protocol/forensics/cloud-IAM), kernel-external | High | 4±1 | V17 | +++skills, ++halctf | DS-V4-Flash | Medium | Kimi-K3 |
 
 ## [x] HAL-001 — HalCTFRuntimeSnapshot: env → graph targets + scope allowlist (real HalCTF runtime)
 
@@ -446,7 +486,34 @@ tests pass (+6 e2e). gitreins task deleted, tasks.yaml clean.
 3. Only actual process corruption / startup-impossible → exit 1.
 4. Tests: budget-exhausted and unsolved HalCTF runs exit 0; startup-impossible exits 1.
 
-## [ ] HAL-009 — Port Tottori live-run exploitation lessons into skills
+## [x] HAL-009 — Port Tottori live-run exploitation lessons into skills
+
+**Tick 2026-08-09: HAL-009 closed (judge PASS 9ab0a5c9, commit de5d9a4).**
+Tottori live-run exploitation lessons ported into skill cards, kernel-external:
+8 new cards registered in the SKILLS registry — exploit_sqli_enumeration
+(multi-DB fingerprinting via error/UNION/boolean-blind, information_schema vs
+sqlite_master, bounded sqlmap after evidenced hypothesis), exploit_jwt (alg
+confusion incl. PEM-as-HMAC-secret, key confusion, kid injection, weak-secret
+brute within policy), exploit_ssrf (multi-service probing, IP obfuscation
+decimal/hex/octal/IPv6/rebinding reasoning, file:// + gopher://, side-channel),
+exploit_xxe (external entities, file read, SSRF via http:// entities, blind OOB
+only with authorized listener), exploit_deserialization (sink identification,
+gadget chains evidence-driven, never execute untrusted payloads on harness
+host), exploit_protocol_reversing (capture/parse, field fuzzing, length-prefix,
+checksum/CRC bypass), forensics_file_analysis (carving, strings/entropy, stego,
+archive/disk-image enumeration, timeline), exploit_cloud_iam (role chaining,
+metadata service via SSRF, credential validation — authorized scopes only).
+New src/ozzgraph/techniques.py: deterministic TechniqueClassifier
+(case-insensitive substring category matching → ordered skill_id subset;
+unknown/None → DEFAULT_CATEGORY_SKILL_IDS; unregistered mapping fails loudly).
+SkillRegistry.list_for_category(category) → category-constrained SkillSummaries
+(lazy — summaries only, full card via load(); instructions in card data, zero
+supervisor/executor/context references to exploit_* ids). Router wired:
+skills_for(phase, category=None) intersects phase + category. Docs: CHANGES_v2
++29, API_AND_INTEGRATIONS skill table 9→17, CUSTOMIZATION refreshed. Gate:
+ruff/format/mypy strict clean, 1294 tests pass (239.96s, +23). Judge PASS
+9ab0a5c9 (4/4 criteria, tier1 lint/tests/secrets PASS). gitreins task deleted,
+tasks.yaml clean.
 
 **Source:** Verified — Tottori's category playbooks encode hard-won event lessons (SQLi multi-DB enumeration, JWT PEM-as-HMAC-secret, SSRF multi-service + IP-obfuscation reasoning, XXE, deserialization, protocol reversing, forensics, cloud IAM role chaining). OzzGraph's skill system is architecturally superior (lazy skill cards, capability requirements, phase filtering); port the lessons, not the implementation.
 
@@ -480,6 +547,7 @@ tests pass (+6 e2e). gitreins task deleted, tasks.yaml clean.
 
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
+| HAL-009 | Tottori exploitation lessons ported into skill cards — 8 new cards (exploit_sqli_enumeration multi-DB, exploit_jwt PEM-as-HMAC, exploit_ssrf IP-obfuscation, exploit_xxe, exploit_deserialization, exploit_protocol_reversing, forensics_file_analysis, exploit_cloud_iam), deterministic TechniqueClassifier (category string → ordered skill_id subset, unknown→default, loud on unregistered), SkillRegistry.list_for_category lazy summaries, router skills_for(phase, category=None) wiring, docs (judge PASS 9ab0a5c9, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 4±1 | de5d9a4 | DS-V4-Flash |
 | HAL-008 | HalCTF process/exit semantics — _exit_code_for() HalCTF-mode-aware mapping (any HALCTF_MODE_VARS non-blank: every structured TerminationReason → exit 0; startup-impossible/process corruption (ConfigError/uncaught) → 1; usage errors 1; local mode byte-for-byte unchanged 0/130/1/3), termination event keeps structured reason, docs/adr/0012-process-boundary-exit-policy.md (judge PASS f55fee81, all 5 criteria, tier1 lint/tests/secrets PASS) | High | 3±1 | f1a2a2d | DS-V4-Flash |
 | HAL-007 | HalCTF flag pattern generalized — HALCTF_DEFAULT_FLAG_PATTERN r"[A-Za-z][A-Za-z0-9_]{1,14}\{[^{}\s]+\}" (identifier-style prefixes flag{}/HALCTF{}...), __init__ resolves effective pattern (operator non-blank OZZGRAPH_FLAG_PATTERN wins, blank-means-unset like load_config, else HalCTF default), flag_extractor wired, exported from ozzgraph.environments.halctf, local default + benchmarks/matrix/lab byte-for-byte unchanged (judge PASS 52fb4801, all 3 criteria, tier1 lint/tests/secrets PASS) | Medium | 2±1 | 44a52d9 | DS-V4-Flash |
 | HAL-001 | HalCTFRuntimeSnapshot from env — HAL_TARGET_<NAME>_IP/_PORT + single-form + HAL_CHALLENGE_* + HAL_AGENT_MODEL/HAL_RUN_ID/HAL_TEAM_UUID + flag-like env + OPENAI_BASE_URL/MCP_ENDPOINT → real-URL graph targets + Scope.hosts/urls + ScopePolicy target_allowlist (atomic), infra exclusion (sidecar 127.0.0.1:9000/model/MCP) (judge PASS a495fe1, all 5 criteria, tier1 lint/tests/secrets PASS) | Critical | 5±1 | 9fca71a | DS-V4-Flash |
