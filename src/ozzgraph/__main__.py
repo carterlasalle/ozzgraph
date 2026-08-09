@@ -10,7 +10,11 @@ Finding -> exit. The CLI seeds the target into the runtime configuration
 (``OZZGRAPH_TARGET`` plus a target-derived allowlist when none is
 configured), runs the supervisor, and maps the structured termination
 reason to a process exit code (0 completed, 130 interrupted, 3 budget
-exhausted, 1 failed).
+exhausted, 1 failed). In HalCTF mode (docs/adr/0012) the process
+boundary flattens: every run that reaches a structured termination
+reason exits 0 (a nonzero container exit would be misread as a crash
+and rerun by the event platform) while the run log keeps the full
+reason; only startup-impossible exits 1.
 
 ``ozzgraph benchmark`` (V10, docs/CHANGES_v2.md milestone 10,
 docs/BENCHMARKS.md) runs the full-regression benchmark suite against the
@@ -46,7 +50,12 @@ from ozzgraph.benchmarks import (
 )
 from ozzgraph.benchmarks.react import ServiceCallable
 from ozzgraph.bootstrap import TARGET_ENV
-from ozzgraph.config import TARGET_ALLOWLIST_ENV, ConfigError, load_config
+from ozzgraph.config import (
+    TARGET_ALLOWLIST_ENV,
+    ConfigError,
+    halctf_mode_selected,
+    load_config,
+)
 from ozzgraph.lab import LabError, get_target
 from ozzgraph.model_client import ModelService
 from ozzgraph.supervisor import Supervisor, TerminationReason
@@ -57,6 +66,45 @@ _EXIT_CODES: dict[TerminationReason, int] = {
     TerminationReason.FAILED: 1,
     TerminationReason.BUDGET_EXHAUSTED: 3,
 }
+
+#: HalCTF-mode process-boundary exit policy (HAL-008, docs/adr/0012):
+#: on the real HalCTF event platform a NONZERO container exit is
+#: interpreted as a crash — the platform reruns the detonation (wasting
+#: the run budget and marking the run FAILED even when it scored), so
+#: every run that reaches a structured TerminationReason exits 0. The
+#: reason distinction stays authoritative in the run log (the
+#: termination event still records ``budget_exhausted`` / ``failed`` /
+#: ``interrupted`` / ``completed`` — the model is never collapsed);
+#: only the process boundary is flattened. INTERRUPTED exits 0 too: a
+#: signal stop is how the platform tears a run down, and a 130 would
+#: be misread as a crash and rerun. Startup-impossible / process
+#: corruption (load-time ConfigError, CLI usage errors, uncaught
+#: exceptions) still exits 1.
+_HALCTF_EXIT_CODES: dict[TerminationReason, int] = {
+    TerminationReason.COMPLETED: 0,
+    TerminationReason.INTERRUPTED: 0,
+    TerminationReason.FAILED: 0,
+    TerminationReason.BUDGET_EXHAUSTED: 0,
+}
+
+
+def _exit_code_for(reason: TerminationReason) -> int:
+    """The process exit code for a structured termination reason.
+
+    Local mode (no HalCTF runtime variable — ``ozzgraph run TARGET``
+    is byte-for-byte unchanged, docs/adr/0010): the legacy mapping —
+    0 completed, 130 interrupted, 1 failed, 3 budget exhausted.
+
+    HalCTF mode (docs/adr/0012): every structured termination exits 0
+    (scored / unsolved / exhausted / gave-up / graceful platform
+    failure are all ordinary completed attempts at the process
+    boundary); only startup-impossible configuration errors and
+    uncaught exceptions exit 1.
+    """
+    if halctf_mode_selected(os.environ):
+        return _HALCTF_EXIT_CODES[reason]
+    return _EXIT_CODES[reason]
+
 
 #: Environment variables selecting the REAL-model benchmark mode (V10,
 #: docs/BENCHMARKS.md "Real-model runs"). When
@@ -167,7 +215,9 @@ def main(argv: list[str] | None = None) -> int:
 
     Returns:
         Process exit code: 0 on clean completion, 1 on configuration or
-        runtime failure, 130 on interruption, 3 on budget exhaustion.
+        runtime failure, 130 on interruption, 3 on budget exhaustion
+        (local mode; in HalCTF mode every structured termination exits
+        0 — docs/adr/0012 — and only startup-impossible exits 1).
     """
     args = sys.argv[1:] if argv is None else argv
 
@@ -374,7 +424,11 @@ def _run_supervisor() -> int:
     # Human-readable termination summary (AGENTS.md rule 9); the structured
     # termination event is already appended to the run's event log.
     print(f"TERMINATION: {reason.value}", flush=True)
-    return _EXIT_CODES[reason]
+    # HAL-008: in HalCTF mode every structured termination exits 0 (the
+    # event platform reruns a nonzero container exit as a crash); the
+    # full reason stays in the termination event above. Load-time
+    # ConfigError (above) and uncaught exceptions still exit 1.
+    return _exit_code_for(reason)
 
 
 if __name__ == "__main__":

@@ -241,7 +241,9 @@ story without Docker:
 6. Smoke: short supervised run under `--read-only --tmpfs /tmp`, asserting the
    BUDGET_EXHAUSTED exit code 3, the `USER ID:` identity line in the log, and
    a `TERMINATION: budget_exhausted` final line (startup + identity +
-   termination-summary evidence, PR32).
+   termination-summary evidence, PR32). This is the LOCAL-mode mapping (no
+   HalCTF runtime variable); a HalCTF-mode run exits 0 for every structured
+   termination (docs/adr/0012).
 
 If the workflow ever runs on a runner without Docker, gate the job behind a
 repository variable (`if: ${{ vars.RUN_DOCKER_JOB == 'true' }}`) — the job

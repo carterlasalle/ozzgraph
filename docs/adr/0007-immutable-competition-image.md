@@ -40,7 +40,9 @@ We will ship a single multi-stage `Dockerfile` at the repository root:
 - **Gates**: a CI job builds the image, asserts size < 1.5 GiB
   (1500 × 1024 × 1024 bytes), and runs three smoke tests (ENTRYPOINT
   `--version`, `halctl --help`, and a 2-second supervised run under a
-  read-only rootfs that must terminate with exit code 3 = BUDGET_EXHAUSTED).
+  read-only rootfs that must terminate with exit code 3 = BUDGET_EXHAUSTED —
+  local mode, no HalCTF runtime variable; HalCTF-mode runs exit 0 for every
+  structured termination, docs/adr/0012).
 - **SBOM**: `scripts/gen-sbom.sh` emits SPDX 2.3 + CycloneDX 1.5 via syft,
   with a documented pip-audit fallback for Python-dependency-only audits.
 - **No kernel changes**: the image packages the kernel as-is; replay and

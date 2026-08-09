@@ -160,8 +160,18 @@ Startup sequence (all deterministic, no model involvement until the loop):
 Every terminal path appends a structured `termination` event to the run log and
 prints a human-readable summary as the **final stdout line**
 (`TERMINATION: completed | interrupted | failed | budget_exhausted`).
-Exit codes: `0` completed, `1` failed (e.g. configuration error), `130`
-interrupted, `3` budget exhausted.
+Exit codes (local mode — no HalCTF runtime variable): `0` completed, `1`
+failed (e.g. configuration error), `130` interrupted, `3` budget exhausted.
+
+In **HalCTF mode** (any `HAL_CTF_ID` / `HAL_CHALLENGE_ID` / `HAL_ENDPOINT` /
+`HAL_MCP_ENDPOINT` / `MCP_ENDPOINT` / legacy `OZZGRAPH_CHALLENGE_ID` set,
+docs/adr/0012) the process boundary flattens: every run that reaches a
+structured termination — scored, unsolved, budget-exhausted, gave-up, or a
+graceful stop — exits `0`, because the event platform interprets a nonzero
+container exit as a crash and reruns the detonation. Only startup-impossible
+configuration errors (e.g. missing `HAL_USER_ID`, a set-but-invalid
+`HAL_TARGET_PORT`) and uncaught exceptions exit `1`. The full reason is always
+preserved in the run log's `termination` event and the `TERMINATION:` line.
 
 > Component wiring note: the executor loop, planner, evaluator, and scheduler
 > are implemented as standalone, fully-tested components (PR20–PR26) with the

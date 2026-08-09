@@ -257,6 +257,26 @@ independently implemented components.
    > completes `objective-halctf-flag`: a HalCTF run can no longer
    > terminate COMPLETED unscored. The accepted-submission DONE path is
    > unchanged.
+   > HAL-008 (2026-08-09): process-boundary exit policy
+   > (docs/adr/0012) — in HalCTF mode (any `HAL_CTF_ID` /
+   > `HAL_CHALLENGE_ID` / `HAL_ENDPOINT` / `HAL_MCP_ENDPOINT` /
+   > `MCP_ENDPOINT` / legacy `OZZGRAPH_CHALLENGE_ID` non-blank) the
+   > process entry point (`ozzgraph.__main__`) maps EVERY structured
+   > `TerminationReason` to container exit 0: scored, unsolved,
+   > budget-exhausted, gave-up (platform-rejected submission), and
+   > graceful FAILED terminations are all ordinary completed attempts,
+   > because a nonzero container exit is interpreted by the real event
+   > platform as a crash and reruns the detonation (wasting the run
+   > budget and marking the run FAILED even when it scored). The
+   > internal model is never collapsed: the `termination` event still
+   > records the structured reason (`budget_exhausted` / `failed` /
+   > `interrupted` / `completed`), and `INTERRUPTED` exits 0 too (a
+   > signal stop is how the platform tears a run down). Only
+   > startup-impossible stays exit 1: load-time `ConfigError` (missing
+   > `HAL_USER_ID`, a set-but-invalid `HAL_TARGET_PORT`), CLI usage
+   > errors, and uncaught exceptions. Local mode — `ozzgraph run
+   > <target>`, the benchmark CLI, and the read-only image smoke — is
+   > byte-for-byte unchanged (0/130/1/3).
 10. `v2/full-regression` — real benchmark suite across the model matrix.
     > V10 (2026-08-08): implemented — `src/ozzgraph/benchmarks/` +
     > `ozzgraph benchmark` CLI + docs/BENCHMARKS.md. The full-regression

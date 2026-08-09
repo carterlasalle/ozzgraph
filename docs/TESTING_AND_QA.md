@@ -283,8 +283,9 @@ endpoints are loopback shell commands and in-memory/temporary state):
 - termination signals: `Supervisor.stop(INTERRUPTED)` — the
   SIGTERM/SIGINT path — appends a structured `termination` event
   (`reason: interrupted`) to the run log; subprocess-level signal
-  delivery (SIGTERM/SIGINT → exit 130) stays covered by
-  `tests/test_signals.py`.
+  delivery (SIGTERM/SIGINT → exit 130 in local mode; HalCTF-mode runs
+  exit 0 for every structured termination, docs/adr/0012) stays covered
+  by `tests/test_signals.py` and `tests/test_e2e_run.py`.
 
 ## Loop and Timeout Detection
 

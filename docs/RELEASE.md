@@ -126,7 +126,8 @@ docker run --rm ozzgraph:latest --version
 docker run --rm --entrypoint halctl ozzgraph:latest --help
 
 # Immutable runtime: read-only rootfs, state on the declared volume,
-# 2-second budget run must exit 3 = BUDGET_EXHAUSTED
+# 2-second budget run must exit 3 = BUDGET_EXHAUSTED (local mode, no
+# HAL_* runtime variable; HalCTF-mode runs exit 0 — docs/adr/0012)
 docker run --rm --read-only --tmpfs /tmp \
   -e HAL_USER_ID=my-user \
   -e OZZGRAPH_MAX_RUNTIME_S=2 \

@@ -35,6 +35,15 @@ a whitespace target and an unsupported scheme exit 1 (failed) with a
 loud stderr message before any supervisor work, and a run whose model
 never proposes an action terminates budget_exhausted (exit 3) when the
 runtime budget is exhausted.
+
+HAL-008 (docs/adr/0012) adds the HalCTF-mode process-boundary policy:
+the same subprocess harness drives ``python -m ozzgraph`` under a
+HalCTF runtime environment (``HAL_CHALLENGE_ID`` / ``HAL_TARGET_*``),
+proving that a budget-exhausted, an unsolved, a gave-up (platform
+rejected the flag), and a signal-stopped run all exit 0 while the run
+log keeps the full structured termination reason, and that
+startup-impossible configuration (missing ``HAL_USER_ID``, an invalid
+``HAL_TARGET_PORT``) still exits 1.
 """
 
 from __future__ import annotations
@@ -42,9 +51,12 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
+import signal
 import subprocess
 import sys
 import threading
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import NamedTuple
@@ -168,6 +180,41 @@ def _run_ozzgraph(
         timeout=timeout,
         check=False,
     )
+
+
+def _halctf_env(state_dir: Path, model_base_url: str, **overrides: str) -> dict[str, str]:
+    """A clean HalCTF-mode child environment (HAL-008 tests).
+
+    Filters inherited ``OZZGRAPH_*`` / ``HAL_*`` knobs like
+    :func:`_hermetic_env`, then sets the HalCTF runtime variables:
+    ``HAL_CHALLENGE_ID`` selects HalCTF mode (docs/adr/0011), the MCP
+    retries/timeout are tiny so the env-only bootstrap's best-effort
+    status/hint calls (no MCP endpoint in these tests — they fail to
+    the localhost default and are recorded as events, never fatal) fail
+    instantly instead of backing off, and the runtime budget is small
+    so an unsolved run exhausts quickly. ``overrides`` lets each test
+    inject the platform surface (``HAL_TARGET_*`` services, the
+    ``OZZGRAPH_SIDECAR_BASE_URL``, or a broken variable for the
+    startup-impossible cases).
+    """
+    env = {
+        key: value for key, value in os.environ.items() if not key.startswith(("OZZGRAPH_", "HAL_"))
+    }
+    env.update(
+        {
+            "HAL_USER_ID": "user-42",
+            "HAL_CHALLENGE_ID": "web-01",
+            "OZZGRAPH_STATE_DIR": str(state_dir),
+            "OZZGRAPH_MODEL_BASE_URL": model_base_url,
+            "OZZGRAPH_MODEL_ID": "deepseek-v4-flash",
+            "OZZGRAPH_MAX_RUNTIME_S": "2",
+            "OZZGRAPH_HEARTBEAT_INTERVAL_S": "300",
+            "OZZGRAPH_MCP_MAX_RETRIES": "0",
+            "OZZGRAPH_MCP_TIMEOUT_S": "1",
+        }
+    )
+    env.update(overrides)
+    return env
 
 
 class _EntitySnapshot(NamedTuple):
@@ -366,3 +413,201 @@ def test_run_target_ends_budget_exhausted_when_model_never_acts(tmp_path: Path) 
 
     assert result.returncode == 3
     assert result.stdout.splitlines()[-1] == "TERMINATION: budget_exhausted"
+
+
+# ---------------------------------------------------------------------------
+# HAL-008: HalCTF-mode process-boundary exit policy (docs/adr/0012)
+# ---------------------------------------------------------------------------
+
+
+def test_halctf_budget_exhausted_run_exits_zero_with_structured_event(tmp_path: Path) -> None:
+    """A HalCTF budget-exhausted run exits 0, keeping the structured reason.
+
+    On the event platform a nonzero container exit is a crash that
+    reruns the detonation, so the process boundary must flatten: the
+    child exits 0 even though the run terminated BUDGET_EXHAUSTED, and
+    the termination event in the run log still records the full
+    structured reason (``budget_exhausted``) — the model is never
+    collapsed (HAL-008 acceptance 2).
+    """
+    server = _ScriptedModelServer(["The target is reachable; nothing further to run."])
+    server.start()
+    try:
+        state_dir = tmp_path / "state"
+        result = _run_ozzgraph(env=_halctf_env(state_dir, server.base_url), cwd=tmp_path)
+    finally:
+        server.stop()
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[-1] == "TERMINATION: budget_exhausted"
+
+    events = _event_types(state_dir)
+    assert events[-1]["event_type"] == "termination"
+    assert events[-1]["payload"] == {"reason": "budget_exhausted"}
+
+
+def test_halctf_unsolved_run_exits_zero_without_accepted_submission(tmp_path: Path) -> None:
+    """An unsolved HalCTF run (no accepted submission) exits 0 (HAL-008).
+
+    The model genuinely works — one executed curl against the injected
+    ``HAL_TARGET_*`` service — but the response body never contains the
+    flag, so no candidate is ever submitted and HAL-006 keeps the run
+    from completing unscored: the run terminates BUDGET_EXHAUSTED and
+    the process exits 0.
+    """
+    with get_target("http-recon") as target:
+        url = target.target_value
+        server = _ScriptedModelServer([f"ACTION: run\nPAYLOAD: curl -sS --max-time 5 {url}/"])
+        server.start()
+        try:
+            state_dir = tmp_path / "state"
+            parsed = urllib.parse.urlsplit(url)
+            env = _halctf_env(
+                state_dir,
+                server.base_url,
+                HAL_TARGET_IP=parsed.hostname or "",
+                HAL_TARGET_PORT=str(parsed.port or 80),
+            )
+            result = _run_ozzgraph(env=env, cwd=tmp_path, timeout=60)
+        finally:
+            server.stop()
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[-1] == "TERMINATION: budget_exhausted"
+
+    events = _event_types(state_dir)
+    assert events[-1]["payload"] == {"reason": "budget_exhausted"}
+    # The run worked (one executed action) but never submitted anything:
+    # no submission and no flag-candidate events in the run log.
+    event_types = [event["event_type"] for event in events]
+    assert not any(
+        isinstance(event_type, str) and event_type.startswith("submission.")
+        for event_type in event_types
+    )
+    assert not any(
+        isinstance(event_type, str) and event_type.startswith("flags.")
+        for event_type in event_types
+    )
+    assert any(event_type == "runner.action_executed" for event_type in event_types)
+
+
+def test_halctf_gave_up_after_platform_rejection_exits_zero(tmp_path: Path) -> None:
+    """A gave-up HalCTF run (platform rejected the flag) exits 0 (HAL-008).
+
+    The model finds the challenge flag, the supervisor submits it
+    through the REAL sidecar transport (the scripted server from
+    tests/test_flag_loop.py), the platform rejects it, and the run
+    keeps investigating until BUDGET_EXHAUSTED — the process exits 0
+    with the rejection still recorded in the run log.
+    """
+    from test_flag_loop import _SidecarServer  # tests/ is on sys.path under pytest
+
+    with get_target("hidden-routes") as target:
+        url = target.target_value
+        server = _ScriptedModelServer([f"ACTION: run\nPAYLOAD: curl -sS --max-time 5 {url}/admin"])
+        sidecar = _SidecarServer(verdict="wrong", points=0)
+        with sidecar:
+            server.start()
+            try:
+                state_dir = tmp_path / "state"
+                parsed = urllib.parse.urlsplit(url)
+                env = _halctf_env(
+                    state_dir,
+                    server.base_url,
+                    HAL_TARGET_IP=parsed.hostname or "",
+                    HAL_TARGET_PORT=str(parsed.port or 80),
+                    OZZGRAPH_SIDECAR_BASE_URL=sidecar.base_url,
+                )
+                result = _run_ozzgraph(env=env, cwd=tmp_path, timeout=60)
+            finally:
+                server.stop()
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[-1] == "TERMINATION: budget_exhausted"
+
+    events = _event_types(state_dir)
+    assert events[-1]["payload"] == {"reason": "budget_exhausted"}
+    event_types = [event["event_type"] for event in events]
+    assert "submission.rejected" in event_types
+    assert "submission.accepted" not in event_types
+
+    # Exactly one wire attempt — the rejected flag is never re-submitted.
+    assert len(sidecar.submits) == 1
+    assert sidecar.submits[0]["challenge_id"] == "web-01"
+    submitted_flag = sidecar.submits[0]["flag"]
+    assert isinstance(submitted_flag, str)
+    assert re.fullmatch(LAB_FLAG_PATTERN, submitted_flag)
+
+
+def test_halctf_signal_stop_exits_zero_with_structured_event(tmp_path: Path) -> None:
+    """A SIGTERM-stopped HalCTF run exits 0, recording ``interrupted`` (HAL-008).
+
+    INTERRUPTED is deliberately flattened to 0 in HalCTF mode: a signal
+    stop is how the platform tears a run down, and a 130 would be
+    misread as a crash and rerun (docs/adr/0012). The run log still
+    records the structured ``interrupted`` reason. (Local mode keeps
+    the 130 mapping — tests/test_signals.py.)
+    """
+    env = _halctf_env(tmp_path / "state", "http://127.0.0.1:1/v1")
+    env["OZZGRAPH_MAX_RUNTIME_S"] = "600"  # never exhausts; the test signals it
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "ozzgraph"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+        cwd=tmp_path,
+    )
+    try:
+        assert proc.stdout is not None
+        first_line = proc.stdout.readline()
+        assert first_line.strip() == "USER ID: user-42"
+        os.kill(proc.pid, signal.SIGTERM)
+        code = proc.wait(timeout=30)
+        assert code == 0
+        assert proc.stdout.read().splitlines()[-1] == "TERMINATION: interrupted"
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+    events = _event_types(tmp_path / "state")
+    assert events[-1]["event_type"] == "termination"
+    assert events[-1]["payload"] == {"reason": "interrupted"}
+
+
+def test_halctf_startup_impossible_missing_user_id_exits_one(tmp_path: Path) -> None:
+    """Missing ``HAL_USER_ID`` is startup-impossible: exit 1 (HAL-008).
+
+    Load-time configuration errors keep the nonzero boundary — the
+    process never started a run, so there is no structured termination
+    to flatten.
+    """
+    env = _halctf_env(tmp_path / "state", "http://127.0.0.1:1/v1")
+    env.pop("HAL_USER_ID")
+    result = _run_ozzgraph(env=env, cwd=tmp_path)
+    assert result.returncode == 1
+    assert "HAL_USER_ID" in result.stderr
+    assert _TERMINATION_PREFIX not in result.stdout
+    assert not (tmp_path / "state" / "actions.jsonl").exists()
+
+
+def test_halctf_startup_impossible_invalid_target_port_exits_one(tmp_path: Path) -> None:
+    """A set-but-invalid ``HAL_TARGET_PORT`` is startup-impossible: exit 1.
+
+    The invalid port fails loudly at load time (``ConfigError``,
+    AGENTS.md rule #9) — a configuration error before any supervisor
+    work, mapped to exit 1 in every mode.
+    """
+    env = _halctf_env(
+        tmp_path / "state",
+        "http://127.0.0.1:1/v1",
+        HAL_TARGET_IP="10.0.0.5",
+        HAL_TARGET_PORT="not-a-port",
+    )
+    result = _run_ozzgraph(env=env, cwd=tmp_path)
+    assert result.returncode == 1
+    assert "HAL_TARGET_PORT" in result.stderr
+    assert "must be an integer" in result.stderr
+    assert _TERMINATION_PREFIX not in result.stdout
+    assert not (tmp_path / "state" / "actions.jsonl").exists()
