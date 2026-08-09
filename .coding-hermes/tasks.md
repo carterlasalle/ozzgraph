@@ -32,6 +32,42 @@ non-same-name test files; docs complete). Board idle → cooldown 43200s.**
 
 ## Active
 
+> **Tick 2026-08-09: HAL-011 closed (judge PASS f213c71 — verdict 266a240d, commit d4fe872 —**
+> verified this tick). halctf-real-contract regression fixture: new
+> `tests/halctf_contract_fixture.py` (353 lines, reusable data — no tests) reproduces
+> Tottori's EXACT live-run contract cross-verified from
+> kazuki005276ssh/halctf-team-tottori committed logs: named `HAL_TARGET_FERRY_IP/PORT`
+> + `HAL_TARGET_UNDERWORLD_IP/PORT` service pairs, `HAL_CHALLENGE_ID=18`,
+> `HAL_CHALLENGE_NAME/CATEGORY`, `HAL_AGENT_MODEL`/`HAL_RUN_ID`/`HAL_TEAM_UUID`,
+> flag-like env (`BONUS_FLAG`, `FLAG_MAIN`), `OPENAI_BASE_URL`, `MCP_ENDPOINT`; real
+> plain-HTTP listeners (stdlib http.server only, zero new deps): `HalctfTargetServer`
+> serves the observed `/fetch` surface 403/404/502/200 (flag ONLY on the 200 path),
+> `ContractSidecarServer` answers `/submit` → `{"status":"correct","points_awarded":1}`
+> + `/done` → 200 (records bodies, `/mcp` 404s), `ScriptedModelServer` is a stub
+> OpenAI-compatible endpoint; `tottori_env()` builds the full env from live server
+> URLs. New `tests/test_halctf_contract.py` (525 lines, 5 tests): (1) env shape +
+> services/allowlist/snapshot/sidecar-env-first resolution; (2) wire responses served
+> by real listeners; (3) discovery → REAL-URL targets (never challenge id) +
+> allowlist admits the exact probes (no refusal) + model routing from HAL_AGENT_MODEL
+> + OPENAI_BASE_URL; (4) negative control — empty allowlist refuses (fail-closed
+> PlatformDestinationError/AllowlistViolationError) and challenge-id-only env keeps
+> the V09 bare-id fallback; (5) FULL-HARNESS subprocess E2E: real `python -m
+> ozzgraph` under the fixture env → exit 0, `TERMINATION: completed`, exactly 4
+> scripted probes executed against the real listener (no refusal, no loop),
+> one accepted sidecar submission + `/done`(reason=completed), graph holds real-URL
+> targets + `objective-halctf-flag completed:true`, findings.json + report.json
+> rendered (scored — not unexhausted-complete, HAL-006 gate). Docs: CHANGES_v2.md
+> HAL-011 line, SYNTHETIC_LAB.md fixture section. Gate: ruff format/check clean,
+> mypy src strict (62 files), full suite 1306 passed (+5). Worker dispatched via
+> hermes chat (deepseek-v4-flash @ openrouter) — worker fired the judge before
+> committing (worktree evaluated: 266a240d PASS, all 3 criteria cited real fixture
+> content, tier1 1306 collected exit 0), then committed d4fe872 (pre-commit guard
+> PASS — full suite in hook) + pushed (origin/main..HEAD=0 verified) + re-verified
+> ad-hoc (ruff + 5/5 focused incl. E2E). Foreman re-verified gates independently
+> (ruff/mypy/5 tests). gitreins task deleted, tasks.yaml clean. Board is now empty
+> (only E2E-001 + NEVER-DONE) → cooldown 43200s.
+> Next: NEVER-DONE audit on next tick.
+
 > **Tick 2026-08-09: HAL-010 closed (judge PASS 8d303648, commit a582b25 — verified**
 > this tick). SpecialistFleet wired into PRODUCTION composition — the V07
 > bounded-parallel batch path is no longer test-only. `Supervisor.run`
@@ -318,8 +354,8 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 
 | ID | Task | Pri | Cpx | Deps | Tags | Model | Reasoning | Fallback |
 |----|------|-----|-----|------|------|-------|-----------|----------|
-| HAL-011 | halctf-real-contract regression fixture — mirror Tottori's committed live-run env shapes + /submit responses into the suite | High | 4±1 | HAL-001..008 | +++tests, ++halctf | DS-V4-Flash | Medium | Kimi-K3 |
-| HAL-010 | Wire SpecialistFleet into Supervisor production composition (currently test-only) | High | 4±1 | V07 | ++specialists, ++supervisor | DS-V4-Flash | Medium | Kimi-K3 |
+
+All HAL-0xx tasks closed (HAL-001..HAL-011, judges PASS) — see Completed. Remaining: E2E-001 + NEVER-DONE below.
 
 ## [x] HAL-001 — HalCTFRuntimeSnapshot: env → graph targets + scope allowlist (real HalCTF runtime)
 
@@ -550,7 +586,9 @@ tasks.yaml clean.
 3. Keep instructions out of the kernel (AGENTS.md rule #10).
 4. Tests: category routing selects correct skill subset; lazy-load evidence-driven.
 
-## [ ] HAL-010 — Wire SpecialistFleet into Supervisor
+## [x] HAL-010 — Wire SpecialistFleet into Supervisor
+
+**Tick 2026-08-09: HAL-010 closed (judge PASS 8d303648, commit a582b25).** SpecialistFleet wired into PRODUCTION composition behind the `OZZGRAPH_SPECIALISTS_ENABLED` toggle (default OFF — existing runs byte-for-byte unchanged); Supervisor.run composes `SpecialistFleet(artifacts, event_log, run_id, policy, max_workers, state_dir)` into `AutonomousRunner(specialists=...)`; runner gate `_is_hypothesis_batch` → `_run_specialist_batch_turn` dispatches the bounded parallel batch with ZERO LLM calls. Gate: ruff/format/mypy strict clean, 1301 tests pass (+7). Judge PASS 8d303648 (4/4 criteria). gitreins task deleted, tasks.yaml clean.
 
 **Source:** Verified — `SpecialistFleet(` is constructed ONLY in `tests/test_specialists.py`. `supervisor.run()` builds `AutonomousRunner(...)` with no `specialists=` arg → `_specialists=None` → the V07 parallel path is dead in production. The implementation exists; the deployed execution graph doesn't turn it on.
 
@@ -559,7 +597,9 @@ tasks.yaml clean.
 2. A pure independent-hypothesis StrategicDecision dispatches the bounded parallel batch (existing `_run_specialist_batch_turn`).
 3. Tests: production composition constructs the fleet; a hypothesis-batch decision routes to specialists, not the LLM.
 
-## [ ] HAL-011 — halctf-real-contract regression fixture
+## [x] HAL-011 — halctf-real-contract regression fixture
+
+**Tick 2026-08-09: HAL-011 closed (judge PASS f213c71 — verdict 266a240d, commit d4fe872).** Fixture + tests reproduce Tottori's exact live-run env shapes (named HAL_TARGET_* service pairs, HAL_CHALLENGE_ID=18, metadata, runtime identity, OPENAI_BASE_URL, MCP_ENDPOINT) and observed HTTP responses (/submit {"status":"correct","points_awarded":1}, /fetch 403/404/502/200) as real stdlib plain-HTTP listeners; full-harness subprocess E2E ends scored/COMPLETED (exit 0, accepted submission, objective completed, findings.json) — not unexhausted-complete, not allowlist-refused. Gate: ruff/format/mypy strict clean, 1306 tests pass (+5). Judge PASS (3/3 criteria, tier1 1306 collected exit 0). gitreins task deleted, tasks.yaml clean.
 
 **Source:** Verified — the existing benchmark suite runs the kernel against synthetic lab targets + scripted models, not an actual HalCTF runtime contract. Tottori's committed live logs give the exact env shapes and HTTP responses.
 
@@ -574,6 +614,8 @@ tasks.yaml clean.
 
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
+| HAL-011 | halctf-real-contract regression fixture — Tottori's exact live-run env shapes (named HAL_TARGET_*_IP/PORT pairs, HAL_CHALLENGE_ID=18, metadata, HAL_AGENT_MODEL/RUN_ID/TEAM_UUID, flag-like env, OPENAI_BASE_URL, MCP_ENDPOINT) + observed wire responses (/submit {"status":"correct","points_awarded":1}, /fetch 403/404/502/200) as real stdlib plain-HTTP listeners; full-harness subprocess E2E scores/COMPLETEs (exit 0, TERMINATION: completed, accepted submission, objective-halctf-flag completed, findings.json+report.json), negative control (empty allowlist refuses fail-closed, challenge-id-only env keeps V09 bare-id fallback), docs CHANGES_v2 + SYNTHETIC_LAB (judge PASS f213c71, all 3 criteria, tier1 lint/tests/secrets PASS) | High | 4±1 | d4fe872 | DS-V4-Flash |
+| HAL-010 | Wire SpecialistFleet into Supervisor production composition — OZZGRAPH_SPECIALISTS_ENABLED toggle (default OFF, byte-for-byte unchanged), Supervisor.run composes SpecialistFleet(artifacts, event_log, run_id, policy, max_workers, state_dir) into AutonomousRunner(specialists=...), runner batch gate dispatches with ZERO LLM calls (judge PASS 8d303648, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 4±1 | a582b25 | DS-V4-Flash |
 | HAL-009 | Tottori exploitation lessons ported into skill cards — 8 new cards (exploit_sqli_enumeration multi-DB, exploit_jwt PEM-as-HMAC, exploit_ssrf IP-obfuscation, exploit_xxe, exploit_deserialization, exploit_protocol_reversing, forensics_file_analysis, exploit_cloud_iam), deterministic TechniqueClassifier (category string → ordered skill_id subset, unknown→default, loud on unregistered), SkillRegistry.list_for_category lazy summaries, router skills_for(phase, category=None) wiring, docs (judge PASS 9ab0a5c9, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 4±1 | de5d9a4 | DS-V4-Flash |
 | HAL-008 | HalCTF process/exit semantics — _exit_code_for() HalCTF-mode-aware mapping (any HALCTF_MODE_VARS non-blank: every structured TerminationReason → exit 0; startup-impossible/process corruption (ConfigError/uncaught) → 1; usage errors 1; local mode byte-for-byte unchanged 0/130/1/3), termination event keeps structured reason, docs/adr/0012-process-boundary-exit-policy.md (judge PASS f55fee81, all 5 criteria, tier1 lint/tests/secrets PASS) | High | 3±1 | f1a2a2d | DS-V4-Flash |
 | HAL-007 | HalCTF flag pattern generalized — HALCTF_DEFAULT_FLAG_PATTERN r"[A-Za-z][A-Za-z0-9_]{1,14}\{[^{}\s]+\}" (identifier-style prefixes flag{}/HALCTF{}...), __init__ resolves effective pattern (operator non-blank OZZGRAPH_FLAG_PATTERN wins, blank-means-unset like load_config, else HalCTF default), flag_extractor wired, exported from ozzgraph.environments.halctf, local default + benchmarks/matrix/lab byte-for-byte unchanged (judge PASS 52fb4801, all 3 criteria, tier1 lint/tests/secrets PASS) | Medium | 2±1 | 44a52d9 | DS-V4-Flash |
