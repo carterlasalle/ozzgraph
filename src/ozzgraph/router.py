@@ -311,14 +311,32 @@ class PhaseRouter:
     def __init__(self, registry: SkillRegistry | None = None) -> None:
         self._registry = registry if registry is not None else SkillRegistry()
 
-    def skills_for(self, phase: Phase) -> tuple[SkillSummary, ...]:
+    def skills_for(self, phase: Phase, category: str | None = None) -> tuple[SkillSummary, ...]:
         """Skill summaries covering ``phase`` (registry ``list_summaries``).
 
         The interop surface for downstream planners (AGENTS.md rule #6):
         the registry advertises compact per-phase summaries, and the
         full skill card is loaded only after the model selects a skill.
+
+        When ``category`` is given (challenge metadata, e.g. ``"Web /
+        SSRF"``), the advertisement is additionally constrained to the
+        category's routed skill subset (HAL-009, registry
+        ``list_for_category``): only summaries that cover ``phase``
+        AND are routed to the category are advertised, still sorted by
+        ``skill_id``. ``None`` keeps the full per-phase advertisement
+        — the pre-HAL-009 behavior. The category constraint is
+        deterministic and never falls back to a different phase set.
         """
-        return tuple(self._registry.list_summaries(phase))
+        if category is None:
+            return tuple(self._registry.list_summaries(phase))
+        category_ids = frozenset(
+            summary.skill_id for summary in self._registry.list_for_category(category)
+        )
+        return tuple(
+            summary
+            for summary in self._registry.list_summaries(phase)
+            if summary.skill_id in category_ids
+        )
 
     async def route(self, graph: StateGraph) -> PhaseRoute:
         """Route ``graph`` to the next phase.

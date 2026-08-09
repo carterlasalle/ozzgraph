@@ -175,8 +175,9 @@ first; load full cards only when selected**.
   `~ozzgraph.observations.Parser` instances (an unregistered key fails
   loudly). Unknown ids raise `SkillRegistryError`.
 
-The initial packs (12 skills) cover RECON, ENUMERATION, EXPLOITATION,
-FLAG_HUNT, and VERIFY_AND_SUBMIT:
+The skill packs (17 skills) cover RECON, ENUMERATION, and EXPLOITATION
+(V01, docs/adr/0008: the FLAG_HUNT packs left with the removed phases;
+HAL-009, 2026-08-09: the Tottori lesson packs added):
 
 | Skill | Phases | Default timeout |
 |---|---|---|
@@ -189,9 +190,14 @@ FLAG_HUNT, and VERIFY_AND_SUBMIT:
 | `exploit_parameter_injection` | EXPLOITATION | 90 s |
 | `exploit_command_injection` | EXPLOITATION | 90 s |
 | `exploit_auth_bypass` | EXPLOITATION | 60 s |
-| `flag_hunt_filesystem` | FLAG_HUNT | 60 s |
-| `flag_hunt_web_artifacts` | FLAG_HUNT | 60 s |
-| `flag_hunt_submit` | FLAG_HUNT, VERIFY_AND_SUBMIT | 30 s |
+| `exploit_sqli_enumeration` | EXPLOITATION | 90 s |
+| `exploit_jwt` | EXPLOITATION | 90 s |
+| `exploit_ssrf` | EXPLOITATION | 90 s |
+| `exploit_xxe` | EXPLOITATION | 90 s |
+| `exploit_deserialization` | EXPLOITATION | 90 s |
+| `exploit_protocol_reversing` | EXPLOITATION | 90 s |
+| `forensics_file_analysis` | ENUMERATION, POST_EXPLOITATION | 90 s |
+| `exploit_cloud_iam` | EXPLOITATION, POST_EXPLOITATION | 90 s |
 
 **Adding a skill** is one explicit registration:
 

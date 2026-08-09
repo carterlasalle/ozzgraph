@@ -338,19 +338,26 @@ class SkillRegistry:
 `Phase` values are the uppercase phase names the policy gate already uses
 (`ozzgraph.policy.PHASES`), so phase router (PR18), policy, and skills
 share one vocabulary. `list_summaries` returns only the skills covering
-the given phase, sorted by `skill_id` (deterministic). `load` returns the
+the given phase, sorted by `skill_id` (deterministic). `list_for_category`
+(HAL-009) returns the summaries of the skills the
+`~ozzgraph.techniques.TechniqueClassifier` routes to a challenge category
+string (e.g. `"Web / SSRF"`, `"SQL Injection"`, `"Forensics"`, `"Cloud
+IAM"`) — an unknown/absent category degrades deterministically to the
+recon/enum core, and a classifier mapping that references an unregistered
+skill id raises `SkillRegistryError` (fail loudly). `load` returns the
 full skill card for a selected skill and raises `SkillRegistryError` for
 an unknown `skill_id`. `parsers_for` resolves the skill's `(source, kind)`
 parser mappings to live `Parser` instances from `PARSERS`; a skill mapping
 an unregistered parser key is a broken registry entry and also raises
 `SkillRegistryError` (never silently skipped, never an empty list).
-`timeout_for` returns the skill's default timeout in seconds. All three
+`timeout_for` returns the skill's default timeout in seconds. All these
 lookup errors are the typed `SkillRegistryError` (fail loudly, AGENTS.md
 rule #9).
 
 Initial skill packs (PR17) — 9 skills across RECON, ENUMERATION, and
 EXPLOITATION (V01, docs/adr/0008: the FLAG_HUNT packs left with the
-removed phases; the halctf environment owns them in V09):
+removed phases; the halctf environment owns them in V09), plus the
+HAL-009 Tottori lesson packs (2026-08-09) — 17 skills total:
 
 | skill_id | phases | timeout (s) | parsers |
 |---|---|---|---|
@@ -363,6 +370,14 @@ removed phases; the halctf environment owns them in V09):
 | `exploit_parameter_injection` | EXPLOITATION | 90 | shell/text |
 | `exploit_command_injection` | EXPLOITATION | 90 | shell/text |
 | `exploit_auth_bypass` | EXPLOITATION | 60 | shell/text |
+| `exploit_sqli_enumeration` | EXPLOITATION | 90 | shell/text |
+| `exploit_jwt` | EXPLOITATION | 90 | shell/text |
+| `exploit_ssrf` | EXPLOITATION | 90 | shell/text |
+| `exploit_xxe` | EXPLOITATION | 90 | shell/text |
+| `exploit_deserialization` | EXPLOITATION | 90 | shell/text |
+| `exploit_protocol_reversing` | EXPLOITATION | 90 | shell/text |
+| `forensics_file_analysis` | ENUMERATION, POST_EXPLOITATION | 90 | shell/text |
+| `exploit_cloud_iam` | EXPLOITATION, POST_EXPLOITATION | 90 | shell/text |
 
 Each skill card is bounded prompt text: purpose, bounded command guidance
 consistent with the policy gate's command families, and an explicit

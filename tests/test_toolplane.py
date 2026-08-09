@@ -385,6 +385,12 @@ def _full_skill_toolset(tmp_path: Path) -> Path:
             "searchsploit",
             "sqlmap",
             "base64",
+            # HAL-009 Tottori lesson packs: protocol reversing needs
+            # network.capture (tcpdump), forensics needs file.analyze
+            # (file/strings).
+            "tcpdump",
+            "file",
+            "strings",
         ],
     )
 
@@ -410,12 +416,13 @@ def test_skill_required_capabilities_validated_against_fake_inventory(
     all_ids = {summary.skill_id for summary in registry.list_available(available)}
     assert all_ids == set(SKILLS)
 
-    # Drop base64 -> only the auth-bypass skill (crypto.decode) disappears.
+    # Drop base64 -> only the crypto.decode skills (auth-bypass, JWT)
+    # disappear (HAL-009: exploit_jwt also requires crypto.decode).
     (bin_dir / "base64").unlink()
     monkeypatch.setenv("PATH", str(bin_dir))
     reduced = ToolInventory().run().capabilities.available()
     reduced_ids = {summary.skill_id for summary in registry.list_available(reduced)}
-    assert reduced_ids == set(SKILLS) - {"exploit_auth_bypass"}
+    assert reduced_ids == set(SKILLS) - {"exploit_auth_bypass", "exploit_jwt"}
 
     # Drop everything -> no skill with requirements is advertised.
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))

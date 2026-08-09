@@ -81,6 +81,35 @@ independently implemented components.
 3. `v2/tool-runtime` — Kali rolling + `kali-linux-everything`; ToolCatalog,
    ToolInventory, CapabilityRegistry, ToolProvider; skills declare
    capabilities, not binaries.
+   > HAL-009 (2026-08-09): Tottori live-run exploitation lessons ported as
+   > eight new skill cards in the SKILLS registry (kernel-external data,
+   > AGENTS.md rule #10): `exploit_sqli_enumeration` (multi-DB engine
+   > fingerprinting, UNION/boolean/error techniques, information_schema vs
+   > sqlite_master), `exploit_jwt` (alg confusion, alg=none, the
+   > PEM-as-HMAC-secret key-confusion lesson, kid injection), `exploit_ssrf`
+   > (multi-service probing from one URL parameter, decimal/hex/octal/IPv6 IP
+   > obfuscation, DNS-rebinding reasoning, file:// and gopher:// schemes),
+   > `exploit_xxe` (file read via file://, SSRF via http:// entities, blind
+   > exfiltration only with an authorized listener), `exploit_deserialization`
+   > (pickle/yaml/Jackson/PHP sink identification, safe probes, evidence-
+   > driven gadget chains — never executing untrusted payloads on the harness
+   > host), `exploit_protocol_reversing` (capture, framing/length-prefix
+   > analysis, one-field-at-a-time fuzzing, checksum/CRC handling),
+   > `forensics_file_analysis` (carving, strings/entropy, steganography
+   > checks, archive/disk-image enumeration, timeline reconstruction), and
+   > `exploit_cloud_iam` (metadata service at 169.254.169.254, role chaining,
+   > credential validation — authorized challenge cloud scopes only). New
+   > `ozzgraph.techniques.TechniqueClassifier` maps a challenge category
+   > string (e.g. "Web / SSRF", "SQL Injection", "Forensics", "Cloud IAM") to
+   > the deterministic subset of skill ids via case-insensitive substring
+   > rules (`sql` -> sqli + parameter injection, `web`/`jwt` -> jwt +
+   > auth_bypass, `ssrf` -> ssrf + http application, `forensic` -> forensics,
+   > `cloud`/`iam` -> cloud IAM, ...); unknown/absent categories degrade
+   > deterministically to the recon/enum core (never empty, never a crash).
+   > `SkillRegistry.list_for_category(category)` and
+   > `PhaseRouter.skills_for(phase, category=None)` expose category-routed
+   > SUMMARIES only — lazy loading intact, full cards still arrive solely via
+   > `SkillRegistry.load` (AGENTS.md rule #6).
 4. `v2/semantic-observations` — typed parsers/projectors for the highest-value
    tools (nmap, ffuf, nuclei, netexec, semgrep, CodeQL, trivy, gitleaks, ...);
    mandatory raw-artifact persistence before summarization.

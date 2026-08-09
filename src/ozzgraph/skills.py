@@ -43,6 +43,15 @@ V01 (docs/adr/0008): the FLAG_HUNT skill packs (filesystem hunt, web
 artifact hunt, submission) were removed from the generic kernel with
 the FLAG_HUNT / VERIFY_AND_SUBMIT phases; flag hunting and submission
 are HalCTF environment behaviors arriving with the full adapter in V09.
+
+HAL-009 (2026-08-09): the Tottori live-run exploitation lessons were
+ported as eight new skill cards — SQLi multi-database enumeration,
+JWT attacks, SSRF, XXE, deserialization, protocol reversing,
+forensics, and cloud IAM — and :class:`ozzgraph.techniques.TechniqueClassifier`
+plus :meth:`SkillRegistry.list_for_category` route a challenge
+category string to the deterministic subset of skills relevant to it.
+Category routing advertises compact summaries only; full cards still
+load exclusively via :meth:`SkillRegistry.load` (AGENTS.md rule #6).
 """
 
 from __future__ import annotations
@@ -54,6 +63,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ozzgraph.observations import Parser, ParserRegistryError, get_parser
 from ozzgraph.phases import Phase
+from ozzgraph.techniques import TechniqueClassifier
 
 
 class SkillError(RuntimeError):
@@ -203,6 +213,38 @@ class SkillRegistry:
             for skill in sorted(self._skills.values(), key=lambda skill: skill.skill_id)
             if provided.issuperset(skill.required_capabilities)
         ]
+
+    def list_for_category(self, category: str | None) -> list[SkillSummary]:
+        """Summaries of the skills routed to a challenge category (HAL-009).
+
+        Uses the :class:`~ozzgraph.techniques.TechniqueClassifier` to
+        map the challenge category string (platform metadata such as
+        ``"Web / SSRF"``, ``"SQL Injection"``, ``"Forensics"``, or
+        ``"Cloud IAM"``) to the deterministic subset of skill ids
+        relevant to that category, then returns the compact
+        :class:`SkillSummary` advertisements for exactly those skills,
+        sorted by ``skill_id``. This is the lazy advertisement path
+        (AGENTS.md rule #6): summaries only — full cards still arrive
+        exclusively via :meth:`load`.
+
+        An unknown or absent category degrades deterministically to
+        the recon/enum core (never an empty advertisement, never a
+        crash). A classifier mapping that references a ``skill_id``
+        this registry does not know is a broken registry entry and
+        fails loudly (AGENTS.md rule #9).
+
+        Raises:
+            SkillRegistryError: If the classifier routes a ``skill_id``
+                that is not registered in this registry.
+        """
+        skill_ids = TechniqueClassifier().skill_ids_for(category)
+        missing = [skill_id for skill_id in skill_ids if skill_id not in self._skills]
+        if missing:
+            raise SkillRegistryError(
+                "classifier routes unregistered skill ids: "
+                + ", ".join(repr(skill_id) for skill_id in missing)
+            )
+        return [self._skills[skill_id].summary() for skill_id in skill_ids]
 
     def load(self, skill_id: str) -> Skill:
         """The full skill card for ``skill_id`` (the lazy load step).
@@ -459,6 +501,8 @@ EXPLOIT_PARAMETER_INJECTION = _skill(
         "- compare the probed response against the baseline response\n"
         "- sqlmap -u 'https://<target>/<path>?<param>=1' --batch --level 1\n"
         "  (only once a SQL-injection hypothesis is evidenced)\n"
+        "- once evidenced, load exploit_sqli_enumeration for multi-DB\n"
+        "  enumeration (engine fingerprinting, schema enumeration)\n"
         "Probe values are single tokens; record response deltas as evidence.\n"
         "Do NOT: destructive payloads (DROP, DELETE, rm) before a safe probe,\n"
         "batch many parameters at once, or retry identical probes."
@@ -509,6 +553,8 @@ EXPLOIT_AUTH_BYPASS = _skill(
         "- path normalization on protected routes: /admin, //admin, /./admin,\n"
         "  /%2e%2e/admin\n"
         "- JWT: base64-decode header/payload locally; test alg=none on a copy\n"
+        "- for JWT algorithm/key-confusion attacks (PEM-as-HMAC-secret,\n"
+        "  kid injection), load the exploit_jwt skill card\n"
         "A bypass is a hypothesis until the protected resource differs from\n"
         "the baseline response.\n"
         "Do NOT: run large credential lists without explicit policy approval,\n"
@@ -516,6 +562,265 @@ EXPLOIT_AUTH_BYPASS = _skill(
     ),
     timeout_seconds=60,
     required_capabilities=("http.request", "crypto.decode"),
+)
+
+# ---------------------------------------------------------------------------
+# HAL-009: Tottori live-run exploitation lesson packs (2026-08-09)
+#
+# Cards ported from hard-won lessons of a real competition team: SQLi
+# multi-DB enumeration, JWT PEM-as-HMAC-secret attacks, SSRF
+# multi-service + IP-obfuscation reasoning, XXE, deserialization,
+# protocol reversing, forensics, and cloud IAM role chaining. Every
+# card follows the same bounded shape (Purpose / one bounded action
+# per command / Do NOT) and is routed per challenge category by
+# ozzgraph.techniques.TechniqueClassifier (kernel-external data in the
+# SKILLS registry — AGENTS.md rule #10).
+# ---------------------------------------------------------------------------
+
+#: SQL injection multi-database enumeration: engine fingerprinting,
+#: UNION/boolean/error techniques, and schema enumeration.
+EXPLOIT_SQLI_ENUMERATION = _skill(
+    skill_id="exploit_sqli_enumeration",
+    name="SQL injection multi-database enumeration",
+    phases=(Phase.EXPLOITATION,),
+    description=(
+        "SQL injection multi-database enumeration: engine fingerprinting, "
+        "UNION/boolean/error techniques, and schema enumeration"
+    ),
+    card=(
+        "Purpose: enumerate a confirmed SQL-injection parameter across database\n"
+        "engines — fingerprint the engine first, then enumerate schema.\n"
+        "Commands (bounded, one probe per action):\n"
+        "- fingerprint: <param>=' AND 1=1 -- - ; <param>' AND 1=2 -- -  (error/boolean deltas)\n"
+        "- UNION: <param>' ORDER BY 1-- - then ORDER BY n to find the column count\n"
+        "- UNION SELECT NULL,... to locate the visible column; concat engine-\n"
+        "  specific (MySQL CONCAT(), Postgres ||, MSSQL +, SQLite ||)\n"
+        "- metadata: information_schema.tables (MySQL/Postgres/MSSQL) vs\n"
+        "  sqlite_master (SQLite); LIMIT 1 row at a time\n"
+        "- sqlmap -u '<url>' --batch --level 1  (only after an evidenced\n"
+        "  injection hypothesis; never --os-shell)\n"
+        "Record each engine hypothesis (error text, comment syntax, delimiter\n"
+        "behavior) as evidence before enumerating further.\n"
+        "Do NOT: destructive payloads (DROP, DELETE) before a safe probe, dump\n"
+        "whole tables in one action, or run sqlmap without an evidenced hypothesis."
+    ),
+    timeout_seconds=90,
+    required_capabilities=("http.request",),
+)
+
+#: JWT attacks: decode, alg confusion, PEM-as-HMAC-secret key
+#: confusion, and kid header injection.
+EXPLOIT_JWT = _skill(
+    skill_id="exploit_jwt",
+    name="JWT attacks",
+    phases=(Phase.EXPLOITATION,),
+    description=(
+        "JWT attacks: header/payload decode, alg confusion, "
+        "PEM-as-HMAC-secret key confusion, and kid header injection"
+    ),
+    card=(
+        "Purpose: attack JSON Web Tokens — decode first, then test algorithm\n"
+        "confusion and key handling.\n"
+        "Commands (bounded):\n"
+        "- decode header/payload locally (base64url) and check alg, kid, typ\n"
+        '- alg=none: rebuild a COPY with {"alg":"none"} and an empty signature;\n'
+        "  replay against the protected endpoint\n"
+        "- PEM-as-HMAC-secret: when the server verifies HS256 and a PEM public\n"
+        "  key is exposed (/.well-known/jwks.json, /certs), sign a copy with\n"
+        "  the PEM bytes as the HMAC secret — a classic key-confusion lesson\n"
+        "- kid injection: only when a sink is evidenced (e.g. the kid feeds a\n"
+        "  lookup); point it at a known path or record, never a guess\n"
+        "- weak-secret checks: offline, bounded wordlist only, within policy\n"
+        "A bypass is a hypothesis until the protected resource responds\n"
+        "differently from the unauthenticated baseline.\n"
+        "Do NOT: brute-force secrets beyond policy limits, forge tokens for\n"
+        "other users' sessions, or replay altered tokens as confirmed facts."
+    ),
+    timeout_seconds=90,
+    required_capabilities=("http.request", "crypto.decode"),
+)
+
+#: Server-side request forgery: internal probing, IP obfuscation,
+#: and scheme variations from one URL parameter.
+EXPLOIT_SSRF = _skill(
+    skill_id="exploit_ssrf",
+    name="Server-side request forgery",
+    phases=(Phase.EXPLOITATION,),
+    description=(
+        "Server-side request forgery: internal service probing, IP obfuscation, "
+        "and scheme variations from a URL parameter"
+    ),
+    card=(
+        "Purpose: exploit a URL parameter the server fetches — probe internal\n"
+        "services and read local files through that fetch.\n"
+        "Commands (bounded, one fetch per action):\n"
+        "- baseline: <param>=http://<target>/  (record status, body, latency)\n"
+        "- internal probe: <param>=http://127.0.0.1:<port>/ and\n"
+        "  http://localhost:<port>/ — compare response side channels\n"
+        "- IP obfuscation: decimal (2130706433), hex (0x7f000001), octal\n"
+        "  (0177.0.0.1), IPv6 ([::1]), and DNS-rebinding reasoning\n"
+        "- schemes: file:///etc/passwd (read), gopher://<internal>/ (raw TCP)\n"
+        "- cloud metadata: http://169.254.169.254/latest/meta-data/ only when\n"
+        "  the challenge scope authorizes it (see exploit_cloud_iam)\n"
+        "Record each reachable internal service as a hypothesis with the\n"
+        "response delta as evidence.\n"
+        "Do NOT: scan the whole internal range in one action, fetch files\n"
+        "outside the challenge scope, or exfiltrate to public infrastructure."
+    ),
+    timeout_seconds=90,
+    required_capabilities=("http.request", "network.probe"),
+)
+
+#: XML external entity attacks: file read, SSRF via entities, blind
+#: exfiltration channels.
+EXPLOIT_XXE = _skill(
+    skill_id="exploit_xxe",
+    name="XML external entity attacks",
+    phases=(Phase.EXPLOITATION,),
+    description=(
+        "XML external entity attacks: file read via file://, SSRF via http:// "
+        "entities, and blind exfiltration channels"
+    ),
+    card=(
+        "Purpose: exploit XML external entities where the app parses XML bodies.\n"
+        "Commands (bounded):\n"
+        "- baseline: post a minimal well-formed XML body; note parser errors\n"
+        '- file read: <!DOCTYPE x [<!ENTITY e SYSTEM "file:///etc/passwd">]>\n'
+        "  then reference &e; in an echoed element\n"
+        '- SSRF: <!ENTITY e SYSTEM "http://127.0.0.1:<port>/"> — the response\n'
+        "  side channel proves the internal fetch\n"
+        "- blind: out-of-band exfiltration ONLY when a local listener is\n"
+        "  authorized (nc -l <port>); otherwise use error/DTD side channels\n"
+        "- parameter entities (%e;) for blind internal-subset cases\n"
+        "Record each entity echo as evidence; a parser that never echoes needs\n"
+        "a blind strategy.\n"
+        "Do NOT: read files outside the challenge scope, exfiltrate to public\n"
+        "infrastructure, or fetch huge files (bounded outputs only)."
+    ),
+    timeout_seconds=90,
+    required_capabilities=("http.request",),
+)
+
+#: Deserialization sink identification and safe probing.
+EXPLOIT_DESERIALIZATION = _skill(
+    skill_id="exploit_deserialization",
+    name="Deserialization sink analysis",
+    phases=(Phase.EXPLOITATION,),
+    description=(
+        "Deserialization sink identification and safe probing: "
+        "pickle/yaml.load/Jackson/PHP unserialize, evidence-driven gadget chains"
+    ),
+    card=(
+        "Purpose: identify and safely probe deserialization sinks in web apps\n"
+        "and bundled artifacts.\n"
+        "Commands (bounded):\n"
+        "- identify sinks: grep for pickle.loads / yaml.load / jsonpickle /\n"
+        "  PHP unserialize / Java ObjectInputStream in the app's source or\n"
+        "  bundled artifacts (evidence before probing)\n"
+        "- safe probe: feed a minimally modified serialized object and compare\n"
+        "  the error/behavior against the baseline — never a crafted chain\n"
+        "- gadget chains: only after the sink and format are evidenced; build\n"
+        "  chains from observed classes, never guessed\n"
+        "- prefer error-driven oracles: error and timing deltas over execution\n"
+        "Record the sink location and format as a hypothesis with evidence.\n"
+        "Do NOT: execute untrusted payloads on the harness host, run chains\n"
+        "without an evidenced sink, or escalate to state-changing payloads."
+    ),
+    timeout_seconds=90,
+    required_capabilities=("http.request", "file.search"),
+)
+
+#: Custom protocol reversing: capture, framing analysis, field
+#: fuzzing, checksum handling.
+EXPLOIT_PROTOCOL_REVERSING = _skill(
+    skill_id="exploit_protocol_reversing",
+    name="Custom protocol reversing",
+    phases=(Phase.EXPLOITATION,),
+    description=(
+        "Custom protocol reversing: capture, framing and length-prefix analysis, "
+        "field fuzzing, and checksum/CRC handling"
+    ),
+    card=(
+        "Purpose: reverse a custom network protocol — capture, parse, then\n"
+        "craft bounded probes.\n"
+        "Commands (bounded):\n"
+        "- capture: tcpdump -i any -w <artifact> port <port>  (bounded count/time)\n"
+        "- parse: hexdump -C <artifact>  (field boundaries, magic bytes)\n"
+        "- framing: identify length-prefixed vs delimiter-terminated fields;\n"
+        "  note the checksum/CRC field and its coverage\n"
+        "- fuzz one field per action: mutate a length, value, or checksum and\n"
+        "  observe the peer's error behavior\n"
+        "- checksum: recompute the CRC/hash locally and confirm the peer accepts\n"
+        "  a corrected frame before crafting further frames\n"
+        "Record each field hypothesis with the frame bytes as evidence.\n"
+        "Do NOT: fuzz every field at once, replay captured sessions against\n"
+        "other targets, or send malformed frames without a framing hypothesis."
+    ),
+    timeout_seconds=90,
+    required_capabilities=("network.capture", "network.probe"),
+)
+
+#: Forensic artifact analysis: carving, strings/entropy, steganography,
+#: archives/disk images, timeline reconstruction.
+FORENSICS_FILE_ANALYSIS = _skill(
+    skill_id="forensics_file_analysis",
+    name="Forensic artifact analysis",
+    phases=(Phase.ENUMERATION, Phase.POST_EXPLOITATION),
+    description=(
+        "Forensic artifact analysis: file carving, strings/entropy, "
+        "steganography checks, archive and disk image enumeration"
+    ),
+    card=(
+        "Purpose: analyze challenge artifacts (files, disk images, archives)\n"
+        "with bounded, evidence-driven steps.\n"
+        "Commands (bounded):\n"
+        "- identify: file <artifact> ; strings -n 6 <artifact>  (bounded output)\n"
+        "- carve: binwalk <artifact> — extract only what a signature evidences\n"
+        "- metadata: exiftool <artifact>  (comments, tool stamps, embedded data)\n"
+        "- entropy/stealth: high-entropy regions and steganography hints (LSB,\n"
+        "  appended data) only when the artifact type suggests them\n"
+        "- archives/images: enumerate members (tar tzf, unzip -l) and disk-image\n"
+        "  partitions before extracting\n"
+        "- timeline: sort file mtimes and log lines to reconstruct the sequence\n"
+        "  when the challenge is event-based\n"
+        "Record every extracted artifact with its provenance; flags hide in\n"
+        "plain sight (strings, comments, alternate streams).\n"
+        "Do NOT: extract every embedded file blindly, run unverified carving on\n"
+        "the whole image in one action, or dump binary content into context."
+    ),
+    timeout_seconds=90,
+    required_capabilities=("file.analyze", "file.search"),
+)
+
+#: Cloud IAM exploitation: metadata service, role chaining, credential
+#: validation — authorized challenge cloud scopes only.
+EXPLOIT_CLOUD_IAM = _skill(
+    skill_id="exploit_cloud_iam",
+    name="Cloud IAM exploitation",
+    phases=(Phase.EXPLOITATION, Phase.POST_EXPLOITATION),
+    description=(
+        "Cloud IAM exploitation: metadata service access, role chaining, and "
+        "credential validation within authorized challenge scopes"
+    ),
+    card=(
+        "Purpose: exploit cloud IAM misconfigurations inside the authorized\n"
+        "challenge scope — metadata service, role chaining, credential checks.\n"
+        "Commands (bounded):\n"
+        "- metadata: curl -sS -m 5 http://169.254.169.254/latest/meta-data/iam/\n"
+        "  security-credentials/  (only from a service with a path to it)\n"
+        "- role chain: record the assumed role ARN, then attempt role assumption\n"
+        "  with observed role names — each ARN is a hypothesis\n"
+        "- credentials: validate found keys locally (e.g. sts get-caller-identity)\n"
+        "  only when the challenge provides a credentialed endpoint\n"
+        "- policy reasoning: infer privilege boundaries from observed deny/allow\n"
+        "  responses; document each attempted action with its response\n"
+        "Record every credential/ARN observation with provenance.\n"
+        "Do NOT: touch metadata or IAM outside the authorized challenge scope,\n"
+        "brute-force role names, or use real cloud credentials beyond the\n"
+        "challenge's own scope."
+    ),
+    timeout_seconds=90,
+    required_capabilities=("http.request", "network.probe"),
 )
 
 register_skill(RECON_DNS_ENUM)
@@ -527,3 +832,12 @@ register_skill(ENUM_HTTP_APPLICATION)
 register_skill(EXPLOIT_PARAMETER_INJECTION)
 register_skill(EXPLOIT_COMMAND_INJECTION)
 register_skill(EXPLOIT_AUTH_BYPASS)
+# HAL-009: Tottori live-run exploitation lesson packs.
+register_skill(EXPLOIT_SQLI_ENUMERATION)
+register_skill(EXPLOIT_JWT)
+register_skill(EXPLOIT_SSRF)
+register_skill(EXPLOIT_XXE)
+register_skill(EXPLOIT_DESERIALIZATION)
+register_skill(EXPLOIT_PROTOCOL_REVERSING)
+register_skill(FORENSICS_FILE_ANALYSIS)
+register_skill(EXPLOIT_CLOUD_IAM)
