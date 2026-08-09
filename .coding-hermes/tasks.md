@@ -32,16 +32,22 @@ non-same-name test files; docs complete). Board idle → cooldown 43200s.**
 
 ## Active
 
-> **Tick 2026-08-09: HAL-001 closed (judge PASS a495fe1, commits 985950e + 9fca71a —**
-> verified this tick). Board-staleness close: work was committed + judged by prior
-> ticks but never marked [x]; git-history cross-reference surfaced it. Verified:
-> HalCTFRuntimeSnapshot env parsing (HAL_TARGET_<NAME>_IP/_PORT, HAL_CHALLENGE_*,
-> HAL_AGENT_MODEL, HAL_RUN_ID, HAL_TEAM_UUID, BONUS_FLAG/FLAG_*, OPENAI_BASE_URL,
-> MCP_ENDPOINT), discover_targets → real-URL Targets, discover_scope → hosts/urls +
-> target_allowlist atomic, infra exclusion (127.0.0.1:9000/model/MCP). 30/30 HAL
-> tests pass locally, ruff/format clean, CI green on 9fca71a, judge PASS a495fe1
-> (all 5 criteria, tier1 lint/tests/secrets PASS). gitreins task deleted.
-> HAL-002..HAL-011 pending → cooldown stays 900s. Next: HAL-002 (MCP optional).
+> **Tick 2026-08-09: HAL-002 closed (judge PASS d0e00cb, commit cbbffe5 — verified**
+> this tick). MCP optional/fallback for HalCTF startup: `OPENAI_BASE_URL` removed
+> from `HALCTF_ENDPOINT_CANDIDATES` (it is the model service `/llm`, never the MCP
+> server `/mcp/`); `load_config` and `HalCTFEnvironment` construct with
+> `endpoint=None` when only env-derived challenge metadata is present (env-first
+> detonation starts with zero endpoint vars); `require_halctf_endpoint` retained as
+> a helper for callers that genuinely need an endpoint, fail-loud scoped to truly
+> unrecoverable config (missing HAL_USER_ID, invalid HAL_TARGET_* port, malformed
+> scope/credentials files); hal_client keeps its localhost default for standalone
+> halctl (HalClient only constructed when actually used); supervisor + 4 docs
+> (CHANGES_v2/USAGE/API_AND_INTEGRATIONS/ADR-0011) updated. Gate: ruff/format/mypy
+> strict clean, 1195 tests pass (216s, was 1181 — 8 new tests). Judge PASS d0e00cb
+> (5/5 criteria, tier1 lint/tests/secrets PASS). Worker fired the judge before
+> committing (empty-diff run killed); foreman committed + re-judged on committed
+> state. gitreins task deleted, tasks.yaml clean. HAL-003..HAL-011 pending →
+> cooldown stays 900s. Next: HAL-003 (model routing).
 
 > E2E-001 tick ran 2026-08-07: 65P/1F/1U, finding FLAGLEAK-001 fixed (a667733, judge PASS) — see Completed.
 
@@ -182,7 +188,6 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 | HAL-005 | Wire flag extraction directly after _persist_execution → new verified candidate immediately enters supervisor submission (no LLM) | Critical | 5±1 | HAL-004 | +++submission, ++graph | DS-V4-Flash | High | DS-V4-Pro |
 | HAL-004 | Sidecar transport adapter — /submit + /done, normalize observed {status,points_awarded} → SubmissionResult | High | 4±1 | V09 | ++http, ++halctf | DS-V4-Flash | Medium | Kimi-K3 |
 | HAL-003 | Model routing in HalCTF mode — map OPENAI_BASE_URL → model service, HAL_AGENT_MODEL → model id | High | 3±1 | HAL-001 | ++model, ++env | DS-V4-Flash | Medium | Kimi-K3 |
-| HAL-002 | Make MCP optional/fallback for HalCTF startup — env-first challenge discovery; MCP may enhance, never a prerequisite | Critical | 3±1 | HAL-001 | ++config, ++env | DS-V4-Flash | High | DS-V4-Pro |
 
 ## [x] HAL-001 — HalCTFRuntimeSnapshot: env → graph targets + scope allowlist (real HalCTF runtime)
 
@@ -198,7 +203,18 @@ Work was committed + judged by prior ticks but the board never marked it `[x]` �
 4. Sidecar/model/MCP infrastructure (127.0.0.1:9000, OPENAI_BASE_URL, MCP_ENDPOINT) is explicitly excluded from candidate targets.
 5. Tests: fixture with Tottori's exact env shape asserts targets + allowlist + infra exclusion.
 
-## [ ] HAL-002 — Make MCP optional/fallback for HalCTF startup
+## [x] HAL-002 — Make MCP optional/fallback for HalCTF startup
+
+**Tick 2026-08-09: HAL-002 closed (judge PASS d0e00cb, commit cbbffe5).**
+MCP optional/fallback: `OPENAI_BASE_URL` removed from `HALCTF_ENDPOINT_CANDIDATES`
+(model service `/llm`, never MCP `/mcp/`); `load_config` + `HalCTFEnvironment`
+construct with `endpoint=None` on env-only detonations; `require_halctf_endpoint`
+kept as a helper for callers that genuinely need an endpoint; fail-loud scoped to
+truly unrecoverable config (missing HAL_USER_ID, invalid HAL_TARGET_* port,
+malformed scope/credentials files); hal_client localhost default unchanged for
+standalone halctl; supervisor + docs updated. Gate: ruff/format/mypy strict clean,
+1195 tests pass (216s, 8 new tests). Judge PASS d0e00cb (5/5 criteria, tier1
+lint/tests/secrets PASS). gitreins task deleted, tasks.yaml clean.
 
 **Source:** Verified — `require_halctf_endpoint()` raises `ConfigError` at construction and `load_config` does the same whenever HalCTF mode is selected. The real platform injects challenge metadata via env (env-first); requiring an MCP endpoint to start is wrong. Tottori runs env-first with MCP as fallback.
 
@@ -302,6 +318,7 @@ Work was committed + judged by prior ticks but the board never marked it `[x]` �
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
 | HAL-001 | HalCTFRuntimeSnapshot from env — HAL_TARGET_<NAME>_IP/_PORT + single-form + HAL_CHALLENGE_* + HAL_AGENT_MODEL/HAL_RUN_ID/HAL_TEAM_UUID + flag-like env + OPENAI_BASE_URL/MCP_ENDPOINT → real-URL graph targets + Scope.hosts/urls + ScopePolicy target_allowlist (atomic), infra exclusion (sidecar 127.0.0.1:9000/model/MCP) (judge PASS a495fe1, all 5 criteria, tier1 lint/tests/secrets PASS) | Critical | 5±1 | 9fca71a | DS-V4-Flash |
+| HAL-002 | MCP optional/fallback for HalCTF startup — OPENAI_BASE_URL out of HALCTF_ENDPOINT_CANDIDATES (model service /llm, never MCP), load_config + HalCTFEnvironment construct endpoint=None env-only, require_halctf_endpoint retained for genuine endpoint consumers, fail-loud scoped to unrecoverable config, hal_client localhost default unchanged (judge PASS d0e00cb, all 5 criteria, tier1 lint/tests/secrets PASS) | Critical | 3±1 | cbbffe5 | DS-V4-Flash |
 | DOCS-000 | v2 documentation pass re-run — README refreshed for completed v2 milestone (release status v1.0.0 + v2 V01–V10, v2 modules in capabilities/layout: environments/, findings.py, observations.py, security_brain.py, specialists.py, profile_store.py/profile_data/, matrix.py, benchmarks/, lab/), v2 docs added to Documentation table (CHANGES_v2.md, OBSERVATIONS.md, BENCHMARKS.md, SYNTHETIC_LAB.md), repo description + 7 topics updated via gh repo edit, formatting bar intact (judge PASS 8ae01605, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 3±1 | c436427 | DS-V4-Flash |
 | V10 | full-regression: benchmarks/ package (registry + OzzGraph harness vs plain ReAct + scripted model + scoring + deterministic report), dead-end lab target with pivot proof (hypothesis_abandoned + PIVOT, bounded turns), tool-contract test (every required_capability resolves to installed provider), benchmark CLI (--target/--react/--max-turns/--out + OZZGRAPH_BENCHMARK_* env), docs/BENCHMARKS.md (judge PASS 9ce33342, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 5±1 | 498a214 | DS-V4-Flash |
 | INT-CI-001 | E2E driver imports V09-moved flag modules from canonical homes (ozzgraph.entities / ozzgraph.environments.halctf) — fixes CI Lint failure (ruff I001 on e2e_001_driver.py, symptom of deleted ozzgraph.flags regression) | High | 1±0 | 5628bf4 | DS-V4-Flash |
