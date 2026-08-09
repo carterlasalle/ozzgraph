@@ -32,32 +32,28 @@ non-same-name test files; docs complete). Board idle → cooldown 43200s.**
 
 ## Active
 
-> **Tick 2026-08-09: HAL-005 closed (judge PASS 45694ccf, commit ded08d4 — verified**
-> this tick). Flag extraction + submission wired into the active loop: the runner
-> invokes a supervisor-owned hook (`flag_submitter` → `_process_flag_candidates`)
-> after EVERY executed turn's `_persist_execution()` (all three observation-
-> persisting paths: deterministic/strategic/fallback, runner.py:640-645, 752-753,
-> 903-904), so a newly observed flag is extracted (`FlagCandidateExtractor.extract`)
-> and submitted (`Supervisor.submit_verified_candidate` via the supervisor-owned
-> privileged sidecar client) with ZERO LLM turns — the integration test asserts
-> `terminated.model_calls == 1` (only the observing turn). Accepted submission →
-> router DONE → `objective-halctf-flag` completed → COMPLETED → best-effort sidecar
-> `/done` fired once (`_notify_platform_done`, never fatal). Rejection →
-> coordinator marks candidate `rejected: true` + `attempts` (never re-submitted),
-> investigation continues non-fatally. No-candidate / MissingRequiredStateError →
-> silent no-op; limit/privilege/corrupt-state refusals → loud
-> `supervisor.flag_submission_failed` events, loop continues under budgets.
-> Privilege/budget/durability invariants untouched (SubmissionPrivilegeError before
-> wire, per-candidate + total budgets, replay-identical graph state). Gate:
-> ruff/format/mypy strict clean, 1253 tests pass (227s, +10 new in
-> tests/test_flag_loop.py incl. real runner loop + scripted plain-HTTP sidecar).
-> Worker dispatched via hermes chat (deepseek-v4-flash @ openrouter), committed
-> ded08d4 + pushed (verified origin/main..HEAD == 0). Judge PASS 45694ccf (4/4
-> criteria, tier1 lint/tests/secrets PASS — first run hit an evaluator-side
-> skylos_scan tool signature error, recovered; verdict committed 6cb49e4d on
-> gitreins branch). gitreins task deleted, tasks.yaml clean. CI green on ded08d4.
-> HAL-006..HAL-011 pending → cooldown stays 900s. Next: HAL-006 (objective
-> completion acceptance-gated).
+> **Tick 2026-08-09: HAL-006 closed (judge PASS bfbec37b, commit 9c0921f — verified**
+> this tick). Objective completion acceptance-gated: `EnvironmentAdapter` gains
+> `verdict_satisfies_objectives(graph)` (base.py) — the environment-specific
+> completion predicate. Runner `_evaluate` consults it before `_complete_objectives()`
+> on a `PlanVerdict.COMPLETE`, so a validated hypothesis (which still produces its
+> evidence-backed Finding unconditionally) can no longer complete
+> `objective-halctf-flag` without an accepted submission. `HalCTFEnvironment`
+> accepts the verdict only when the graph holds an accepted submission entity
+> (strict-bool read, fails loudly on non-bool, mirrors router `_payload_bool`);
+> `LocalEnvironment` returns True unconditionally (pre-HAL-006 behavior
+> byte-for-byte unchanged). The accepted-submission DONE path untouched (HAL-005
+> zero-LLM flow preserved — test_flag_loop green). Gate: ruff/format/mypy strict
+> clean, 1259 tests pass (219s, +6 new in tests/test_objective_acceptance.py:
+> predicate unit tests incl. InvalidGraphStateError on non-bool accepted,
+> COMPLETE-without-submission leaves objective incomplete + run continues
+> (BUDGET_EXHAUSTED, not COMPLETED), local COMPLETE still completes objectives,
+> accepted submission still completes via DONE path). Worker dispatched via hermes
+> chat (deepseek-v4-flash @ openrouter), committed 9c0921f (worker ran Tier-1
+> guards, PASS). Judge PASS bfbec37b (4/4 criteria, tier1 lint/tests/secrets PASS,
+> verdict committed on gitreins branch). gitreins task deleted, tasks.yaml clean.
+> HAL-007..HAL-011 pending → cooldown stays 900s. Next: HAL-007 (generalize flag
+> pattern).
 
 > **Tick 2026-08-09: HAL-002 closed (judge PASS d0e00cb, commit cbbffe5 — verified**
 > this tick). MCP optional/fallback for HalCTF startup: `OPENAI_BASE_URL` removed
@@ -211,7 +207,6 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 | HAL-009 | Port Tottori live-run exploitation lessons into skills (SQLi/JWT/SSRF/XXE/deser/protocol/forensics/cloud-IAM), kernel-external | High | 4±1 | V17 | +++skills, ++halctf | DS-V4-Flash | Medium | Kimi-K3 |
 | HAL-008 | HalCTF process semantics — budget-exhausted / unsolved / gave-up / graceful failure exit 0; keep structured reason in events | High | 3±1 | — | ++lifecycle, ++cli | DS-V4-Flash | Medium | Kimi-K3 |
 | HAL-007 | Generalize HalCTF flag pattern (flag{}, HALCTF{}, event prefixes) independent of local default | Medium | 2±1 | V09 | ++config, ++flags | DS-V4-Flash | Low | Kimi-K3 |
-| HAL-006 | Objective completion acceptance-gated — only an accepted /submit completes objective-halctf-flag; PlanVerdict.COMPLETE may create a finding but not complete it | Critical | 4±1 | HAL-005 | +++evaluator, ++objective | DS-V4-Flash | High | DS-V4-Pro |
 
 ## [x] HAL-001 — HalCTFRuntimeSnapshot: env → graph targets + scope allowlist (real HalCTF runtime)
 
@@ -340,7 +335,20 @@ verdict committed 6cb49e4d on gitreins branch). gitreins task deleted, tasks.yam
 4. Preserve supervisor-only privilege, submission budget, duplicate/rejected handling, durable state.
 5. Tests: an observation containing a flag → accepted submission → objective completed, no model call.
 
-## [ ] HAL-006 — Objective completion acceptance-gated
+## [x] HAL-006 — Objective completion acceptance-gated
+
+**Tick 2026-08-09: HAL-006 closed (judge PASS bfbec37b, commit 9c0921f).**
+`EnvironmentAdapter` gains `verdict_satisfies_objectives(graph)` — the
+environment-specific completion predicate. Runner `_evaluate` consults it before
+`_complete_objectives()` on a `PlanVerdict.COMPLETE` (runner.py:1207-1219); the
+evidence-backed Finding still renders unconditionally on a COMPLETE verdict.
+`HalCTFEnvironment` accepts the verdict only when the graph holds an accepted
+submission entity (strict-bool read mirroring router `_payload_bool`, fails loudly
+on non-bool); `LocalEnvironment` returns True unconditionally (pre-HAL-006
+behavior byte-for-byte unchanged). Accepted-submission DONE path untouched (HAL-005
+zero-LLM flow preserved). Gate: ruff/format/mypy strict clean, 1259 tests pass
+(219s, +6 in tests/test_objective_acceptance.py). Judge PASS bfbec37b (4/4
+criteria, tier1 lint/tests/secrets PASS). gitreins task deleted, tasks.yaml clean.
 
 **Source:** Verified — `runner._evaluate` does `if evaluation.verdict is PlanVerdict.COMPLETE: await self._complete_objectives()`, and the evaluator's COMPLETE fires on "every plan step completed" OR "a hypothesis confirmed" — pure pentest semantics. A validated SQLi hypothesis can mark `objective-halctf-flag.completed=true` with no successful `/submit`, terminating the run COMPLETED (exit 0) unscored.
 
@@ -408,6 +416,7 @@ verdict committed 6cb49e4d on gitreins branch). gitreins task deleted, tasks.yam
 | HAL-003 | Model routing in HalCTF mode — Supervisor._model_routing resolves HAL_AGENT_MODEL → model id + OPENAI_BASE_URL → client base URL via HAL-001 snapshot, supervisor-owned ModelService wired into runner (closed in finally), absent platform vars degrade to OZZGRAPH_MODEL_*/defaults, local mode unchanged, runner.started logs actual base_url via ModelService.base_url property (judge PASS 469be7f1, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 3±1 | e9c421e | DS-V4-Flash |
 | HAL-004 | Sidecar transport adapter — plain-HTTP /submit + /done to 127.0.0.1:9000 (best-effort done, never fatal), env-first base URL (OZZGRAPH_SIDECAR_BASE_URL → MCP origin → localhost default), normalizes {status:correct/accepted/solved/success/already_solved, points_awarded>0, boolean verdict fields} into UNCHANGED SubmissionResult via deterministic precedence, bounded transient retries, privilege guard, sidecar.* events, implements SubmissionClient protocol (coordinator/schema zero-line diff), HalCTFEnvironment.sidecar_submission_client factory (judge PASS ab4d87a9, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 4±1 | 66cf337 | DS-V4-Flash |
 | HAL-005 | Flag loop wired into active loop — runner invokes supervisor-owned hook (flag_submitter → _process_flag_candidates) after every executed turn's _persist_execution (all 3 observation-persisting paths), FlagCandidateExtractor.extract → Supervisor.submit_verified_candidate via supervisor-owned privileged sidecar client, ZERO LLM turns (test asserts model_calls == 1), accepted → objective-halctf-flag completed → COMPLETED → best-effort sidecar /done once, rejected → coordinator marks rejected:true (never re-submitted) → continue, no-candidate/no-op, limit/privilege refusals loud non-fatal events, privilege/budget/durability invariants preserved (judge PASS 45694ccf, all 4 criteria, tier1 lint/tests/secrets PASS) | Critical | 5±1 | ded08d4 | DS-V4-Flash |
+| HAL-006 | Objective completion acceptance-gated — EnvironmentAdapter.verdict_satisfies_objectives(graph) environment-specific completion predicate, runner consults it before _complete_objectives on PlanVerdict.COMPLETE (Finding still renders unconditionally), HalCTF requires accepted submission entity in graph (strict-bool, fails loudly), Local always accepts (pre-HAL-006 byte-for-byte), accepted-submission DONE path untouched (judge PASS bfbec37b, all 4 criteria, tier1 lint/tests/secrets PASS) | Critical | 4±1 | 9c0921f | DS-V4-Flash |
 | DOCS-000 | v2 documentation pass re-run — README refreshed for completed v2 milestone (release status v1.0.0 + v2 V01–V10, v2 modules in capabilities/layout: environments/, findings.py, observations.py, security_brain.py, specialists.py, profile_store.py/profile_data/, matrix.py, benchmarks/, lab/), v2 docs added to Documentation table (CHANGES_v2.md, OBSERVATIONS.md, BENCHMARKS.md, SYNTHETIC_LAB.md), repo description + 7 topics updated via gh repo edit, formatting bar intact (judge PASS 8ae01605, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 3±1 | c436427 | DS-V4-Flash |
 | V10 | full-regression: benchmarks/ package (registry + OzzGraph harness vs plain ReAct + scripted model + scoring + deterministic report), dead-end lab target with pivot proof (hypothesis_abandoned + PIVOT, bounded turns), tool-contract test (every required_capability resolves to installed provider), benchmark CLI (--target/--react/--max-turns/--out + OZZGRAPH_BENCHMARK_* env), docs/BENCHMARKS.md (judge PASS 9ce33342, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 5±1 | 498a214 | DS-V4-Flash |
 | INT-CI-001 | E2E driver imports V09-moved flag modules from canonical homes (ozzgraph.entities / ozzgraph.environments.halctf) — fixes CI Lint failure (ruff I001 on e2e_001_driver.py, symptom of deleted ozzgraph.flags regression) | High | 1±0 | 5628bf4 | DS-V4-Flash |
