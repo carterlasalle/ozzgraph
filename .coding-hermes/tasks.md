@@ -32,23 +32,30 @@ non-same-name test files; docs complete). Board idle → cooldown 43200s.**
 
 ## Active
 
-> **Tick 2026-08-09: HAL-003 closed (judge PASS 469be7f1, commit e9c421e — verified**
-> this tick). Model routing in HalCTF mode: `Supervisor._model_routing()` resolves
-> the platform-injected `HAL_AGENT_MODEL` → model id and `OPENAI_BASE_URL` →
-> model client base URL via the HAL-001 snapshot (`build_halctf_runtime_snapshot`);
-> `_run` constructs a supervisor-owned `ModelService` in HalCTF mode and passes
-> `model_id=` + `model_service=` into `AutonomousRunner` (closed in the same
-> finally as `environment.aclose()`); absent platform vars degrade gracefully
-> (`model_id=None` → `OZZGRAPH_MODEL_ID`/`"default"`, `base_url=None` →
-> `OZZGRAPH_MODEL_BASE_URL`/default — HAL-002 env-first philosophy); local mode
-> passes nothing extra (runner defaults byte-for-byte unchanged). `runner.started`
-> event now logs the ACTUAL resolved base URL via new read-only
-> `ModelService.base_url` property (getattr keeps protocol doubles like
-> ScriptedModelService on the default). docs/USAGE.md HalCTF model-routing note
-> added. Gate: ruff/format/mypy strict clean, 1201 tests pass (220s, +6 new).
-> Judge PASS 469be7f1 (4/4 criteria, tier1 lint/tests/secrets PASS). gitreins
-> task deleted, tasks.yaml clean. HAL-004..HAL-011 pending → cooldown stays 900s.
-> Next: HAL-004 (sidecar transport adapter).
+> **Tick 2026-08-09: HAL-004 closed (judge PASS ab4d87a9, commit 66cf337 — verified**
+> this tick). Sidecar transport adapter: new `sidecar.py` (626 lines) in the halctf
+> environment — `SidecarSubmissionClient` speaks PLAIN HTTP to the real competition
+> sidecar (`POST /submit` with bounded `{challenge_id, flag}` + `POST /done`
+> best-effort, never fatal), resolving its base URL env-first
+> (`OZZGRAPH_SIDECAR_BASE_URL` → origin of the resolved MCP endpoint → localhost
+> default; `OPENAI_BASE_URL` never consulted); `_normalize_submission` maps every
+> observed response form into the UNCHANGED `SubmissionResult` schema with
+> deterministic precedence (status string in ACCEPT_STATUSES
+> {correct,accepted,solved,success,already_solved} → explicit boolean verdict
+> fields accepted/success/solved/correct → points_awarded/points > 0), wrong-typed
+> verdict fields fail loudly (HalServiceError); bounded retries on transient
+> failures only (429/5xx/transport), privilege guard (OZZGRAPH_HAL_PRIVILEGED,
+> HalPrivilegeError before the wire), events sidecar.failure/sidecar.done/
+> sidecar.done_failed. Implements the existing `SubmissionClient` protocol so the
+> supervisor-only SubmissionCoordinator drives it unchanged — coordinator/schema
+> zero-line diff. Wired as `HalCTFEnvironment.sidecar_submission_client()` factory
+> + exported from the halctf shim. Gate: ruff/format/mypy strict clean, 1243 tests
+> pass (215s, +42 new in tests/test_sidecar.py incl. coordinator integration).
+> Worker interrupted once mid-implementation (exit 130); continuation worker
+> finished + committed + pushed. Judge PASS ab4d87a9 (4/4 criteria, tier1
+> lint/tests/secrets PASS). gitreins task deleted, tasks.yaml clean. CI green on
+> 66cf337. HAL-005..HAL-011 pending → cooldown stays 900s. Next: HAL-005 (wire
+> flag extraction + submission into the active loop).
 
 > **Tick 2026-08-09: HAL-002 closed (judge PASS d0e00cb, commit cbbffe5 — verified**
 > this tick). MCP optional/fallback for HalCTF startup: `OPENAI_BASE_URL` removed
@@ -204,7 +211,6 @@ lint/tests/secrets green. Worktree clean. Docs gate satisfied → idle classific
 | HAL-007 | Generalize HalCTF flag pattern (flag{}, HALCTF{}, event prefixes) independent of local default | Medium | 2±1 | V09 | ++config, ++flags | DS-V4-Flash | Low | Kimi-K3 |
 | HAL-006 | Objective completion acceptance-gated — only an accepted /submit completes objective-halctf-flag; PlanVerdict.COMPLETE may create a finding but not complete it | Critical | 4±1 | HAL-005 | +++evaluator, ++objective | DS-V4-Flash | High | DS-V4-Pro |
 | HAL-005 | Wire flag extraction directly after _persist_execution → new verified candidate immediately enters supervisor submission (no LLM) | Critical | 5±1 | HAL-004 | +++submission, ++graph | DS-V4-Flash | High | DS-V4-Pro |
-| HAL-004 | Sidecar transport adapter — /submit + /done, normalize observed {status,points_awarded} → SubmissionResult | High | 4±1 | V09 | ++http, ++halctf | DS-V4-Flash | Medium | Kimi-K3 |
 
 ## [x] HAL-001 — HalCTFRuntimeSnapshot: env → graph targets + scope allowlist (real HalCTF runtime)
 
@@ -263,7 +269,29 @@ PASS). gitreins task deleted, tasks.yaml clean.
 2. Local mode keeps the `OZZGRAPH_MODEL_*` defaults unchanged.
 3. Tests: HalCTF env resolves model config from platform vars; local mode unchanged.
 
-## [ ] HAL-004 — Sidecar transport adapter (/submit + /done)
+## [x] HAL-004 — Sidecar transport adapter (/submit + /done)
+
+**Tick 2026-08-09: HAL-004 closed (judge PASS ab4d87a9, commit 66cf337).**
+Sidecar transport adapter at the process boundary: new
+`src/ozzgraph/environments/halctf/sidecar.py` (626 lines) —
+`SidecarSubmissionClient` speaks the real competition sidecar's PLAIN HTTP
+(`POST /submit` bounded `{challenge_id, flag}` + `POST /done` best-effort,
+never fatal), base URL env-first (`OZZGRAPH_SIDECAR_BASE_URL` → MCP endpoint
+origin → localhost default; `OPENAI_BASE_URL` never consulted);
+`_normalize_submission` maps every observed response form into the UNCHANGED
+`SubmissionResult` schema (deterministic precedence: status string in
+ACCEPT_STATUSES {correct,accepted,solved,success,already_solved} → explicit
+boolean verdict fields → points_awarded/points > 0; wrong-typed verdict
+fields fail loudly); bounded retries on transient failures only, privilege
+guard (OZZGRAPH_HAL_PRIVILEGED → HalPrivilegeError before the wire), events
+sidecar.failure/sidecar.done/sidecar.done_failed. Implements the existing
+`SubmissionClient` protocol — SubmissionCoordinator drives it unchanged
+(zero-line diff on coordinator + schema). Wired as
+`HalCTFEnvironment.sidecar_submission_client()` factory + halctf shim
+exports. Gate: ruff/format/mypy strict clean, 1243 tests pass (215s, +42
+new in tests/test_sidecar.py incl. coordinator integration). Judge PASS
+ab4d87a9 (4/4 criteria, tier1 lint/tests/secrets PASS). gitreins task
+deleted, tasks.yaml clean.
 
 **Source:** Verified — Tottori discovered the real `/submit` response `{"status":"correct","points_awarded":1}` and normalizes multiple accept shapes. OzzGraph drives `flag.submit` over its own JSON-RPC `HalClient`. Add a real sidecar adapter at the process boundary; keep the excellent internal `SubmissionResult` schema.
 
@@ -350,6 +378,7 @@ PASS). gitreins task deleted, tasks.yaml clean.
 | HAL-001 | HalCTFRuntimeSnapshot from env — HAL_TARGET_<NAME>_IP/_PORT + single-form + HAL_CHALLENGE_* + HAL_AGENT_MODEL/HAL_RUN_ID/HAL_TEAM_UUID + flag-like env + OPENAI_BASE_URL/MCP_ENDPOINT → real-URL graph targets + Scope.hosts/urls + ScopePolicy target_allowlist (atomic), infra exclusion (sidecar 127.0.0.1:9000/model/MCP) (judge PASS a495fe1, all 5 criteria, tier1 lint/tests/secrets PASS) | Critical | 5±1 | 9fca71a | DS-V4-Flash |
 | HAL-002 | MCP optional/fallback for HalCTF startup — OPENAI_BASE_URL out of HALCTF_ENDPOINT_CANDIDATES (model service /llm, never MCP), load_config + HalCTFEnvironment construct endpoint=None env-only, require_halctf_endpoint retained for genuine endpoint consumers, fail-loud scoped to unrecoverable config, hal_client localhost default unchanged (judge PASS d0e00cb, all 5 criteria, tier1 lint/tests/secrets PASS) | Critical | 3±1 | cbbffe5 | DS-V4-Flash |
 | HAL-003 | Model routing in HalCTF mode — Supervisor._model_routing resolves HAL_AGENT_MODEL → model id + OPENAI_BASE_URL → client base URL via HAL-001 snapshot, supervisor-owned ModelService wired into runner (closed in finally), absent platform vars degrade to OZZGRAPH_MODEL_*/defaults, local mode unchanged, runner.started logs actual base_url via ModelService.base_url property (judge PASS 469be7f1, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 3±1 | e9c421e | DS-V4-Flash |
+| HAL-004 | Sidecar transport adapter — plain-HTTP /submit + /done to 127.0.0.1:9000 (best-effort done, never fatal), env-first base URL (OZZGRAPH_SIDECAR_BASE_URL → MCP origin → localhost default), normalizes {status:correct/accepted/solved/success/already_solved, points_awarded>0, boolean verdict fields} into UNCHANGED SubmissionResult via deterministic precedence, bounded transient retries, privilege guard, sidecar.* events, implements SubmissionClient protocol (coordinator/schema zero-line diff), HalCTFEnvironment.sidecar_submission_client factory (judge PASS ab4d87a9, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 4±1 | 66cf337 | DS-V4-Flash |
 | DOCS-000 | v2 documentation pass re-run — README refreshed for completed v2 milestone (release status v1.0.0 + v2 V01–V10, v2 modules in capabilities/layout: environments/, findings.py, observations.py, security_brain.py, specialists.py, profile_store.py/profile_data/, matrix.py, benchmarks/, lab/), v2 docs added to Documentation table (CHANGES_v2.md, OBSERVATIONS.md, BENCHMARKS.md, SYNTHETIC_LAB.md), repo description + 7 topics updated via gh repo edit, formatting bar intact (judge PASS 8ae01605, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 3±1 | c436427 | DS-V4-Flash |
 | V10 | full-regression: benchmarks/ package (registry + OzzGraph harness vs plain ReAct + scripted model + scoring + deterministic report), dead-end lab target with pivot proof (hypothesis_abandoned + PIVOT, bounded turns), tool-contract test (every required_capability resolves to installed provider), benchmark CLI (--target/--react/--max-turns/--out + OZZGRAPH_BENCHMARK_* env), docs/BENCHMARKS.md (judge PASS 9ce33342, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 5±1 | 498a214 | DS-V4-Flash |
 | INT-CI-001 | E2E driver imports V09-moved flag modules from canonical homes (ozzgraph.entities / ozzgraph.environments.halctf) — fixes CI Lint failure (ruff I001 on e2e_001_driver.py, symptom of deleted ozzgraph.flags regression) | High | 1±0 | 5628bf4 | DS-V4-Flash |
