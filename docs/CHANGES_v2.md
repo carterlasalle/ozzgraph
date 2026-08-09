@@ -316,6 +316,36 @@ independently implemented components.
    > errors, and uncaught exceptions. Local mode — `ozzgraph run
    > <target>`, the benchmark CLI, and the read-only image smoke — is
    > byte-for-byte unchanged (0/130/1/3).
+   > HAL-011 (2026-08-09): halctf-real-contract regression fixture —
+   > the benchmark suite ran the kernel against synthetic lab targets
+   > + scripted models, never an actual HalCTF runtime contract;
+   > `tests/halctf_contract_fixture.py` + `tests/test_halctf_contract.py`
+   > reproduce Tottori's committed live-run contract cross-repo
+   > (kazuki005276ssh/halctf-team-tottori, the same source HAL-001 /
+   > HAL-004 verified) as REUSABLE data: the exact platform env shape
+   > (named `HAL_TARGET_FERRY_IP`/`_PORT` + `HAL_TARGET_UNDERWORLD_IP`/
+   > `_PORT` pairs, `HAL_CHALLENGE_ID=18`, `HAL_CHALLENGE_NAME` /
+   > `HAL_CHALLENGE_CATEGORY`, `HAL_AGENT_MODEL` / `HAL_RUN_ID` /
+   > `HAL_TEAM_UUID`, flag-like env values, `OPENAI_BASE_URL` /
+   > `MCP_ENDPOINT`) plus real plain-HTTP listeners (stdlib only) for
+   > the observed wire contract: the target's `GET /fetch` statuses
+   > 403/404/502/200 (the 200 path serves the challenge flag) and the
+   > sidecar's `POST /submit` -> `{"status":"correct","points_awarded":1}`
+   > with `POST /done` -> 200. A full-harness child process
+   > (`python -m ozzgraph`, the HAL-001..010 production composition)
+   > against the fixture scores and terminates COMPLETED: the model
+   > (routed from `HAL_AGENT_MODEL` + `OPENAI_BASE_URL`, HAL-003) probes
+   > the real ferry listener (no allowlist refusal — the scope carries
+   > the merged service allowlist), the 200 body delivers the flag, the
+   > supervisor hook submits it through the REAL plain-HTTP sidecar
+   > (env-first `OZZGRAPH_SIDECAR_BASE_URL`, HAL-004), the accepted
+   > submission completes `objective-halctf-flag` (HAL-006
+   > acceptance-gated — not an unexhausted complete), and the run exits
+   > 0 with `TERMINATION: completed` and `findings.json` rendered. The
+   > deterministic negative control keeps the V09 fallback honest: an
+   > env WITHOUT `HAL_TARGET_*` services yields the bare challenge id as
+   > the target address, and a non-allowlisted policy refuses the same
+   > probes the fixture's allowlist admits.
 10. `v2/full-regression` — real benchmark suite across the model matrix.
     > V10 (2026-08-08): implemented — `src/ozzgraph/benchmarks/` +
     > `ozzgraph benchmark` CLI + docs/BENCHMARKS.md. The full-regression

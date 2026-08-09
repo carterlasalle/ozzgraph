@@ -86,6 +86,29 @@ All lab servers bind `127.0.0.1` only, so the harness's fail-closed
 scope policy blocks them unless `OZZGRAPH_TARGET_ALLOWLIST` includes
 the loopback address — exactly as it would for any authorized target.
 
+## HalCTF Real-Contract Fixture (HAL-011)
+
+The lab targets above are synthetic; `tests/halctf_contract_fixture.py`
+is the real-contract counterpart (HAL-011). It reproduces the ACTUAL
+HalCTF runtime contract verified cross-repo from the
+halctf-team-tottori deployment's committed live-run logs — the same
+source as HAL-001 (target snapshot) and HAL-004 (sidecar transport) —
+as reusable data: the exact platform-injected env shape (named
+`HAL_TARGET_FERRY_IP`/`_PORT` and `HAL_TARGET_UNDERWORLD_IP`/`_PORT`
+pairs, `HAL_CHALLENGE_ID=18`, challenge metadata, runtime identity,
+`OPENAI_BASE_URL`, `MCP_ENDPOINT`) plus real plain-HTTP listeners
+(`HalctfTargetServer` for the observed `GET /fetch` 403/404/502/200
+surface with the flag on the 200 path, `ContractSidecarServer` for the
+observed `POST /submit` -> `{"status":"correct","points_awarded":1}`,
+`ScriptedModelServer` for the OpenAI-compatible `/v1/chat/completions`
+endpoint). `tests/test_halctf_contract.py` drives the FULL harness as
+a real `python -m ozzgraph` child process against the fixture and
+proves it scores and terminates COMPLETED (exit 0, accepted sidecar
+submission, `objective-halctf-flag` completed, `findings.json`
+written) — not unexhausted-complete (HAL-006) and not allowlist-
+refused. Like the lab, the fixture is stdlib-only, loopback-only, and
+ephemeral-port: no new dependencies, no Docker, no public internet.
+
 ## Design Contract
 
 - **Determinism**: same target name → same flag, same responses, same
