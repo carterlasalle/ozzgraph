@@ -8,6 +8,30 @@ PR = one board task. Decompose each PR with `coding-hermes-model-router` before
 spawning a worker. Follow AGENTS.md invariants + PR scope rules; bridge every
 commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
+**Tick 2026-08-10: E2E-001 run #2 closed (judge PASS a1777f88 — verdict
+committed, commit f192236 — verified this tick). E2E cycle refreshed against
+the v2 kernel (V01–V10 + HAL-001..HAL-011): the crypto flag-leak sweep in
+`e2e_001_driver.py` was asserting the PRE-FLAGLEAK-001 contract (no file may
+contain raw flag) and FAILed falsely — the fresh forensic proved FLAGLEAK-001
+is fixed (a667733): run-only events carry flag_sha256+flag_length digests,
+raw flag retained ONLY in replay-required locations (graph.entity_created in
+actions.jsonl, artifact content file, graph.db, replay.db). Worker reworked
+the sweep to assert the post-fix contract (allowlist: replay-required set;
+run-only events must carry digests; closed allowlist — rogue files still
+FAIL), re-ran driver + forensic fresh: **66 PASS / 0 FAIL / 1 UNTESTABLE**
+(NUL-byte flag UNTESTABLE by design, OS-level execve guard), sweep PASS,
+forensic run_events_with_flag_not_replay_required: []. test-state.toml
+updated (last_full_test 2026-08-10T09:28:00Z, crypto counter 8→9, FLAGLEAK-001
+known_gap → RESOLVED with evidence); e2e-output/tasks.md refreshed with the
+new run summary + FLAGLEAK-001 resolution section; _index.md counts
+consistent. No new gaps found this run. Worker (deepseek-v4-flash @
+openrouter) committed f192236 (pre-commit guard PASS — full suite in hook) +
+pushed (origin/main..HEAD=0 verified). Judge PASS a1777f88 (4/4 criteria,
+tier1 lint/tests/secrets PASS — evaluator re-ran ruff/mypy/full pytest 1306
+passed fresh; verdict committed on gitreins branch; judge re-ran the driver
+writing stray raw_results.json — reverted, worktree clean). gitreins task
+deleted, tasks.yaml clean. Board: only NEVER-DONE remains → cooldown 43200s.**
+
 **Tick 2026-08-08: DOCS-000 closed (judge PASS 8ae01605, commit c436427 —
 verified this tick; worker committed + pushed, guards PASS). v2 documentation
 pass complete: README refreshed (v2 milestone status, v2 modules in
@@ -224,7 +248,8 @@ non-same-name test files; docs complete). Board idle → cooldown 43200s.**
 > state. gitreins task deleted, tasks.yaml clean. HAL-003..HAL-011 pending →
 > cooldown stays 900s. Next: HAL-003 (model routing).
 
-> E2E-001 tick ran 2026-08-07: 65P/1F/1U, finding FLAGLEAK-001 fixed (a667733, judge PASS) — see Completed.
+> E2E-001 run #1 (2026-08-07): 65P/1F/1U, finding FLAGLEAK-001 fixed (a667733, judge PASS) — see Completed.
+> E2E-001 run #2 (2026-08-10): 66P/0F/1U against the v2 kernel (V01–V10 + HAL-001..HAL-011) — FLAGLEAK-001 verified fixed, flag-leak sweep reworked to post-fix contract, no new gaps (f192236, judge PASS a1777f88).
 
 **Tick 2026-08-07: DOCS-000 done — documentation gate PASS (judge 1913c392).**
 CONTRIBUTING.md (149 lines: toolchain, gates, PR workflow) + SECURITY.md (187
