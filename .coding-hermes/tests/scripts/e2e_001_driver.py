@@ -859,22 +859,67 @@ async def audit_cycle(state_dir: Path, event_types: list[str]) -> None:
 
 async def crypto_cycle(server: mcp_fake.FakeMcpServer, state_dir: Path, target_flag: str) -> None:
     """CRYPTO: flag-leak sweep + provenance + privilege + key hygiene."""
-    hits: list[str] = []
+    # Post-FLAGLEAK-001 contract (fixed a667733): the raw flag is
+    # INTENTIONALLY retained ONLY in replay-required locations — the
+    # graph.entity_created event in actions.jsonl, the content-addressed
+    # artifact content file, graph.db entity payloads, and replay.db.
+    # Run-only event types (flags.candidate_found, submission.attempted,
+    # submission.accepted) carry flag_sha256+flag_length digests, never the
+    # raw flag. Any OTHER file/event carrying the raw flag is a leak.
+    run_only_types = {FLAGS_CANDIDATE_FOUND, SUBMISSION_ATTEMPTED, SUBMISSION_ACCEPTED}
+    leaks: list[str] = []
     for path in sorted(state_dir.rglob("*")):
         if not path.is_file():
             continue
+        rel = path.relative_to(state_dir)
         try:
             data = path.read_bytes()
         except OSError:
             continue
-        if target_flag.encode() in data:
-            hits.append(str(path.relative_to(state_dir)))
+        if target_flag.encode() not in data:
+            continue
+        if path.name == "actions.jsonl":
+            # allowed only for graph.* (replay-required) events; run-only
+            # events must NOT carry the raw flag
+            flagged = []
+            for line in data.decode().splitlines():
+                ev = json.loads(line)
+                if target_flag in json.dumps(ev):
+                    flagged.append(ev["event_type"])
+            bad = sorted(t for t in flagged if t in run_only_types)
+            if bad:
+                leaks.append(f"actions.jsonl run-only events with raw flag: {bad}")
+        elif path.name in ("graph.db", "replay.db"):
+            continue  # replay-required stores
+        elif rel.parent.name == "artifacts" and path.name != "artifacts.json":
+            continue  # content-addressed artifact content file (replay-required)
+        else:
+            leaks.append(str(rel))
+
+    # run-only events must carry digests, never the raw flag
+    with (state_dir / "actions.jsonl").open() as handle:
+        lines = [json.loads(line) for line in handle]
+    run_only_ok = True
+    run_only_summary: list[str] = []
+    for ev in lines:
+        if ev["event_type"] not in run_only_types:
+            continue
+        payload = ev["payload"]
+        ok = (
+            "flag_sha256" in payload
+            and "flag_length" in payload
+            and target_flag not in json.dumps(payload)
+        )
+        run_only_ok = run_only_ok and ok
+        run_only_summary.append(f"{ev['event_type']}({len(payload)} fields)")
 
     check(
         "crypto",
         "flag_leak_sweep_state_dir",
-        "PASS" if not hits else "FAIL",
-        f"files containing raw flag: {hits or 'none'}",
+        "PASS" if not leaks and run_only_ok else "FAIL",
+        f"raw-flag leaks outside replay-required set: {leaks or 'none'}; "
+        f"run-only events {run_only_summary or 'none'} carry flag_sha256+flag_length "
+        f"digests, no raw flag: {run_only_ok}",
     )
 
     # captured CLI outputs (collected in RESULTS details are redacted; re-run a few)

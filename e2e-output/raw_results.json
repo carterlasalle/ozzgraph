@@ -11,8 +11,8 @@
       "UNTESTABLE": 0
     },
     "crypto": {
-      "FAIL": 1,
-      "PASS": 8,
+      "FAIL": 0,
+      "PASS": 9,
       "UNTESTABLE": 0
     },
     "f2b": {
@@ -93,7 +93,7 @@
       "status": "PASS"
     },
     {
-      "detail": "live=f532ddb4db9ec85f786d9254de5aac2e467b6a693ae565a3cfd9412b64ce15b3, replay=f532ddb4db9ec85f786d9254de5aac2e467b6a693ae565a3cfd9412b64ce15b3, equal=True",
+      "detail": "live=1b8f7a20248ab2087c652e003a96e7e4e3fa40fa194316fa2cb95ccf8e470cb2, replay=1b8f7a20248ab2087c652e003a96e7e4e3fa40fa194316fa2cb95ccf8e470cb2, equal=True",
       "dim": "b2f",
       "name": "replay_hash_byte_for_byte",
       "status": "PASS"
@@ -381,10 +381,10 @@
       "status": "PASS"
     },
     {
-      "detail": "files containing raw flag: ['actions.jsonl', 'artifacts/8956b9071e1471a171c6e384d0dcd3c4a86d0fb5d08b51b787e29ea746ac8d1a', 'graph.db', 'replay.db']",
+      "detail": "raw-flag leaks outside replay-required set: none; run-only events ['flags.candidate_found(5 fields)', 'submission.attempted(5 fields)', 'submission.accepted(7 fields)'] carry flag_sha256+flag_length digests, no raw flag: True",
       "dim": "crypto",
       "name": "flag_leak_sweep_state_dir",
-      "status": "FAIL"
+      "status": "PASS"
     },
     {
       "detail": "flag in stdout/stderr: False",

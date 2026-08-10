@@ -6,35 +6,40 @@ Infrastructure dir: `.coding-hermes/tests/` (scaffold created by TEST-INFRA-001)
 
 ## What Is Tested
 
-- **879 pytest unit/integration tests** under `tests/`, covering kernel
+- **1306 pytest unit/integration tests** under `tests/`, covering kernel
   components in isolation: halctl CLI, state graph (aiosqlite), executor
   turn loop, planner, evaluator, artifact store, model client, flags /
-  submissions, hints, bootstrap, events, budgets, policy, replay.
+  submissions, hints, bootstrap, events, budgets, policy, replay, workers.
+- **E2E-001 driver** (`.coding-hermes/tests/scripts/e2e_001_driver.py`): runs
+  the REAL kernel end-to-end (f2b/b2f/negative/crypto/wiring/audit) against
+  `tests/mcp_fake.py` + `ozzgraph.lab` "hidden-routes"; 66 PASS / 0 FAIL /
+  1 UNTESTABLE on 2026-08-10. Evidence: `e2e-output/raw_results.json`.
 - **CI docker gate**: non-root-user + startup-evidence assertions.
 - **Release DoD rehearsal**: docs/RELEASE.md maps every DoD item to
   evidence (19/19 PASS at v1.0.0).
 
 ## What Is NOT Tested
 
-**Zero structured E2E testing infrastructure existed before TEST-INFRA-001.**
-All eight testing dimensions (f2b, b2f, negative, visual, crypto, wiring,
-structure, audit) have coverage **0** — the 879 tests are component-level
-unit/integration only; no write-path, read-path, wire, render, or leak
-verification has ever been run end-to-end. See `test-state.toml` for the
-full untested-path and known-gap inventory.
+Component-level tests are unit/integration only. End-to-end coverage comes
+from the E2E-001 driver suite (see `test-state.toml` for the untested-path
+and known-gap inventory): `visual` and `structure` dimensions have coverage
+0 — no render/browser or dedicated schema-shape checks exist yet.
 
 ## Coverage by Dimension
 
+Counters reflect the latest E2E-001 driver run (2026-08-10, 66 PASS / 0 FAIL
+/ 1 UNTESTABLE; see `e2e-output/raw_results.json`).
+
 | Dimension | Coverage | Status | Report dir |
 |-----------|----------|--------|------------|
-| f2b (write paths) | 0 | ⚠️ untested | `f2b/` |
-| b2f (read paths) | 0 | ⚠️ untested | `b2f/` |
-| negative (boundary) | 0 | ⚠️ untested | `negative/` |
+| f2b (write paths) | 10 | ✅ e2e driver | `f2b/` |
+| b2f (read paths) | 5 | ✅ e2e driver | `b2f/` |
+| negative (boundary) | 34 | ✅ e2e driver | `negative/` |
 | visual (render) | 0 | ⚠️ untested | `b2f/render/` (see note) |
-| crypto (secrets/leaks) | 0 | ⚠️ untested | `crypto/` |
-| wiring (cross-module) | 0 | ⚠️ untested | `wiring/` |
+| crypto (secrets/leaks) | 9 | ✅ e2e driver | `crypto/` |
+| wiring (cross-module) | 3 | ✅ e2e driver | `wiring/` |
 | structure (schema/shape) | 0 | ⚠️ untested | `structure/` |
-| audit (log/event trail) | 0 | ⚠️ untested | `audit/` |
+| audit (log/event trail) | 5 | ✅ e2e driver | `audit/` |
 
 **Note on `visual/`:** ozzgraph is terminal-native (CLI, single-JSON-document
 stdout contract, TTY tables) — there is **no standalone `visual/` directory**.
