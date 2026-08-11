@@ -8,6 +8,48 @@ PR = one board task. Decompose each PR with `coding-hermes-model-router` before
 spawning a worker. Follow AGENTS.md invariants + PR scope rules; bridge every
 commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
+**Tick 2026-08-11: INT-CI-002 closed (judge PASS d366649, commit d470784 — verified this tick).**
+CI Format failure on main fixed: run 31470017479 (beb0e05 fix(findings)) failed ONLY the
+Format job (`ruff format --check .` — findings.py:151 multi-line raise unformatted; Lint/
+Test/Type/Docker all green). Mechanical fix: `uv run ruff format src/ozzgraph/findings.py`
+(1 insertion / 3 deletions, no behavior change), pre-verified 16 focused tests
+(test_e2e_run + test_objective_acceptance), committed d470784 (Tier-1 guard PASS — full
+suite in hook), pushed (origin/main..HEAD=0 verified), CI re-run on d470784: CI +
+publish-docker both SUCCESS. Judge PASS d366649 (2/2 criteria with real command output,
+tier1 lint/tests/secrets PASS; verdict committed on gitreins branch). gitreins task
+deleted, tasks.yaml clean.
+
+**Backfill — board-staleness (git-history cross-reference):** 4 commits since the
+2026-08-10 NEVER-DONE tick were never recorded on the board — verified + recorded this
+tick: (a) PROFILE-FREE-TIER (80a3b21): free-tier model support — JSON-only profiles
+(openrouter.toml/nemotron.toml/gemma.toml in src/ozzgraph/profile_data/),
+protocol-agnostic OUTPUT_CONTRACT (runner.py:280), skill-card advertisement,
+FAMILY_PREFIXES incl. nemotron/nvidia/openrouter/google/gemma (profiles.py:95). Judge
+PASS c7efc25 (verdict c029caf5). Stale gitreins task (status=complete, never deleted) —
+criteria verified in code this tick, then deleted. (b) Release v2.1.0 (d051cfa + a191d10
+uv.lock sync) — CI green on a191d10. (c) fix(findings) (beb0e05): renders every validated
+finding (loop over ALL CONFIRMED outcomes instead of next(); FindingStore.save reloads the
+on-disk document and appends instead of starting from an empty in-memory list — Juice Shop
+fleet batch rendered 2 findings not 1; full suite 1307 passed). Its CI Format failure →
+INT-CI-002 this tick.
+
+**NEVER-DONE 14-point audit (fresh tool output this tick):** (1) SPEC — docs/ 17+adr vs
+src spot-checked, PASS; (2) DOC — README/CONTRIBUTING/SECURITY/AGENTS.md + 16 docs
+present, no LICENSE required (pyproject declares none), PASS; (3) TEST — 63 test files /
+62 src modules, sample import coverage verified (findings 2, profile_store 1, profiles 14,
+specialists 3 test files), CI Test job green, PASS; (4) DEPS — 4 outdated ALL transitive
+(ast-serialize/librt via mypy, pydantic-core 2.48.0 via pydantic pin, typing-inspection
+via pydantic), not actionable, PASS; (5) PITFALL — 0 TODO/FIXME/HACK/XXX, 0 stubs, PASS;
+(6) PERF — benchmarks/ package + tests/test_benchmarks.py, PASS; (7) ENDPOINTS — CLI-only,
+`ozzgraph --help` works, PASS; (8) CI/CD — FAILURE found on beb0e05 (Format job, not
+created by this tick) → INT-CI-002 fixed; d470784 CI green, PASS; (9) DUCKBRAIN — healed:
+v2.1.0 milestone entry written + recall-verified (a049dcc5), PASS; (10) QUALITY — .gitignore
+complete, worktree clean, PASS; (11) WIRING — ozzgraph + halctl console scripts registered
+and reachable, PASS; (12) USABILITY — covered by E2E-001 run #2 (66P/0F/1U), PASS; (13) E2E
+— run #2 two ticks ago, not due (5-10 ticks), PASS; (14) GITREINS-JUDGE —
+check-gitreins-judge.py PASS (model=deepseek-v4-flash). 0 actionable gaps → board idle
+(only E2E-001 + NEVER-DONE) → cooldown 43200s.
+
 **Tick 2026-08-10: NEVER-DONE 14-point audit — 0 actionable gaps, DuckBrain sync healed.** Board empty (only E2E-001 — ran #2 this morning, not due — and NEVER-DONE remain) → picked up NEVER-DONE per board skill. Ran all 14 checks with fresh tool output this tick: (1) SPEC alignment — specs in docs/ (17 + adr/), spot-checked EnvironmentAdapter/AutonomousRunner/SubmissionClient/HalCTFEnvironment/LocalEnvironment all present in src, PASS; (2) DOC coverage — README (13.6K, 12 badge/nav/mermaid marks)/CONTRIBUTING/SECURITY/AGENTS.md all exist, no LICENSE required (pyproject declares no license field), PASS; (3) TEST gaps — 59 test files / 62 src modules, full suite 1306 passed (E2E + judge re-runs this morning), PASS; (4) DEPS — 4 outdated (ast-serialize/librt via mypy, pydantic-core/typing-inspection via pydantic) ALL transitive, not actionable, PASS; (5) PITFALL — 0 TODO/FIXME/HACK/XXX, 6 `pass` sites all legitimate exception handlers (signal fallback, parse-error, ipaddress validation, kill-race), no stubs, PASS; (6) PERF — benchmarks exist (test_benchmarks.py, benchmarks/ V10), PASS; (7) ENDPOINTS — CLI-only, `ozzgraph --help` works, `ozzgraph run` E2E-verified this morning, PASS; (8) CI/CD — `gh run list` 3/3 success on main (incl. 6eec6be + f192236), PASS; (9) DUCKBRAIN — GAP: v2 kernel (V01–V10) + HAL-001..011 milestone knowledge absent (last entry 2026-08-07-idle-1; architecture-rules dated 2026-08-06) → self-healed: wrote /projects/ozzgraph/tick/2026-08-10-v2-hal-milestones (domain=event, full v2 + HalCTF contract + E2E run #2 summary), recall-verified id ad244253, PASS; (10) QUALITY — .gitignore covers .coverage/__pycache__/.pytest_cache/.venv, worktree clean, PASS; (11) WIRING — console scripts ozzgraph+halctl registered, CLI reachable, PASS; (12) USABILITY — covered by E2E-001 run #2 (66P/0F/1U) this morning, PASS; (13) E2E tick — ran #2 today, next due in 5-10 ticks, PASS; (14) GITREINS-JUDGE — check-gitreins-judge.py PASS (model=deepseek-v4-flash). No new board tasks created. Scheduler: ozzgraph cooldown_s=43200 enabled=true verified via API (idle, matches expectation — no fix needed). GitReins: ND-AUDIT-2026-08-10 created → judge → deleted. Cooldown stays 43200s.**
 
 **Tick 2026-08-10: E2E-001 run #2 closed (judge PASS a1777f88 — verdict
@@ -641,6 +683,8 @@ tasks.yaml clean.
 
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
+| INT-CI-002 | Fix CI Format failure on main — findings.py:151 unformatted multi-line raise (beb0e05 broke the CI Format job only; Lint/Test/Type/Docker green); mechanical ruff format, CI re-run green on d470784 (judge PASS d366649, 2/2 criteria, tier1 lint/tests/secrets PASS) | High | 1±0 | d470784 | DS-V4-Flash |
+| PROFILE-FREE-TIER | Free-tier model support — JSON-only profiles (openrouter/nemotron/gemma in profile_data/), protocol-agnostic OUTPUT_CONTRACT, skill-card advertisement, FAMILY_PREFIXES nemotron/nvidia/openrouter/google/gemma; part of release v2.1.0 (d051cfa + a191d10); backfilled from board-staleness (judge PASS c7efc25, verdict c029caf5, all criteria) | Medium | 3±1 | 80a3b21 | DS-V4-Flash |
 | HAL-011 | halctf-real-contract regression fixture — Tottori's exact live-run env shapes (named HAL_TARGET_*_IP/PORT pairs, HAL_CHALLENGE_ID=18, metadata, HAL_AGENT_MODEL/RUN_ID/TEAM_UUID, flag-like env, OPENAI_BASE_URL, MCP_ENDPOINT) + observed wire responses (/submit {"status":"correct","points_awarded":1}, /fetch 403/404/502/200) as real stdlib plain-HTTP listeners; full-harness subprocess E2E scores/COMPLETEs (exit 0, TERMINATION: completed, accepted submission, objective-halctf-flag completed, findings.json+report.json), negative control (empty allowlist refuses fail-closed, challenge-id-only env keeps V09 bare-id fallback), docs CHANGES_v2 + SYNTHETIC_LAB (judge PASS f213c71, all 3 criteria, tier1 lint/tests/secrets PASS) | High | 4±1 | d4fe872 | DS-V4-Flash |
 | HAL-010 | Wire SpecialistFleet into Supervisor production composition — OZZGRAPH_SPECIALISTS_ENABLED toggle (default OFF, byte-for-byte unchanged), Supervisor.run composes SpecialistFleet(artifacts, event_log, run_id, policy, max_workers, state_dir) into AutonomousRunner(specialists=...), runner batch gate dispatches with ZERO LLM calls (judge PASS 8d303648, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 4±1 | a582b25 | DS-V4-Flash |
 | HAL-009 | Tottori exploitation lessons ported into skill cards — 8 new cards (exploit_sqli_enumeration multi-DB, exploit_jwt PEM-as-HMAC, exploit_ssrf IP-obfuscation, exploit_xxe, exploit_deserialization, exploit_protocol_reversing, forensics_file_analysis, exploit_cloud_iam), deterministic TechniqueClassifier (category string → ordered skill_id subset, unknown→default, loud on unregistered), SkillRegistry.list_for_category lazy summaries, router skills_for(phase, category=None) wiring, docs (judge PASS 9ab0a5c9, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 4±1 | de5d9a4 | DS-V4-Flash |
