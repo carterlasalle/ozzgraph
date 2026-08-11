@@ -284,6 +284,10 @@ OUTPUT_CONTRACT = (
     "of the advertised skills. The skill is selected by the harness from your "
     "phase and plan, so you only supply the command. If you have no action to "
     "take, respond with plain reasoning instead.\n"
+    "NEVER repeat an action from RECENT ACTIONS: anything already attempted "
+    "(OK or REJECTED) is rejected again as a duplicate and wastes the budget. "
+    "If your previous command was rejected or succeeded, propose a DIFFERENT "
+    "one — a new path, a new parameter, a new technique — or reason instead.\n"
     "Follow the OUTPUT FORMAT above exactly — do not invent a different format."
 )
 
@@ -1021,7 +1025,13 @@ class AutonomousRunner:
             ScopeViolationError,
             ValidationError,
         ) as exc:
-            self._record_turn_failure("executor", exc, phase=route.phase.value, plan_id=plan_id)
+            self._record_turn_failure(
+                "executor",
+                exc,
+                phase=route.phase.value,
+                plan_id=plan_id,
+                action=str(model_output.get("action", "")),
+            )
             return None
         except Exception as exc:  # noqa: BLE001 - unexpected kernel error, rule #9
             return self._record_turn_failure(
@@ -1905,12 +1915,19 @@ class AutonomousRunner:
         *,
         phase: str | None = None,
         plan_id: str | None = None,
+        action: str = "",
     ) -> RunnerStatus | None:
         """Record a loud, structured failure for one turn stage.
 
         Returns a terminal :class:`RunnerStatus.FAILED` for unexpected
         kernel errors (fail loudly, AGENTS.md rule #9) and None for the
         well-understood failures the loop continues past.
+
+        ``action`` (when known) is the rejected command text — the
+        model MUST see the actual command that was rejected (e.g. a
+        duplicate fingerprint), not just a fingerprint hash, or it
+        cannot tell which proposal failed and re-proposes the same
+        command forever.
         """
         self._append(
             RUNNER_ACTION_FAILED,
@@ -1920,10 +1937,13 @@ class AutonomousRunner:
                 "plan_id": plan_id,
                 "error_type": type(exc).__name__,
                 "message": str(exc),
+                **({"action": action} if action else {}),
             },
         )
+        action_hint = f" :: {action}" if action else ""
         self._recent_actions.append(
-            f"[{phase or '?'}] REJECTED {type(exc).__name__}: {_bounded(str(exc), 200)}"
+            f"[{phase or '?'}] REJECTED {type(exc).__name__}{action_hint}: "
+            f"{_bounded(str(exc), 200)}"
         )
         if isinstance(exc, (ExecutorError, ScopeViolationError, ValidationError)):
             return None

@@ -405,6 +405,17 @@ independently implemented components.
    > exhausted plan. Default (off) is byte-for-byte unchanged. Verified
    > on Juice Shop: a 25-min exhaustive run rendered 4 findings across
    > 7 executed commands vs 1-2 in default mode.
+   > NO-DUPLICATE-FEEDBACK (2026-08-11): the model's rejection feedback
+   > now names the rejected COMMAND, not just a fingerprint hash.
+   > Previously `_record_turn_failure` rendered only the exception
+   > message (`duplicate action rejected: fingerprint 85f680...`), so
+   > the model could not tell WHICH proposal was rejected and
+   > re-proposed the same command forever (observed: 94 duplicate
+   > rejections in one exhaustive run). The rejected action text now
+   > appears in the `RECENT ACTIONS` transcript tail, and OUTPUT_CONTRACT
+   > carries an explicit NEVER-repeat rule — anything already attempted
+   > (OK or REJECTED) must not be proposed again; propose a different
+   > path, parameter, or technique instead.
 10. `v2/full-regression` — real benchmark suite across the model matrix.
     > V10 (2026-08-08): implemented — `src/ozzgraph/benchmarks/` +
     > `ozzgraph benchmark` CLI + docs/BENCHMARKS.md. The full-regression
