@@ -148,9 +148,7 @@ class FindingStore:
         try:
             raw = json.loads(self._path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            raise FindingStoreError(
-                f"existing findings document is unreadable: {exc}"
-            ) from exc
+            raise FindingStoreError(f"existing findings document is unreadable: {exc}") from exc
         if not isinstance(raw, list):
             raise FindingStoreError(
                 f"existing findings document is not a JSON array: {type(raw).__name__}"
