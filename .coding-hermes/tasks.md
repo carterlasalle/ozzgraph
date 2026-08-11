@@ -8,6 +8,38 @@ PR = one board task. Decompose each PR with `coding-hermes-model-router` before
 spawning a worker. Follow AGENTS.md invariants + PR scope rules; bridge every
 commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
+**Tick 2026-08-11: OZZGRAPH-EXHAUSTIVE + RECON-FEEDBACK backfilled — git-history
+cross-reference (idle-protocol step 1) found 2 unrecorded repo-owner commits
+(e6c5888, bad90a8): never on the board, never judged by gitreins Tier 2.
+Verified in code this tick: config.exhaustive from OZZGRAPH_EXHAUSTIVE env
+(default off, byte-for-byte unchanged), local env
+verdict_satisfies_objectives → not(exhaustive), planner skips
+promoted/abandoned hypotheses + NoPlan when none remain open, runner rejection
+feedback renders `REJECTED DuplicateFingerprintError :: <command>` in the
+transcript tail + OUTPUT_CONTRACT NEVER-repeat rule. Gates: ruff
+format/check clean, 58 focused tests pass (test_e2e_run /
+test_objective_acceptance / test_config), CI 3/3 success on main (both
+commits). Judge PASS c303cf98 (5/5 criteria with real command output: ruff
+check/format clean, mypy 62 files, full suite 1307 passed in 260.93s; verdict
+committed on gitreins branch). gitreins task created → completed → deleted,
+tasks.yaml clean. NEVER-DONE audit (fresh tool output): (1) SPEC — docs/ vs
+src spot-check, 2 commits touch config/local/planner/runner — all present,
+PASS; (2) DOC — README/CONTRIBUTING/SECURITY/AGENTS.md + 16 docs, PASS; (3)
+TEST — CI Test job green on both commits (gh run list 3/3) + 58 focused tests
+local, PASS; (4) DEPS — same 4 outdated ALL transitive (ast-serialize/librt
+via mypy, pydantic-core 2.48.0 via pydantic pin, typing-inspection via
+pydantic), not actionable, PASS; (5) PITFALL — 0 TODO/FIXME/HACK/XXX, 6 pass
+sites (same legitimate set), PASS; (6) PERF — benchmarks/ present, PASS; (7)
+ENDPOINTS — CLI-only unchanged, PASS; (8) CI/CD — 3/3 success on main, PASS;
+(9) DUCKBRAIN — wrote + recall-verified
+2026-08-11-exhaustive-rejection-feedback (018c1baf), PASS; (10) QUALITY —
+worktree clean, .gitignore complete, PASS; (11) WIRING — ozzgraph + halctl
+console scripts unchanged, PASS; (12) USABILITY — covered by E2E-001 run #2
+(66P/0F/1U) 2026-08-10, PASS; (13) E2E — ran 2 ticks ago, not due, PASS; (14)
+GITREINS-JUDGE — check-gitreins-judge PASS (deepseek-v4-flash). 0 actionable
+gaps → board idle (only E2E-001 + NEVER-DONE) → cooldown 43200s (verified,
+no reversion).
+
 **Tick 2026-08-11: INT-CI-002 closed (judge PASS d366649, commit d470784 — verified this tick).**
 CI Format failure on main fixed: run 31470017479 (beb0e05 fix(findings)) failed ONLY the
 Format job (`ruff format --check .` — findings.py:151 multi-line raise unformatted; Lint/
@@ -684,6 +716,8 @@ tasks.yaml clean.
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
 | INT-CI-002 | Fix CI Format failure on main — findings.py:151 unformatted multi-line raise (beb0e05 broke the CI Format job only; Lint/Test/Type/Docker green); mechanical ruff format, CI re-run green on d470784 (judge PASS d366649, 2/2 criteria, tier1 lint/tests/secrets PASS) | High | 1±0 | d470784 | DS-V4-Flash |
+| OZZGRAPH-EXHAUSTIVE | Exhaustive local assessment — OZZGRAPH_EXHAUSTIVE env (default off, byte-for-byte unchanged) → config.exhaustive; local env verdict_satisfies_objectives returns not(exhaustive) (never auto-completes on COMPLETE); planner skips promoted/abandoned hypotheses + NoPlan when none remain open; runner wires config.exhaustive into planner; Juice Shop: 1-2 findings default vs 4 findings in 25-min run (judge PASS c303cf98, 5/5 criteria, tier1 lint/tests/secrets PASS; backfilled via git-history cross-reference) | Medium | 3±1 | e6c5888 | DS-V4-Flash |
+| RECON-FEEDBACK | Rejection feedback tells the model WHICH command was rejected — _record_turn_failure renders `REJECTED DuplicateFingerprintError :: <command>` in RECENT ACTIONS transcript tail; executor passes model_output['action'] through; OUTPUT_CONTRACT NEVER-repeat rule; live: 94→24 duplicate rejections, 7→17 distinct commands, 4→7 findings in same budget (judge PASS c303cf98 — judged together with OZZGRAPH-EXHAUSTIVE, same-file exception on runner.py, shared root cause) | Medium | 2±1 | bad90a8 | DS-V4-Flash |
 | PROFILE-FREE-TIER | Free-tier model support — JSON-only profiles (openrouter/nemotron/gemma in profile_data/), protocol-agnostic OUTPUT_CONTRACT, skill-card advertisement, FAMILY_PREFIXES nemotron/nvidia/openrouter/google/gemma; part of release v2.1.0 (d051cfa + a191d10); backfilled from board-staleness (judge PASS c7efc25, verdict c029caf5, all criteria) | Medium | 3±1 | 80a3b21 | DS-V4-Flash |
 | HAL-011 | halctf-real-contract regression fixture — Tottori's exact live-run env shapes (named HAL_TARGET_*_IP/PORT pairs, HAL_CHALLENGE_ID=18, metadata, HAL_AGENT_MODEL/RUN_ID/TEAM_UUID, flag-like env, OPENAI_BASE_URL, MCP_ENDPOINT) + observed wire responses (/submit {"status":"correct","points_awarded":1}, /fetch 403/404/502/200) as real stdlib plain-HTTP listeners; full-harness subprocess E2E scores/COMPLETEs (exit 0, TERMINATION: completed, accepted submission, objective-halctf-flag completed, findings.json+report.json), negative control (empty allowlist refuses fail-closed, challenge-id-only env keeps V09 bare-id fallback), docs CHANGES_v2 + SYNTHETIC_LAB (judge PASS f213c71, all 3 criteria, tier1 lint/tests/secrets PASS) | High | 4±1 | d4fe872 | DS-V4-Flash |
 | HAL-010 | Wire SpecialistFleet into Supervisor production composition — OZZGRAPH_SPECIALISTS_ENABLED toggle (default OFF, byte-for-byte unchanged), Supervisor.run composes SpecialistFleet(artifacts, event_log, run_id, policy, max_workers, state_dir) into AutonomousRunner(specialists=...), runner batch gate dispatches with ZERO LLM calls (judge PASS 8d303648, all 4 criteria, tier1 lint/tests/secrets PASS) | High | 4±1 | a582b25 | DS-V4-Flash |
