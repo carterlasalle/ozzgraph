@@ -458,7 +458,7 @@ class AutonomousRunner:
         self._inventory = inventory if inventory is not None else ToolInventory()
         self._inventory.run()
         self._router = router if router is not None else PhaseRouter()
-        self._planner = planner if planner is not None else Planner()
+        self._planner = planner if planner is not None else Planner(exhaustive=config.exhaustive)
         # V06 security brain: opportunity-driven decisions each turn.
         # The strategic planner shares the runner's deterministic
         # planner so its binding plan always matches the plan the
@@ -556,6 +556,15 @@ class AutonomousRunner:
             if progress.verdict is ProgressVerdict.FINISH:
                 return await self._terminate(RunnerStatus.COMPLETED, progress.reason)
             if progress.verdict is ProgressVerdict.PIVOT:
+                # All CURRENT hypotheses are resolved but the objective
+                # is not marked complete. Exhaustive mode
+                # (OZZGRAPH_EXHAUSTIVE=true) deliberately does NOT
+                # terminate here: the run keeps exploring — new
+                # observations form new hypotheses, the fleet validates
+                # them, and findings accumulate until the budget is
+                # spent (the whole box gets assessed, not just the
+                # first finding). Default mode keeps the pre-existing
+                # PIVOT behavior byte-for-byte.
                 self._append(BRAIN_PROGRESS_EVALUATED, progress.model_dump())
             outcome = await self._one_turn()
             if outcome is not None:

@@ -67,6 +67,7 @@ MAX_HINTS_ENV = "OZZGRAPH_MAX_HINTS"
 # dispatches a bounded parallel micro-agent batch; the default (off)
 # keeps the V06 model path byte-for-byte unchanged.
 SPECIALISTS_ENABLED_ENV = "OZZGRAPH_SPECIALISTS_ENABLED"
+EXHAUSTIVE_ENV = "OZZGRAPH_EXHAUSTIVE"
 
 # Scope-policy knobs (PR10): command-length limit, target allowlist,
 # and permitted command families. Defaults come from ozzgraph.policy so
@@ -188,6 +189,16 @@ DEFAULT_MAX_HINTS = 1
 # it in is a supervisor-level composition decision (HAL-010), and the
 # default runner keeps the V06 model path.
 DEFAULT_SPECIALISTS_ENABLED = False
+
+#: Exhaustive local assessment (PROVE-ALL-FINDINGS): off by default so
+#: the completion contract stays byte-for-byte unchanged — a COMPLETE
+#: verdict satisfies the local objective. When on
+#: (``OZZGRAPH_EXHAUSTIVE=true``), the local environment requires EVERY
+#: hypothesis to be resolved (promoted with its finding, or abandoned)
+#: before the objective completes, so the run keeps exploiting the
+#: target until the whole box is assessed instead of stopping at the
+#: first validated finding.
+DEFAULT_EXHAUSTIVE = False
 
 # Safe default flag pattern: `flag{...}` with no braces or whitespace
 # inside (docs/TECHNICAL_REQUIREMENTS.md, "Flag Submission": a candidate
@@ -324,6 +335,13 @@ class OzzGraphConfig(BaseModel):
     # (HAL-010) — off by default so existing runs keep the V06 model
     # path byte-for-byte.
     specialists_enabled: bool = Field(default=DEFAULT_SPECIALISTS_ENABLED)
+
+    # V2.1.1 (PROVE-ALL-FINDINGS): exhaustive local assessment. Off by
+    # default — the local objective completes on the first COMPLETE
+    # verdict (byte-for-byte unchanged). On, the local environment
+    # requires every hypothesis to be resolved before the objective
+    # completes, so the run exploits the whole target surface.
+    exhaustive: bool = Field(default=DEFAULT_EXHAUSTIVE)
 
     max_command_length: int = Field(default=DEFAULT_MAX_COMMAND_LENGTH, ge=1)
     target_allowlist: tuple[str, ...] = Field(default=DEFAULT_TARGET_ALLOWLIST)
@@ -873,6 +891,7 @@ def load_config(environ: Mapping[str, str] | None = None) -> OzzGraphConfig:
             specialists_enabled=_env_bool(
                 env, SPECIALISTS_ENABLED_ENV, DEFAULT_SPECIALISTS_ENABLED
             ),
+            exhaustive=_env_bool(env, EXHAUSTIVE_ENV, DEFAULT_EXHAUSTIVE),
             max_command_length=_env_int(env, MAX_COMMAND_LENGTH_ENV, DEFAULT_MAX_COMMAND_LENGTH),
             target_allowlist=merged_allowlist,
             allowed_command_families=_env_csv(

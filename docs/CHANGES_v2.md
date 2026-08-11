@@ -394,6 +394,17 @@ independently implemented components.
    > rendered 1). The local completion contract is unchanged: a
    > COMPLETE verdict still satisfies the objective — the fix is that
    > every finding validated before that verdict is rendered.
+   > EXHAUSTIVE-MODE (2026-08-11): new opt-in `OZZGRAPH_EXHAUSTIVE=true`
+   > makes the local environment NEVER auto-complete the objective on a
+   > verdict — the run keeps probing, new observations form new
+   > hypotheses, the specialist fleet validates them, and findings
+   > accumulate until the budget is spent (the whole box gets assessed,
+   > not just the first finding). The planner skips resolved hypotheses
+   > in exhaustive mode and declares NoPlan when none remain open, so
+   > the model keeps proposing fresh probes instead of looping on an
+   > exhausted plan. Default (off) is byte-for-byte unchanged. Verified
+   > on Juice Shop: a 25-min exhaustive run rendered 4 findings across
+   > 7 executed commands vs 1-2 in default mode.
 10. `v2/full-regression` — real benchmark suite across the model matrix.
     > V10 (2026-08-08): implemented — `src/ozzgraph/benchmarks/` +
     > `ozzgraph benchmark` CLI + docs/BENCHMARKS.md. The full-regression

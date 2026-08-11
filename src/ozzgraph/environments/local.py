@@ -294,20 +294,24 @@ class LocalEnvironment:
         return set(DEFAULT_LOCAL_CAPABILITIES)
 
     async def verdict_satisfies_objectives(self, graph: StateGraph) -> bool:
-        """An evaluator COMPLETE verdict always satisfies the local objective.
+        """An evaluator COMPLETE verdict satisfies the local objective.
 
-        Local assessment's completion contract has no terminal artifact
-        beyond the validated, evidence-backed finding: the deterministic
-        evaluator COMPLETE verdict IS the completion signal, so it
-        satisfies the objective unconditionally. Every finding the run
-        validated before that verdict — including findings produced by
-        the specialist fleet in the same batch — is rendered to
-        ``findings.json`` by the append-safe store; completion is about
-        the verdict, not about resolving every hypothesis ever formed
-        (a run that validated one flag hypothesis and left decoy
-        hypotheses open is still a completed assessment).
+        Default (``exhaustive`` off): the deterministic COMPLETE
+        verdict IS the completion signal, so it satisfies the objective
+        unconditionally — the pre-HAL-006 behavior, byte-for-byte
+        unchanged. Every finding the run validated before that verdict
+        (including specialist-fleet findings from the same batch) is
+        rendered by the append-safe store.
+
+        Exhaustive mode (``OZZGRAPH_EXHAUSTIVE=true``): the objective
+        is NEVER auto-completed by a verdict — the run keeps probing,
+        new observations form new hypotheses, the fleet validates
+        them, and findings accumulate until the budget is spent, so
+        the whole box gets assessed instead of stopping at the first
+        (or few) validated findings. The run terminates with
+        ``budget_exhausted`` having rendered every finding it found.
         """
-        return True
+        return not self._config.exhaustive
 
     async def aclose(self) -> None:
         """No owned resources; idempotent no-op."""

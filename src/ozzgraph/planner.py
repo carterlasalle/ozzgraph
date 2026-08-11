@@ -86,6 +86,14 @@ from ozzgraph.router import (
 from ozzgraph.skills import SkillRegistry, SkillSummary
 from ozzgraph.state_graph import EntityRecord, StateGraph
 
+#: Hypothesis lifecycle status field and resolved values. Mirrors
+#: security_brain's constants; defined locally to avoid the circular
+#: import (security_brain imports planner).
+FIELD_STATUS = "status"
+STATUS_PROMOTED = "promoted"
+STATUS_ABANDONED = "abandoned"
+STATUS_OPEN = "open"
+
 #: Edge type the planner reads for negative evidence
 #: (docs/DATA_STRATEGY.md, uppercase by convention).
 EDGE_EVIDENCE_CONTRADICTS_HYPOTHESIS = "EVIDENCE CONTRADICTS HYPOTHESIS"
@@ -318,10 +326,18 @@ class Planner:
             step skills are selected from ``route.skills`` — the
             summaries the router already resolved for the routed phase
             (PR18) — so no second lookup happens during planning.
+        exhaustive: When True (PROVE-ALL-FINDINGS / exhaustive local
+            assessment), hypotheses already resolved (promoted into a
+            finding, or abandoned) are excluded from ranking — re-
+            testing a validated hypothesis can never advance the
+            assessment, and in exhaustive mode the run keeps going
+            until every hypothesis is resolved. Default False keeps
+            the pre-existing ranking byte-for-byte.
     """
 
-    def __init__(self, registry: SkillRegistry | None = None) -> None:
+    def __init__(self, registry: SkillRegistry | None = None, *, exhaustive: bool = False) -> None:
         self._registry = registry if registry is not None else SkillRegistry()
+        self._exhaustive = exhaustive
 
     def skills_for(self, phase: Phase) -> tuple[SkillSummary, ...]:
         """Skill summaries covering ``phase`` (registry ``list_summaries``).
@@ -377,7 +393,20 @@ class Planner:
                     f">= {MIN_STRATEGIC_PATHS} of either)"
                 ),
             )
-        ranked = await _rank_hypotheses(graph, route.phase)
+        ranked = await _rank_hypotheses(graph, route.phase, skip_resolved=self._exhaustive)
+        if self._exhaustive and not ranked:
+            # Exhaustive mode: every existing hypothesis is resolved
+            # (promoted or abandoned) and nothing is left to plan. A
+            # plan built from an empty ranking would have no steps and
+            # the executor would raise PlanExhaustedError on every
+            # turn forever. Declare NoPlan instead so the model keeps
+            # proposing fresh probes — new observations form new
+            # hypotheses, the fleet validates them, and findings
+            # accumulate until the budget is spent.
+            return NoPlanDecision(
+                phase=route.phase,
+                reason="exhaustive mode: no open hypotheses remain to plan",
+            )
         plan_id = await _plan_id(graph, route)
         steps = await _plan_steps(graph, route, plan_id, ranked)
         return Plan(
@@ -415,13 +444,31 @@ async def _strategic_path_counts(graph: StateGraph) -> tuple[int, int]:
     return evidenced, uncharacterized
 
 
-async def _rank_hypotheses(graph: StateGraph, phase: Phase) -> list[Hypothesis]:
+def _payload_status(record: EntityRecord) -> str:
+    """The hypothesis lifecycle status; a missing field means open."""
+    value = record.data.get(FIELD_STATUS)
+    if value is None:
+        return STATUS_OPEN
+    if not isinstance(value, str) or not value:
+        raise InvalidGraphStateError(
+            f"entity {record.id!r} payload field {FIELD_STATUS!r} must be a "
+            f"non-empty string, got {type(value).__name__} ({value!r})"
+        )
+    return value
+
+
+async def _rank_hypotheses(
+    graph: StateGraph, phase: Phase, *, skip_resolved: bool = False
+) -> list[Hypothesis]:
     """Rank every hypothesis entity: confidence, evidence weight, id.
 
     Sorting key is ``(-confidence, contradicting - supporting,
     entity_id)``: confidence descending, then net evidence weight
     (supporting minus contradicting edge counts) descending, then
-    entity id ascending — deterministic, no randomness.
+    entity id ascending — deterministic, no randomness. When
+    ``skip_resolved`` (exhaustive assessment), hypotheses already
+    promoted or abandoned are excluded: re-testing a resolved
+    hypothesis can never advance the assessment.
 
     Raises:
         MissingRequiredStateError: If a hypothesis entity has no
@@ -432,6 +479,8 @@ async def _rank_hypotheses(graph: StateGraph, phase: Phase) -> list[Hypothesis]:
     records = await graph.list_entities(ENTITY_HYPOTHESIS)
     candidates: list[tuple[float, int, str, EntityRecord, tuple[str, ...], tuple[str, ...]]] = []
     for record in records:
+        if skip_resolved and _payload_status(record) in (STATUS_PROMOTED, STATUS_ABANDONED):
+            continue
         supporting = await _incoming_evidence_ids(
             graph, record.id, EDGE_EVIDENCE_SUPPORTS_HYPOTHESIS
         )
