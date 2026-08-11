@@ -299,10 +299,13 @@ class LocalEnvironment:
         Local assessment's completion contract has no terminal artifact
         beyond the validated, evidence-backed finding: the deterministic
         evaluator COMPLETE verdict IS the completion signal, so it
-        satisfies the objective unconditionally (the pre-HAL-006
-        behavior, byte-for-byte unchanged). ``graph`` is part of the
-        protocol contract (an environment may judge satisfaction from
-        the graph state); local mode never needs to.
+        satisfies the objective unconditionally. Every finding the run
+        validated before that verdict — including findings produced by
+        the specialist fleet in the same batch — is rendered to
+        ``findings.json`` by the append-safe store; completion is about
+        the verdict, not about resolving every hypothesis ever formed
+        (a run that validated one flag hypothesis and left decoy
+        hypotheses open is still a completed assessment).
         """
         return True
 

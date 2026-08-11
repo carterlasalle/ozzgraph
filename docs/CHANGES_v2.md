@@ -382,6 +382,18 @@ independently implemented components.
    > so a model actually learns that its duplicate/out-of-scope action
    > was rejected instead of proposing it forever (previously every
    > model looped on one command until the budget exhausted).
+   > PROVE-ALL-FINDINGS (2026-08-11): every validated finding now
+   > renders. Two compounding causes fixed: (1) `_produce_findings`
+   > renders EVERY confirmed hypothesis per COMPLETE verdict, not just
+   > the first (`next()` became a loop); (2) `FindingStore.save`
+   > reloads the on-disk document first, so separate `for_run()`
+   > instances (the runner's per-verdict finding and the specialist
+   > fleet's per-confirmed-hypothesis finding) append to the same
+   > findings.json instead of overwriting each other (observed on
+   > Juice Shop: the fleet validated 2 findings in one batch, the run
+   > rendered 1). The local completion contract is unchanged: a
+   > COMPLETE verdict still satisfies the objective — the fix is that
+   > every finding validated before that verdict is rendered.
 10. `v2/full-regression` — real benchmark suite across the model matrix.
     > V10 (2026-08-08): implemented — `src/ozzgraph/benchmarks/` +
     > `ozzgraph benchmark` CLI + docs/BENCHMARKS.md. The full-regression

@@ -1328,75 +1328,72 @@ class AutonomousRunner:
         return pattern.search(haystack) is not None
 
     async def _produce_findings(self, evaluation: PlanEvaluation) -> None:
-        """Persist one evidence-backed Finding for a confirmed hypothesis.
+        """Persist one evidence-backed Finding per confirmed hypothesis.
 
-        Called only on an evaluator COMPLETE verdict: the first
-        hypothesis with a CONFIRMED verdict (new supporting evidence,
-        no contradictions) becomes a ``finding`` graph entity carrying
+        Called only on an evaluator COMPLETE verdict: EVERY hypothesis
+        with a CONFIRMED verdict (new supporting evidence, no
+        contradictions) becomes a ``finding`` graph entity carrying
         the CHANGES_v2 Findings model (CWE classification, affected
         assets, preconditions, evidence ids, reproduction, impact CIA,
         confidence), linked to the hypothesis it validates, mirrored as
         a ``graph.*`` event, and rendered to ``findings.json``.
 
-        Idempotent: the finding id derives from the hypothesis id.
+        Idempotent per hypothesis: each finding id derives from its
+        hypothesis id, so a re-evaluation never duplicates. Previously
+        only the FIRST confirmed hypothesis rendered per verdict, so a
+        COMPLETE verdict that confirmed several hypotheses stranded
+        all but one finding.
         """
-        confirmed = next(
-            (
-                outcome
-                for outcome in evaluation.hypothesis_outcomes
-                if outcome.verdict is HypothesisVerdict.CONFIRMED
-            ),
-            None,
-        )
-        if confirmed is None:
-            return
-        hypothesis_id = confirmed.hypothesis_id
-        finding_id = f"finding-{hypothesis_id}"
-        if await self._graph.get_entity(finding_id) is not None:
-            return
+        for confirmed in evaluation.hypothesis_outcomes:
+            if confirmed.verdict is not HypothesisVerdict.CONFIRMED:
+                continue
+            hypothesis_id = confirmed.hypothesis_id
+            finding_id = f"finding-{hypothesis_id}"
+            if await self._graph.get_entity(finding_id) is not None:
+                continue
 
-        confidence, cwe = await self._hypothesis_characteristics(hypothesis_id)
-        targets = await self._graph.list_entities(ENTITY_TARGET)
-        target_id = targets[0].id if targets else None
-        exposed = cwe == DEFAULT_FINDING_CWE
-        impact = ImpactCIA(**(_FINDING_EXPOSED_IMPACT if exposed else _FINDING_DEFAULT_IMPACT))
-        finding = Finding(
-            id=finding_id,
-            cwe=cwe,
-            affected_assets=tuple(record.id for record in targets),
-            preconditions=("authorized assessment scope",),
-            evidence_ids=confirmed.supporting_evidence,
-            reproduction=await self._reproduction_steps(confirmed.supporting_evidence),
-            impact=impact,
-            confidence=confidence,
-            hypothesis_id=hypothesis_id,
-            target_id=target_id,
-        )
-        at = datetime.now(UTC)
-        await self._create_entity(
-            finding_id,
-            ENTITY_FINDING,
-            finding.model_dump(mode="json"),
-            at=at,
-        )
-        await self._create_edge(
-            f"{finding_id}-validates-{hypothesis_id}",
-            EDGE_FINDING_VALIDATES_HYPOTHESIS,
-            finding_id,
-            hypothesis_id,
-            at=at,
-        )
-        self._append(
-            RUNNER_FINDING_CREATED,
-            {
-                "finding_id": finding_id,
-                "cwe": finding.cwe,
-                "hypothesis_id": hypothesis_id,
-                "evidence_ids": list(finding.evidence_ids),
-                "confidence": finding.confidence,
-            },
-        )
-        FindingStore.for_run(self._config.state_dir).save(finding)
+            confidence, cwe = await self._hypothesis_characteristics(hypothesis_id)
+            targets = await self._graph.list_entities(ENTITY_TARGET)
+            target_id = targets[0].id if targets else None
+            exposed = cwe == DEFAULT_FINDING_CWE
+            impact = ImpactCIA(**(_FINDING_EXPOSED_IMPACT if exposed else _FINDING_DEFAULT_IMPACT))
+            finding = Finding(
+                id=finding_id,
+                cwe=cwe,
+                affected_assets=tuple(record.id for record in targets),
+                preconditions=("authorized assessment scope",),
+                evidence_ids=confirmed.supporting_evidence,
+                reproduction=await self._reproduction_steps(confirmed.supporting_evidence),
+                impact=impact,
+                confidence=confidence,
+                hypothesis_id=hypothesis_id,
+                target_id=target_id,
+            )
+            at = datetime.now(UTC)
+            await self._create_entity(
+                finding_id,
+                ENTITY_FINDING,
+                finding.model_dump(mode="json"),
+                at=at,
+            )
+            await self._create_edge(
+                f"{finding_id}-validates-{hypothesis_id}",
+                EDGE_FINDING_VALIDATES_HYPOTHESIS,
+                finding_id,
+                hypothesis_id,
+                at=at,
+            )
+            self._append(
+                RUNNER_FINDING_CREATED,
+                {
+                    "finding_id": finding_id,
+                    "cwe": finding.cwe,
+                    "hypothesis_id": hypothesis_id,
+                    "evidence_ids": list(finding.evidence_ids),
+                    "confidence": finding.confidence,
+                },
+            )
+            FindingStore.for_run(self._config.state_dir).save(finding)
 
     async def _hypothesis_characteristics(self, hypothesis_id: str) -> tuple[float, str]:
         """The validated hypothesis's confidence and CWE classification.

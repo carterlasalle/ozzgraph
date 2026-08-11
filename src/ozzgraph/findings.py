@@ -37,7 +37,7 @@ import json
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 #: Entity type for findings persisted in the state graph
 #: (docs/DATA_STRATEGY.md, lowercase by convention).
@@ -114,6 +114,10 @@ class Finding(BaseModel):
     target_id: str | None = None
 
 
+class FindingStoreError(RuntimeError):
+    """The findings document cannot be read or written safely."""
+
+
 class FindingStore:
     """Renders every produced finding to ``state_dir/findings.json``.
 
@@ -131,6 +135,44 @@ class FindingStore:
     def __init__(self, path: Path) -> None:
         self._path = path
         self._findings: list[Finding] = []
+
+    def _load(self) -> list[Finding]:
+        """Findings already persisted at ``self._path``, in save order.
+
+        An absent or empty document loads as an empty list; a corrupt
+        document fails loudly (rule #9) — a store that silently drops
+        existing findings would produce a run with missing evidence.
+        """
+        if not self._path.exists():
+            return []
+        try:
+            raw = json.loads(self._path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise FindingStoreError(
+                f"existing findings document is unreadable: {exc}"
+            ) from exc
+        if not isinstance(raw, list):
+            raise FindingStoreError(
+                f"existing findings document is not a JSON array: {type(raw).__name__}"
+            )
+        findings: list[Finding] = []
+        for entry in raw:
+            try:
+                findings.append(Finding.model_validate(entry))
+            except ValidationError as exc:
+                raise FindingStoreError(
+                    f"existing findings document has an invalid entry: {exc}"
+                ) from exc
+        return findings
+
+    def _write(self) -> None:
+        """Rewrite the document from ``self._findings`` (deterministic)."""
+        payload = [json.loads(existing.model_dump_json()) for existing in self._findings]
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
 
     @classmethod
     def for_run(cls, state_dir: Path) -> FindingStore:
@@ -150,16 +192,19 @@ class FindingStore:
     def save(self, finding: Finding) -> None:
         """Append ``finding`` (idempotent per id) and rewrite the JSON.
 
+        Reloads any findings already on disk first, so separate
+        :meth:`for_run` instances (e.g. the runner's per-verdict
+        finding and the specialist fleet's per-confirmed-hypothesis
+        finding) append to the SAME document instead of overwriting
+        each other — a run that validates N hypotheses renders N
+        findings, never just the last one saved.
+
         Raises:
             OSError: If the document cannot be written (fail loudly,
                 AGENTS.md rule #9).
         """
-        if any(existing.id == finding.id for existing in self._findings):
+        existing = self._load()
+        if any(f.id == finding.id for f in existing):
             return
-        self._findings.append(finding)
-        payload = [json.loads(existing.model_dump_json()) for existing in self._findings]
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(
-            json.dumps(payload, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        self._findings = [*existing, finding]
+        self._write()
