@@ -3,6 +3,43 @@
 All notable changes to OzzGraph are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [2.1.0] — 2026-08-11
+
+### Fixed: real-model runs now execute actions (free tier + weak models)
+
+Five fixes, verified live against OWASP Juice Shop v19.2.1 with
+`deepseek/deepseek-v4-flash-0731` (and `google/gemma-4-26b-a4b-it:free`):
+the full loop now runs — real commands execute, observations parse,
+hypotheses promote, the specialist fleet validates, findings render,
+and the run terminates `completed` with exit 0.
+
+- **Free-tier model profiles** — `profile_data/openrouter.toml`,
+  `nemotron.toml`, `gemma.toml` (JSON protocol only, `repair_retry`).
+  Unknown model ids previously resolved to the terminal-only fallback
+  profile, so structured output degraded to `think` and zero tools ever
+  executed (observed: 34 turns, 0 tool calls).
+- **Family prefix coverage** — `FAMILY_PREFIXES` now maps
+  nemotron/nvidia/openrouter/gemma/google.
+- **Protocol-agnostic output contract** — `OUTPUT_CONTRACT` describes
+  action semantics; each adapter's OUTPUT FORMAT block owns the wire
+  schema. The old contract demanded `{"action","skill_id"}` while the
+  JSON adapter demands `{"kind","payload","rationale"}` — contradictory
+  schemas in one prompt.
+- **Skill-card advertisement** — `_advertised_skill()` advertises skill
+  id + full card (concrete commands like `curl -sS -m 5 -I <target>/`),
+  not bare ids, so models see the command vocabulary.
+- **Transcript feedback** — `_transcript_tail()` renders the last ~6
+  action outcomes (OK/FAILED/REJECTED + exit code + command), so a
+  model learns a rejected duplicate must not be re-proposed. Without
+  this every model looped on one command until budget exhaustion.
+- **JSON-first fallback protocol** — `_fallback_protocol()` prefers
+  `json` when the profile declares it; compiling a terminal prompt for
+  a JSON-capable model made it reply JSON with the command inside
+  `kind`, rejected as a non-`run` kind.
+
+Suite: 1307 tests pass; ruff/mypy clean. GitReins judge PASS
+(verdict c7efc25d).
+
 ## [2.0.0] — 2026-08-08
 
 ### Major: OzzGraph is now a general autonomous security-research harness
