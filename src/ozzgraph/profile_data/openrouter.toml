@@ -1,0 +1,57 @@
+# OzzGraph model profile: OpenRouter free-tier alias family (V05 data-driven
+# profiles). ``openrouter/free`` is an aggregator alias that routes to
+# whichever free endpoint is available (often Nvidia Nemotron, Google Gemma,
+# OpenAI gpt-oss). Free endpoints are instruction-tuned chat models that
+# follow a strict JSON output contract, so this profile declares the JSON
+# protocol ONLY: the harness then compiles JSON-format prompts (the
+# fallback protocol is the most conservative DECLARED one), and these
+# models' structured output parses directly. Declaring ``terminal`` would
+# compile terminal-format prompts these models ignore, and their JSON
+# replies would degrade to ``think`` (observed against OWASP Juice Shop:
+# 34 turns, 0 tool calls). ``model_ids`` lists the aliases this family
+# profile covers; family-prefix matching covers the rest of the line.
+# Benchmarks are placeholders — all-zero means "not yet measured";
+# ProfileStore.update_benchmarks() persists measured harness metrics here.
+family = "openrouter"
+model_ids = ["openrouter/free", "openrouter/auto", "openrouter/auto:free"]
+protocols = ["json"]
+context_soft_limit = 32000
+output_token_limit = 2048
+temperature = 0.2
+supported_roles = ["system", "user", "assistant"]
+max_advertised_skills = 4
+failure_behavior = "repair_retry"
+confidence = 0.7
+
+[benchmarks.json]
+valid_output_rate = 0.0
+correct_tool_selection = 0.0
+repetition_rate = 0.0
+recovery_rate = 0.0
+output_tokens_per_decision = 0.0
+steps_per_objective = 0.0
+solve_rate = 0.0
+unsupported_fact_rate = 0.0
+unsupported_flag_rate = 0.0
+
+[benchmarks.terminal]
+valid_output_rate = 0.0
+correct_tool_selection = 0.0
+repetition_rate = 0.0
+recovery_rate = 0.0
+output_tokens_per_decision = 0.0
+steps_per_objective = 0.0
+solve_rate = 0.0
+unsupported_fact_rate = 0.0
+unsupported_flag_rate = 0.0
+
+[benchmarks.three_line]
+valid_output_rate = 0.0
+correct_tool_selection = 0.0
+repetition_rate = 0.0
+recovery_rate = 0.0
+output_tokens_per_decision = 0.0
+steps_per_objective = 0.0
+solve_rate = 0.0
+unsupported_fact_rate = 0.0
+unsupported_flag_rate = 0.0

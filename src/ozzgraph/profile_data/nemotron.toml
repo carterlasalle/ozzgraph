@@ -1,0 +1,52 @@
+# OzzGraph model profile: Nvidia Nemotron family (V05 data-driven profiles).
+# ``nvidia/nemotron-*:free`` models are common concrete endpoints behind the
+# OpenRouter free-tier alias. Like the openrouter profile, this declares the
+# JSON protocol ONLY so the harness compiles JSON-format prompts these
+# instruction-tuned models actually follow (declaring ``terminal`` would
+# degrade their JSON replies to ``think``). ``model_ids`` lists concrete ids
+# this family profile covers; family-prefix matching covers the rest.
+# Benchmarks are placeholders — all-zero means "not yet measured";
+# ProfileStore.update_benchmarks() persists measured harness metrics here.
+family = "nemotron"
+model_ids = ["nvidia/nemotron-3-nano-30b-a3b:free", "nvidia/nemotron-nano-9b-v2:free"]
+protocols = ["json"]
+context_soft_limit = 32000
+output_token_limit = 2048
+temperature = 0.2
+supported_roles = ["system", "user", "assistant"]
+max_advertised_skills = 4
+failure_behavior = "repair_retry"
+confidence = 0.7
+
+[benchmarks.json]
+valid_output_rate = 0.0
+correct_tool_selection = 0.0
+repetition_rate = 0.0
+recovery_rate = 0.0
+output_tokens_per_decision = 0.0
+steps_per_objective = 0.0
+solve_rate = 0.0
+unsupported_fact_rate = 0.0
+unsupported_flag_rate = 0.0
+
+[benchmarks.terminal]
+valid_output_rate = 0.0
+correct_tool_selection = 0.0
+repetition_rate = 0.0
+recovery_rate = 0.0
+output_tokens_per_decision = 0.0
+steps_per_objective = 0.0
+solve_rate = 0.0
+unsupported_fact_rate = 0.0
+unsupported_flag_rate = 0.0
+
+[benchmarks.three_line]
+valid_output_rate = 0.0
+correct_tool_selection = 0.0
+repetition_rate = 0.0
+recovery_rate = 0.0
+output_tokens_per_decision = 0.0
+steps_per_objective = 0.0
+solve_rate = 0.0
+unsupported_fact_rate = 0.0
+unsupported_flag_rate = 0.0

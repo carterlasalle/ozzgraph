@@ -50,6 +50,29 @@ def test_profile_for_model_id_known_prefixes() -> None:
     assert profile_for_model_id("llama3.1:8b").family == "llama"
 
 
+def test_profile_for_model_id_free_tier_families() -> None:
+    """OpenRouter free-tier aliases and their routed endpoints map to
+    capable profiles (JSON protocol only), never the terminal-only
+    fallback."""
+    assert profile_for_model_id("openrouter/free").family == "openrouter"
+    assert profile_for_model_id("openrouter/auto:free").family == "openrouter"
+    assert profile_for_model_id("nvidia/nemotron-3-nano-30b-a3b:free").family == "nemotron"
+    assert profile_for_model_id("nemotron-nano-9b-v2").family == "nemotron"
+    assert profile_for_model_id("google/gemma-4-26b-a4b-it:free").family == "gemma"
+    assert profile_for_model_id("gemma-4-31b-it").family == "gemma"
+    for mid in (
+        "openrouter/free",
+        "nvidia/nemotron-3-nano-30b-a3b:free",
+        "google/gemma-4-26b-a4b-it:free",
+    ):
+        profile = profile_for_model_id(mid)
+        # JSON-only: the harness compiles JSON-format prompts, which is
+        # what free-tier models actually follow (terminal-format prompts
+        # degrade their JSON replies to `think`).
+        assert profile.protocols == {PROTOCOL_JSON}
+        assert profile.failure_behavior == "repair_retry"
+
+
 def test_profile_for_model_id_returns_builtin_object() -> None:
     """Matched ids return the registered built-in profile itself."""
     assert profile_for_model_id("gpt-4o") is BUILTIN_PROFILES["gpt"]
@@ -278,7 +301,16 @@ def test_discover_profile_does_not_mutate_builtins() -> None:
 
 def test_builtin_profiles_every_family_present() -> None:
     """The registry holds every declared family and the fallback."""
-    assert set(BUILTIN_PROFILES) == {"gpt", "claude", "deepseek", "llama", "fallback"}
+    assert set(BUILTIN_PROFILES) == {
+        "gpt",
+        "claude",
+        "deepseek",
+        "llama",
+        "nemotron",
+        "openrouter",
+        "gemma",
+        "fallback",
+    }
     assert BUILTIN_PROFILES["fallback"] is FALLBACK_PROFILE
 
 

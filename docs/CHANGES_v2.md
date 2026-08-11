@@ -346,6 +346,42 @@ independently implemented components.
    > env WITHOUT `HAL_TARGET_*` services yields the bare challenge id as
    > the target address, and a non-allowlisted policy refuses the same
    > probes the fixture's allowlist admits.
+   > PROFILE-FREE-TIER (2026-08-11): data-driven model profiles for the
+   > OpenRouter free tier — `profile_data/openrouter.toml` (the
+   > `openrouter/free` / `openrouter/auto*` aliases),
+   > `profile_data/nemotron.toml` (the Nvidia Nemotron endpoints those
+   > aliases often route to), and `profile_data/gemma.toml` (the Google
+   > Gemma endpoints), all declaring the JSON protocol ONLY with
+   > `repair_retry`. Before this, an unknown model id resolved to the
+   > terminal-only fallback profile, so the harness compiled
+   > terminal-format prompts the free models ignored; their structured
+   > JSON replies degraded to `think` and the harness never executed a
+   > tool (observed against OWASP Juice Shop: 34 turns, 0 tool calls).
+   > With a JSON-only profile the harness compiles JSON-format prompts,
+   > and e.g. `google/gemma-4-26b-a4b-it:free` returns exactly
+   > `{"kind": "run", "payload": "curl -v ..."}` on repeat attempts —
+   > `ozzgraph run <target>` with `OZZGRAPH_MODEL_ID=<free model>`
+   > drives real actions. Two further fixes made the loop actually
+   > execute: (1) `OUTPUT_CONTRACT` no longer prescribes a conflicting
+   > JSON schema (`{"action", "skill_id"}`) — it now describes the
+   > semantics of one bounded action while each adapter's OUTPUT FORMAT
+   > block owns the wire shape, and the harness binds the skill
+   > deterministically; (2) the runner advertises the routed skill
+   > CARDS (id + card text with concrete commands) instead of bare
+   > skill ids, so weak models see the command vocabulary they cannot
+   > infer from an id alone (previously every model turn emitted a
+   > skill-call like `recon_http_fingerprint --url ...` that the policy
+   > plane rejected with exit 127). Two further fixes closed the
+   > model-feedback loop: (3) `_fallback_protocol` now prefers the
+   > profile's `json` protocol for prompt compilation whenever declared
+   > (compiling a terminal-format prompt for a JSON-capable model made
+   > it reply JSON with the command inside `kind`, which the JSON
+   > parser rejected as a non-`run` kind); (4) `_transcript_tail` is no
+   > longer a V01 stub — it renders the last ~6 action outcomes
+   > (`RECENT ACTIONS`: OK/FAILED/REJECTED with exit code and command),
+   > so a model actually learns that its duplicate/out-of-scope action
+   > was rejected instead of proposing it forever (previously every
+   > model looped on one command until the budget exhausted).
 10. `v2/full-regression` — real benchmark suite across the model matrix.
     > V10 (2026-08-08): implemented — `src/ozzgraph/benchmarks/` +
     > `ozzgraph benchmark` CLI + docs/BENCHMARKS.md. The full-regression

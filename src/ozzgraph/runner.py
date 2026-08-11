@@ -88,6 +88,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from enum import Enum
@@ -172,7 +173,7 @@ from ozzgraph.security_brain import (
     StrategicDecision,
 )
 from ozzgraph.shell import ShellRunner, ToolResult
-from ozzgraph.skills import SkillRegistry
+from ozzgraph.skills import SkillRegistry, SkillSummary
 from ozzgraph.specialists import SpecialistFleet
 from ozzgraph.state_graph import EntityRecord, StateGraph
 from ozzgraph.toolplane import ToolInventory
@@ -256,19 +257,34 @@ DEFAULT_OUTPUT_LIMIT = 65536
 #: objectives / capabilities summary enter model context.
 _MISSION_LIMIT = 2000
 
+#: Max action-outcome lines rendered into the model's transcript tail
+#: (context layer 4). Small and bounded: the full transcript lives in
+#: the event log, never in model context (AGENTS.md rule #2).
+_RECENT_ACTIONS_LIMIT = 6
+
+#: Max characters for the whole transcript tail block.
+_TRANSCRIPT_TAIL_LIMIT = 1500
+
 #: Bounded per-line summary for observation entities.
 _SUMMARY_LIMIT = 200
 
 #: The strict output contract the runner advertises to the model. This
-#: is the executor's :class:`~ozzgraph.executor.ModelAction` contract —
-#: the model proposes ONE bounded action plus the skill it selected.
+#: describes the SEMANTICS of one model action proposal — the executor's
+#: :class:`~ozzgraph.executor.ModelAction` contract — without prescribing
+#: a wire format: each adapter's OUTPUT FORMAT block defines the exact
+#: schema its parser accepts (JSON ``{"kind", "payload", "rationale"}``,
+#: three-line ``THOUGHT/ACTION/PAYLOAD``, or terminal ``ACTION:`` /
+#: ``PAYLOAD:`` directives). The runner binds the skill deterministically
+#: from the routed plan/phase (``_proposed_skill``), so the model only
+#: supplies the action command; it must never invent a second JSON schema.
 OUTPUT_CONTRACT = (
-    "Propose exactly ONE bounded action as a single JSON object:\n"
-    '  {"action": "<one shell command line>", "skill_id": "<skill id>"}\n'
-    "The action must be a single command (never a multi-command plan or a "
-    "loop), must stay within the authorized scope, and must select one of "
-    "the advertised skills. If you have no action to take, respond with "
-    "plain reasoning instead."
+    "Propose exactly ONE bounded action.\n"
+    "The action must be a single command line (never a multi-command plan or a "
+    "loop) that stays within the authorized scope, and it must correspond to one "
+    "of the advertised skills. The skill is selected by the harness from your "
+    "phase and plan, so you only supply the command. If you have no action to "
+    "take, respond with plain reasoning instead.\n"
+    "Follow the OUTPUT FORMAT above exactly — do not invent a different format."
 )
 
 
@@ -479,6 +495,11 @@ class AutonomousRunner:
             )
         )
         self._failed_actions: list[FailedAction] = []
+        #: Bounded ring of the most recent action outcomes, fed to the
+        #: model via ``_transcript_tail`` (context layer 4). Without
+        #: this, a model never learns that its last action was rejected
+        #: (e.g. a duplicate fingerprint) and proposes it again forever.
+        self._recent_actions: deque[str] = deque(maxlen=_RECENT_ACTIONS_LIMIT)
         self._turns = 0
         self._adapter_cache: dict[str, ModelAdapter] = {}
         # V07 specialist fleet: when wired in (the supervisor-level
@@ -1132,6 +1153,11 @@ class AutonomousRunner:
                     plan_step_id=request.plan_step_id,
                 )
             )
+        self._recent_actions.append(
+            f"[{request.phase.value}] "
+            f"{'FAILED' if failed else 'OK'} exit={result.exit_code} "
+            f"({round(result.duration, 1)}s) :: {_bounded(request.action, 200)}"
+        )
         self._append(
             RUNNER_ACTION_EXECUTED,
             {
@@ -1460,7 +1486,9 @@ class AutonomousRunner:
             summary.skill_id for summary in self._registry.list_available(capabilities)
         )
         skills = tuple(
-            summary.skill_id for summary in route.skills if summary.skill_id in available_skill_ids
+            self._advertised_skill(summary)
+            for summary in route.skills
+            if summary.skill_id in available_skill_ids
         )
         request = ContextRequest(
             mission=mission,
@@ -1594,10 +1622,23 @@ class AutonomousRunner:
         return instance
 
     def _fallback_protocol(self) -> str:
-        """The profile's most conservative declared protocol."""
+        """The profile's primary prompt-compilation protocol.
+
+        The JSON protocol is preferred whenever the profile declares it:
+        JSON is the strictest, most explicit contract, and models that
+        can produce it (all modern instruction-tuned models) follow the
+        compiled JSON-format prompt reliably. Compiling a terminal-format
+        prompt for a JSON-capable model makes it reply JSON anyway — with
+        the terminal schema's fields (e.g. the command inside ``kind``),
+        which the JSON parser then rejects as a non-``run`` kind. Only
+        when JSON is NOT declared does it fall back to the most
+        conservative declared protocol (``terminal`` when declared).
+        """
         protocols = sorted(self._profile.protocols)
         if not protocols:  # pragma: no cover - profiles declare >= 1
             return "terminal"
+        if "json" in protocols:
+            return "json"
         if "terminal" in protocols:
             return "terminal"
         return protocols[0]
@@ -1742,13 +1783,19 @@ class AutonomousRunner:
         return _bounded("\n".join(lines), _MISSION_LIMIT)
 
     def _transcript_tail(self) -> str:
-        """A bounded tail of the last executed actions (context layer 4).
+        """A bounded tail of the last action outcomes (context layer 4).
 
-        V01 keeps this deliberately small: the most recent executed
-        action's summary per turn. The full transcript lives in the
-        event log, never in model context (AGENTS.md rule #2).
+        Renders the most recent executed / rejected actions so the
+        model sees the consequences of its proposals: an action that
+        was rejected as a duplicate, out of scope, or failed must not
+        be proposed again. The full transcript lives in the event log,
+        never in model context (AGENTS.md rule #2).
         """
-        return ""  # V01: the graph projection already carries the state
+        if not self._recent_actions:
+            return ""
+        lines = list(self._recent_actions)
+        text = "RECENT ACTIONS\n" + "\n".join(lines)
+        return _bounded(text, _TRANSCRIPT_TAIL_LIMIT)
 
     def _proposed_skill(
         self, route: PhaseRoute, plan_decision: Plan | NoPlanDecision
@@ -1773,6 +1820,26 @@ class AutonomousRunner:
         if route.skills:
             return route.skills[0].skill_id
         return None
+
+    def _advertised_skill(self, summary: SkillSummary) -> str:
+        """The advertised text for one routed skill: id plus its card.
+
+        Weak models (e.g. the OpenRouter free tier) cannot infer the
+        concrete commands from a bare skill id — the card is what names
+        them (``curl -sS -m 5 -I <target>/`` etc.). The harness binds
+        the skill deterministically (``_proposed_skill``), so the model
+        only ever supplies the command; advertising the card gives it
+        the vocabulary to do so. Bounded by ``max_advertised_skills``
+        in the context compiler, so the lazy-skills contract (AGENTS.md
+        rule #6: advertise summaries, load cards on selection) is
+        preserved in spirit: the routed phase's filtered, capped cards
+        are the selection.
+        """
+        try:
+            card = self._registry.load(summary.skill_id).card
+        except Exception:  # noqa: BLE001 - never break the turn on an ad
+            card = summary.description
+        return f"{summary.skill_id}: {card}"
 
     async def _terminate(self, status: RunnerStatus, reason: str) -> RunnerStatus:
         """Record the structured terminal event and return ``status``.
@@ -1848,6 +1915,9 @@ class AutonomousRunner:
                 "error_type": type(exc).__name__,
                 "message": str(exc),
             },
+        )
+        self._recent_actions.append(
+            f"[{phase or '?'}] REJECTED {type(exc).__name__}: {_bounded(str(exc), 200)}"
         )
         if isinstance(exc, (ExecutorError, ScopeViolationError, ValidationError)):
             return None

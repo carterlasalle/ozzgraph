@@ -97,6 +97,11 @@ FAMILY_PREFIXES: tuple[tuple[str, str], ...] = (
     ("claude", "claude"),
     ("llama", "llama"),
     ("gpt", "gpt"),
+    ("nemotron", "nemotron"),
+    ("nvidia", "nemotron"),
+    ("openrouter", "openrouter"),
+    ("gemma", "gemma"),
+    ("google", "gemma"),
 )
 
 

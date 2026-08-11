@@ -99,7 +99,16 @@ def seeded_dir(tmp_path: Path) -> Path:
 def test_store_loads_shipped_toml_profiles() -> None:
     """The default store loads every shipped per-model TOML profile."""
     store = ProfileStore()
-    assert set(store.families()) == {"claude", "deepseek", "fallback", "gpt", "llama"}
+    assert set(store.families()) == {
+        "claude",
+        "deepseek",
+        "fallback",
+        "gemma",
+        "gpt",
+        "llama",
+        "nemotron",
+        "openrouter",
+    }
     gpt = store.profile_for("gpt-4o")
     assert gpt.family == "gpt"
     assert gpt.output_token_limit == 4096
