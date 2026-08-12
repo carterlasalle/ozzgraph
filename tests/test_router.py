@@ -108,6 +108,7 @@ def test_transitions_are_deterministic_table() -> None:
         "has_supported_exploitable_hypothesis",
         "has_new_access",
         "has_new_reachable_targets",
+        "all_hypotheses_resolved_objectives_open",
         "default_replan",
     ]
 

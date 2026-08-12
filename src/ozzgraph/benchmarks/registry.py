@@ -168,7 +168,9 @@ async def build_solve_script(
         # two decoy probes FAIL deterministically (--fail: 404/401 ->
         # exit 22), which refutes and abandons those hypotheses — the
         # ProgressEvaluator then pivots (every hypothesis resolved,
-        # objectives incomplete) — and the final probe fetches the real
+        # objectives incomplete), the router routes to Phase.PIVOT
+        # (all_hypotheses_resolved_objectives_open), the pivot_hunt
+        # skill covers the phase, and the final probe fetches the real
         # flag on a plan-bound turn, completing the run.
         return (
             f"curl -sS --max-time 5 {url}/",

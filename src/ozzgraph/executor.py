@@ -364,6 +364,7 @@ class Executor:
         model_output: object,
         *,
         failed_actions: Sequence[FailedAction] = (),
+        count_model_call: bool = True,
     ) -> ExecutorTurn:
         """Produce exactly one bounded action for one turn.
 
@@ -403,7 +404,8 @@ class Executor:
                 in the executor's registry (a wiring error).
         """
         self._check_budget_exhausted()
-        self._budgets.consume_model_call()
+        if count_model_call:
+            self._budgets.consume_model_call()
 
         route = await self._router.route(graph)
         decision = await self._planner.plan(graph, route)

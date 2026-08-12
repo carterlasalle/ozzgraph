@@ -100,6 +100,7 @@ from ozzgraph.router import (
     ENTITY_SERVICE,
     FIELD_CHARACTERIZED,
     FIELD_COMPLETED,
+    FIELD_EXPLOITABLE,
     PhaseRoute,
 )
 from ozzgraph.state_graph import EntityRecord, StateGraph
@@ -407,7 +408,7 @@ class OpportunityGenerator:
         for record in await graph.list_entities(ENTITY_SERVICE):
             if _payload_bool(record, FIELD_CHARACTERIZED):
                 continue
-            command = _service_characterize_command(record.id)
+            command = _service_characterize_command(record)
             if command in executed:
                 continue  # already attempted; never loop the same probe
             opportunities.append(
@@ -637,6 +638,27 @@ class HypothesisManager:
             await self._create_edge(
                 graph, edge_id, edge_type, evidence_id, hypothesis_id, timestamp
             )
+        if supports:
+            # LOCAL-PHASE-GAP fix: a hypothesis with supporting evidence
+            # AND a real vulnerability signal (a CWE classification —
+            # stamped when the evidence matched the flag pattern)
+            # becomes EXPLOITABLE: the router's
+            # `has_supported_exploitable_hypothesis` predicate
+            # (Phase.EXPLOITATION) matches only hypotheses stamped
+            # `exploitable: true` with an incoming support edge.
+            # Benign recon observations (e.g. a 200 on `/` with
+            # headers) carry no CWE and must NOT route the run into
+            # EXPLOITATION — the policy gate there blocks recon-family
+            # probes, which would prevent the run from ever fetching
+            # the flag (docs/CHANGES_v2.md, LOCAL-PHASE-GAP).
+            record = await graph.get_entity(hypothesis_id)
+            if record is None or _payload_bool(record, FIELD_EXPLOITABLE):
+                return
+            if not record.data.get("cwe"):
+                return
+            payload = dict(record.data)
+            payload[FIELD_EXPLOITABLE] = True
+            await self._update_entity(graph, hypothesis_id, payload, timestamp)
 
     async def promote(
         self,
@@ -1000,15 +1022,19 @@ def _strategic_prompt(opportunities: Sequence[Opportunity]) -> str:
     return "\n".join(lines)
 
 
-def _service_characterize_command(service_id: str) -> str:
+def _service_characterize_command(record: EntityRecord) -> str:
     """The deterministic bounded probe for one uncharacterized service.
 
-    Services in the kernel carry no address payload, so the probe is a
-    bounded template keyed by the service's canonical entity id — a
-    pure function of graph state, so the same graph always derives the
-    same probe (and the same fingerprint).
+    Uses the service's stored address when present (the local-mode seed
+    writes the target address onto the service), falling back to a
+    probe keyed by the service's canonical entity id — a pure function
+    of graph state, so the same graph always derives the same probe
+    (and the same fingerprint).
     """
-    return f"nmap -sV --top-ports 1000 {service_id}"
+    address = str(record.data.get("address", "")).strip()
+    if address:
+        return f"curl -sS -m 5 -i {address}"
+    return f"nmap -sV --top-ports 1000 {record.id}"
 
 
 async def _executed_commands(graph: StateGraph) -> set[str]:

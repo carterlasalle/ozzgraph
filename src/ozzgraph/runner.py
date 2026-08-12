@@ -158,7 +158,10 @@ from ozzgraph.profiles import ModelProfile, probe_protocol, profile_for_model_id
 from ozzgraph.reporting import ReportError, render_report_bundle
 from ozzgraph.router import (
     ENTITY_OBJECTIVE,
+    ENTITY_SERVICE,
+    FIELD_CHARACTERIZED,
     FIELD_COMPLETED,
+    FIELD_CONFIRMED,
     PhaseRoute,
     PhaseRouter,
 )
@@ -661,6 +664,7 @@ class AutonomousRunner:
             route,
             {"action": task.command, "skill_id": task.skill_id},
             None,
+            count_model_call=False,
         )
         if turn is None:
             return None
@@ -671,7 +675,21 @@ class AutonomousRunner:
             return None
         if isinstance(executed, RunnerStatus):
             return executed
-        await self._persist_execution(turn, executed)
+        # A service-characterize action characterizes the service (marks
+        # `characterized: true`); it does NOT form a vulnerability
+        # hypothesis — enumeration metadata is not a claim. Without
+        # this, the deterministic probe's observation would form a
+        # hypothesis that the evaluator confirms, completing the run
+        # before the model ever probes the real attack surface
+        # (docs/CHANGES_v2.md, LOCAL-PHASE-GAP).
+        characterize_service_id = (
+            decision.opportunity.entity_id
+            if decision.opportunity.kind is OpportunityKind.CHARACTERIZE_SERVICE
+            else None
+        )
+        await self._persist_execution(
+            turn, executed, characterize_service_id=characterize_service_id
+        )
         # HAL-005: a newly observed flag must enter the supervisor-owned
         # submission path with ZERO LLM turns between seeing it and
         # submitting it — the deterministic hook runs right here, after
@@ -1003,6 +1021,8 @@ class AutonomousRunner:
         route: PhaseRoute,
         model_output: dict[str, str],
         plan_id: str | None,
+        *,
+        count_model_call: bool = True,
     ) -> ExecutorTurn | RunnerStatus | None:
         """Feed the synthesized model output through the executor's strict contract.
 
@@ -1013,10 +1033,17 @@ class AutonomousRunner:
         terminal :class:`RunnerStatus` on budget exhaustion or an
         unexpected error, or None when the refusal was recorded and
         the loop should continue.
+
+        ``count_model_call``: False for the deterministic zero-LLM
+        path — no completion is requested, so the model-call budget is
+        not charged (docs/CHANGES_v2.md, LOCAL-PHASE-GAP).
         """
         try:
             return await self._executor.turn(
-                self._graph, model_output, failed_actions=self._failed_actions
+                self._graph,
+                model_output,
+                failed_actions=self._failed_actions,
+                count_model_call=count_model_call,
             )
         except BudgetExceeded as exc:
             return await self._terminate(RunnerStatus.BUDGET_EXHAUSTED, f"budget exhausted: {exc}")
@@ -1075,7 +1102,13 @@ class AutonomousRunner:
                 "shell", exc, phase=request.phase.value, plan_id=request.plan_id
             )
 
-    async def _persist_execution(self, turn: ExecutorTurn, result: ToolResult) -> None:
+    async def _persist_execution(
+        self,
+        turn: ExecutorTurn,
+        result: ToolResult,
+        *,
+        characterize_service_id: str | None = None,
+    ) -> None:
         """Persist raw output, then update the graph (evidence chain).
 
         Order per AGENTS.md rule #1 — the RAW-first invariant
@@ -1160,8 +1193,13 @@ class AutonomousRunner:
             )
 
         # V02: form/link hypotheses from the new evidence (the
-        # discover -> ... -> hypothesis step of the vertical slice).
-        await self._update_hypotheses(turn, result, evidence_id, at)
+        # discover -> ... -> hypothesis step of the vertical slice). A
+        # service-characterize action instead marks the service
+        # characterized — enumeration metadata is not a claim.
+        if characterize_service_id is not None:
+            await self._mark_service_characterized(characterize_service_id, at)
+        else:
+            await self._update_hypotheses(turn, result, evidence_id, at)
 
         failed = result.exit_code != 0 or result.timeout_state
         if failed:
@@ -1329,6 +1367,74 @@ class AutonomousRunner:
             cwe=DEFAULT_FINDING_CWE if flag_matched else None,
             at=at,
         )
+        # LOCAL-PHASE-GAP fix: a successful probe confirms the target it
+        # addressed — the router's `targets_unconfirmed` predicate (which
+        # keeps the run in RECON) requires `confirmed: true`. Without
+        # this, targets stay unconfirmed forever and the graph never
+        # advances to ENUMERATION (docs/CHANGES_v2.md, LOCAL-PHASE-GAP).
+        await self._confirm_target_addressed(request.action, at)
+
+    async def _confirm_target_addressed(self, action: str, at: datetime) -> None:
+        """Mark ``confirmed: true`` on any target whose address appears
+        in a successful action, and seed its service entity.
+
+        Best-effort and idempotent: an action that references a seeded
+        target's address (or host) confirms that target; a mismatch
+        writes nothing.
+
+        LOCAL-PHASE-GAP fix: confirming a target also seeds its
+        ``service`` entity (uncharacterized) so the phase router's
+        ``has_uncharacterized_services`` predicate (ENUMERATION) can
+        fire. Without services the graph never leaves RECON and the
+        model never sees the enumeration/exploitation skill cards
+        (docs/CHANGES_v2.md, LOCAL-PHASE-GAP). Seeding on confirmation
+        (not at initial seed) preserves the architecture's ordering:
+        recon confirms targets first, enumeration characterizes their
+        services second.
+        """
+        targets = await self._graph.list_entities(ENTITY_TARGET)
+        for record in targets:
+            if _payload_bool(record, FIELD_CONFIRMED):
+                continue
+            address = str(record.data.get("address", ""))
+            if address and address in action:
+                payload = dict(record.data)
+                payload[FIELD_CONFIRMED] = True
+                await self._graph.update_entity(record.id, payload, at=at)
+                service_id = f"service-{record.id}"
+                if await self._graph.get_entity(service_id) is None:
+                    await self._create_entity(
+                        service_id,
+                        ENTITY_SERVICE,
+                        {
+                            "address": address,
+                            "characterized": False,
+                            "source_target": record.id,
+                        },
+                        at=at,
+                    )
+                    await self._create_edge(
+                        f"{service_id}-serves-{record.id}",
+                        "SERVICE SERVES TARGET",
+                        service_id,
+                        record.id,
+                        at=at,
+                    )
+
+    async def _mark_service_characterized(self, service_id: str, at: datetime) -> None:
+        """Mark one service ``characterized: true`` (idempotent).
+
+        Called after a successful deterministic service-characterize
+        probe. Characterization is enumeration metadata, not a
+        vulnerability claim — it records that the service's surface has
+        been identified so the run can advance to exploitation.
+        """
+        record = await self._graph.get_entity(service_id)
+        if record is None or _payload_bool(record, FIELD_CHARACTERIZED):
+            return
+        payload = dict(record.data)
+        payload[FIELD_CHARACTERIZED] = True
+        await self._graph.update_entity(service_id, payload, at=at)
 
     def _flag_matches(self, result: ToolResult) -> bool:
         """True when the raw action output matched the flag pattern.

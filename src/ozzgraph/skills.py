@@ -823,9 +823,40 @@ EXPLOIT_CLOUD_IAM = _skill(
     required_capabilities=("http.request", "network.probe"),
 )
 
+#: Pivot hunt: continue reconnaissance after every strategic path is
+#: resolved (dead ends abandoned, hypotheses promoted) — the phase
+#: router routes here on `all_hypotheses_resolved_objectives_open` and
+#: `has_new_reachable_targets`, and without a covering skill the model
+#: could not act (LOCAL-PHASE-GAP). Reuses the bounded probe
+#: vocabulary so a run that exhausted its hypotheses can keep hunting
+#: the real attack surface (e.g. the dead-end benchmark's /flag).
+PIVOT_HUNT = _skill(
+    skill_id="pivot_hunt",
+    name="Pivot and continue hunting",
+    phases=(Phase.PIVOT,),
+    description="Pivot and continue hunting: bounded probes of new paths and targets after dead ends",
+    card=(
+        "Purpose: after every hypothesis is resolved (promoted or\n"
+        "abandoned), continue hunting the authorized surface for the real\n"
+        "finding — decoy paths lead nowhere, so probe what was not yet\n"
+        "examined.\n"
+        "Commands (one bounded action each, never in a loop):\n"
+        "- curl -sS -m 5 -i <target>/robots.txt ; /sitemap.xml ; /.git/HEAD\n"
+        "- curl -sS -m 5 -o /dev/null -w '%{http_code}\\n' <target>/<candidate>\n"
+        "- curl -sS -m 5 -i <target>/<unexamined-path>\n"
+        "- ss -ltn ; nc -w 5 <host> <port> </dev/null   (new local surface)\n"
+        "Treat every hit as a fresh hypothesis with the probe as evidence.\n"
+        "Do NOT: repeat a command already in RECENT ACTIONS, run huge\n"
+        "wordlists in one action, or leave the authorized scope."
+    ),
+    timeout_seconds=90,
+    required_capabilities=("http.request", "network.probe"),
+)
+
 register_skill(RECON_DNS_ENUM)
 register_skill(RECON_HTTP_FINGERPRINT)
 register_skill(RECON_PORT_PROBE)
+register_skill(PIVOT_HUNT)
 register_skill(ENUM_WEB_CONTENT)
 register_skill(ENUM_SERVICE_VERSION)
 register_skill(ENUM_HTTP_APPLICATION)

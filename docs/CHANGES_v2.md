@@ -416,6 +416,35 @@ independently implemented components.
    > carries an explicit NEVER-repeat rule — anything already attempted
    > (OK or REJECTED) must not be proposed again; propose a different
    > path, parameter, or technique instead.
+   > LOCAL-PHASE-GAP (2026-08-11, FIXED): the local environment never
+   > advanced past RECON. The phase router's ENUMERATION transition
+   > needs an uncharacterized `service` entity, and EXPLOITATION needs
+   > a hypothesis stamped `exploitable: true` with supporting evidence —
+   > but NOTHING in local mode ever created a service entity, stamped a
+   > hypothesis exploitable, or set `confirmed: true` on a target
+   > (seeded `false`, never updated). Verified: 77 phase events, all
+   > RECON; 0 service entities; 9 hypotheses, none exploitable. The
+   > model only ever saw RECON skill cards, so ENUMERATION/EXPLOITATION
+   > skill packs were unreachable. Four fixes now make the phase machine
+   > actually advance: (1) a successful probe confirms its target and
+   > seeds one `service` entity (recon → enumeration ordering preserved);
+   > (2) a hypothesis with supporting evidence AND a CWE classification
+   > (a real vulnerability signal, not a benign 200) is stamped
+   > `exploitable: true` → EXPLOITATION; (3) new `pivot_hunt` skill
+   > covers Phase.PIVOT, and a new router transition
+   > `all_hypotheses_resolved_objectives_open → PIVOT` routes dead-ended
+   > runs there (recon-family probes still permitted) instead of the
+   > shell-only REPLAN fallback that previously looped 3398 turns; (4)
+   > deterministic zero-LLM actions no longer consume the model-call
+   > budget (`count_model_call=False`) — the service-characterize probe
+   > is real work but not a completion. Verified: the dead-end benchmark
+   > (previously a 120s budget-exhausted hang) now solves in ~4.5s
+   > through the full RECON → ENUMERATION → PIVOT chain, and OzzGraph
+   > still strictly beats the ReAct baseline on model calls and score.
+   > One further change: `_service_characterize_command` probes the
+   > service's stored address (curl) instead of a placeholder nmap on
+   > the entity id, and benchmark dead-end scripts no longer need a
+   > compensating probe.
 10. `v2/full-regression` — real benchmark suite across the model matrix.
     > V10 (2026-08-08): implemented — `src/ozzgraph/benchmarks/` +
     > `ozzgraph benchmark` CLI + docs/BENCHMARKS.md. The full-regression

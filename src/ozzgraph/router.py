@@ -65,6 +65,14 @@ from ozzgraph.phases import Phase
 from ozzgraph.skills import SkillRegistry, SkillSummary
 from ozzgraph.state_graph import EntityRecord, StateGraph
 
+#: Hypothesis lifecycle status field and resolved values. Mirrors
+#: security_brain's constants; defined locally to avoid the circular
+#: import (security_brain imports planner, planner imports router).
+FIELD_STATUS = "status"
+STATUS_PROMOTED = "promoted"
+STATUS_ABANDONED = "abandoned"
+STATUS_OPEN = "open"
+
 #: Entity types the router reads (docs/DATA_STRATEGY.md, lowercase by
 #: convention).
 ENTITY_TARGET = "target"
@@ -264,6 +272,44 @@ async def _has_new_reachable_targets(graph: StateGraph) -> bool:
     return False
 
 
+def _payload_status(record: EntityRecord) -> str:
+    """The hypothesis lifecycle status; a missing field means open."""
+    value = record.data.get(FIELD_STATUS)
+    if value is None:
+        return STATUS_OPEN
+    if not isinstance(value, str) or not value:
+        raise InvalidGraphStateError(
+            f"entity {record.id!r} payload field {FIELD_STATUS!r} must be a "
+            f"non-empty string, got {type(value).__name__} ({value!r})"
+        )
+    return value
+
+
+async def _all_hypotheses_resolved_objectives_open(graph: StateGraph) -> bool:
+    """True when every hypothesis is resolved but objectives are open.
+
+    The PIVOT signal the ProgressEvaluator computes: each hypothesis
+    is promoted or abandoned, and at least one objective is not
+    complete — every strategic path is dead or done, so the run needs
+    a new direction. Routes to Phase.PIVOT (where recon-family probes
+    remain permitted) instead of REPLAN (shell-only), so a run that
+    exhausted its hypotheses can keep hunting — e.g. the dead-end
+    benchmark's decoys get abandoned and the real flag is still
+    fetched (docs/CHANGES_v2.md, LOCAL-PHASE-GAP).
+    """
+    objectives = await graph.list_entities(ENTITY_OBJECTIVE)
+    if not objectives:
+        return False
+    if all(_payload_bool(record, FIELD_COMPLETED) for record in objectives):
+        return False
+    hypotheses = await graph.list_entities(ENTITY_HYPOTHESIS)
+    if not hypotheses:
+        return False
+    return all(
+        _payload_status(record) in (STATUS_PROMOTED, STATUS_ABANDONED) for record in hypotheses
+    )
+
+
 async def _default_replan(graph: StateGraph) -> bool:
     """The fallback transition: every non-empty graph matches REPLAN.
 
@@ -294,6 +340,11 @@ TRANSITIONS: tuple[Transition, ...] = (
     ),
     Transition("has_new_access", Phase.POST_EXPLOITATION, _has_new_access),
     Transition("has_new_reachable_targets", Phase.PIVOT, _has_new_reachable_targets),
+    Transition(
+        "all_hypotheses_resolved_objectives_open",
+        Phase.PIVOT,
+        _all_hypotheses_resolved_objectives_open,
+    ),
     Transition("default_replan", Phase.REPLAN, _default_replan),
 )
 
