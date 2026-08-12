@@ -445,6 +445,17 @@ independently implemented components.
    > service's stored address (curl) instead of a placeholder nmap on
    > the entity id, and benchmark dead-end scripts no longer need a
    > compensating probe.
+   > REPLAN-NOT-A-DEAD-END (2026-08-11): the REPLAN phase now permits
+   > the recon command family, not just shell. REPLAN is the fallback
+   > phase every non-empty graph lands in when no specific transition
+   > matched (docs/ARCHITECTURE.md: "else phase = REPLAN") — the run
+   > CONTINUES working there, so blocking recon made it a dead end
+   > where every curl probe was rejected (FamilyPermissionError) and
+   > the run spun until budget exhaustion. With recon permitted, the
+   > model keeps probing in REPLAN (verified live: the phase sequence
+   > RECON → ENUMERATION → PIVOT → REPLAN executes real probes in every
+   > phase; the remaining budget exhaustion is model duplicate-loop
+   > behavior, not a policy dead end).
 10. `v2/full-regression` — real benchmark suite across the model matrix.
     > V10 (2026-08-08): implemented — `src/ozzgraph/benchmarks/` +
     > `ozzgraph benchmark` CLI + docs/BENCHMARKS.md. The full-regression

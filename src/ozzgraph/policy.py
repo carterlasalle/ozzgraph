@@ -151,7 +151,14 @@ _PHASE_FAMILIES: dict[str, frozenset[str]] = {
     "EXPLOITATION": frozenset({"shell", "exploit"}),
     "POST_EXPLOITATION": frozenset({"shell", "exploit"}),
     "PIVOT": frozenset({"shell", "recon"}),
-    "REPLAN": frozenset({"shell"}),
+    # REPLAN is the fallback phase every non-empty graph can land in
+    # when no specific transition matched (docs/ARCHITECTURE.md: "else
+    # phase = REPLAN"). The run CONTINUES working there, so the
+    # recon-family probes the model needs to make progress must stay
+    # permitted — a shell-only REPLAN was a dead end where every curl
+    # was rejected and the run spun until the budget exhausted
+    # (LOCAL-PHASE-GAP).
+    "REPLAN": frozenset({"shell", "recon"}),
     "DONE": frozenset(),
 }
 
