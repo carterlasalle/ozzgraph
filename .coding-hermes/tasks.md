@@ -8,6 +8,44 @@ PR = one board task. Decompose each PR with `coding-hermes-model-router` before
 spawning a worker. Follow AGENTS.md invariants + PR scope rules; bridge every
 commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
+**Tick 2026-08-12: LOCAL-PHASE-GAP + 3 follow-ups backfilled — git-history cross-reference
+(idle-protocol step 1) found 4 unrecorded repo-owner commits (4d6185b, df56e70, 94ed99d,
+aa44bf1) newer than the last backfill (a20b5da) — never on the board, never Tier-2 judged.
+Verified in code this tick: (1) 4d6185b LOCAL-PHASE-GAP — local env never advanced past
+RECON (77 phase events all RECON, 0 services, 9 hypotheses none exploitable): successful
+probe confirms target + seeds one service entity; hypothesis with evidence AND CWE
+stamped exploitable:true → EXPLOITATION; new pivot_hunt skill covers PIVOT + router
+transition all_hypotheses_resolved_objectives_open → PIVOT; deterministic zero-LLM
+actions count_model_call=False. (2) df56e70 REPLAN policy — REPLAN now permits
+{shell, recon} (was shell-only dead end; every curl probe rejected FamilyPermissionError).
+(3) 94ed99d skills — pivot_hunt covers Phase.REPLAN too (was ZERO skills → model probes
+silently dropped before the policy gate); no-skill drop records `REJECTED
+NoSkillForPhase: <command>` in RECENT ACTIONS. (4) aa44bf1 runner audit — 4 remaining
+silent drops fixed: privileged-kind proposals (submit/hint/exit) both paths, empty-payload
+run actions both paths, strategic-path no-skill drop — all append `REJECTED <Kind>:
+<detail>` to _recent_actions; kernel-internal errors stay model-invisible. Gates:
+ruff format/check clean, full suite 1307 passed (244.97s, judge re-ran), CI 3/3 success on
+main (runs at 04:00Z on aa44bf1 + 2 prior commits, all success). Judge PASS dfffcced (5/5
+criteria with real command output: router transition table, REPLAN {shell,recon} at
+policy.py:161, pivot_hunt phases=(PIVOT, REPLAN) at skills.py:840, all 7 REJECTED paths +
+count_model_call=False wiring, 1307 passed in 244.97s; verdict committed on gitreins
+branch; first run FAIL 00ccbb1f was the known spurious tier1 tests-step timeout — 120s
+pipeline default vs 259s suite under concurrent gitleaks, re-run PASS). gitreins task
+created → completed → deleted, tasks.yaml clean. DuckBrain write → recall-verified
+(83f1c634, /projects/ozzgraph/tick/2026-08-12-local-phase-gap-followups). NEVER-DONE audit
+(fresh tool output): (1) SPEC — router.py/policy.py/skills.py/runner.py/executor.py all
+present with the backfilled behavior, PASS; (2) DOC — README/CONTRIBUTING/SECURITY/AGENTS
++ 17 docs, PASS; (3) TEST — 64 test files / 40 src modules, judge re-ran full suite 1307
+passed, PASS; (4) DEPS — pydantic-core 2.46.4 pinned by pydantic 2.13.4 (known
+non-actionable), ruff 0.16.2 current, PASS; (5) PITFALL — 0 TODO/FIXME/HACK/XXX, PASS;
+(6) PERF — benchmarks/ + 17 tests, PASS; (7) ENDPOINTS — CLI-only, ozzgraph + halctl
+--help both work, PASS; (8) CI/CD — 3/3 success on main, PASS; (9) DUCKBRAIN — entry
+written + recall-verified, PASS; (10) QUALITY — worktree clean, .gitignore complete, PASS;
+(11) WIRING — both console scripts reachable, PASS; (12) USABILITY — covered by E2E-001
+run #2 (66P/0F/1U), PASS; (13) E2E — run #2 was 2 ticks ago, not due (5-10 ticks), PASS;
+(14) GITREINS-JUDGE — check-gitreins-judge PASS (deepseek-v4-flash). 0 actionable gaps →
+board idle (only E2E-001 + NEVER-DONE) → cooldown 43200s (verified, no reversion).
+
 **Tick 2026-08-11: OZZGRAPH-EXHAUSTIVE + RECON-FEEDBACK backfilled — git-history
 cross-reference (idle-protocol step 1) found 2 unrecorded repo-owner commits
 (e6c5888, bad90a8): never on the board, never judged by gitreins Tier 2.
@@ -715,6 +753,10 @@ tasks.yaml clean.
 
 | ID | Task | Pri | Cpx | Commit | Model |
 |----|------|-----|-----|--------|-------|
+| RUNNER-REJECT-AUDIT | Backfill: audit of silent drops — 4 remaining model-proposal rejections now feed RECENT ACTIONS (privileged-kind submit/hint/exit both paths, empty-payload run actions both paths, strategic-path no-skill drop — all append `REJECTED <Kind>: <detail>`; kernel-internal errors stay model-invisible) (judge PASS dfffcced — judged together with LOCAL-PHASE-GAP backfill, 5/5 criteria, tier1 lint/tests/secrets PASS) | Medium | 2±1 | aa44bf1 | DS-V4-Flash |
+| SKILLS-REPLAN | Backfill: REPLAN no longer silent-drops model probes — pivot_hunt covers Phase.REPLAN too (was ZERO skills → probes dropped before policy gate, model re-proposed forever), no-skill drop records `REJECTED NoSkillForPhase: <command>`, tests updated to new contract (REPLAN planning succeeds, branching graph replans instead of abandoning, BOOTSTRAP stays skill-less fail-loud) (judge PASS dfffcced, 5/5 criteria) | Medium | 2±1 | 94ed99d | DS-V4-Flash |
+| POLICY-REPLAN | Backfill: REPLAN is not a dead end — policy now permits {shell, recon} in fallback phase (was shell-only → every curl probe rejected FamilyPermissionError → spin until budget exhaustion); live-verified on Juice Shop RECON→ENUMERATION→PIVOT→REPLAN executes real probes in every phase (judge PASS dfffcced, 5/5 criteria) | High | 2±1 | df56e70 | DS-V4-Flash |
+| LOCAL-PHASE-GAP | Backfill: wire the phase machine — local env never advanced past RECON (77 phase events all RECON, 0 services, 9 hypotheses none exploitable): successful probe confirms target + seeds one service entity; evidence+CWE hypothesis stamped exploitable:true → EXPLOITATION; new pivot_hunt skill covers PIVOT + router transition all_hypotheses_resolved_objectives_open → PIVOT; deterministic zero-LLM actions count_model_call=False; CHANGES_v2 +29 (judge PASS dfffcced, 5/5 criteria, tier1 lint/tests/secrets PASS; 1307 suite passed in 244.97s) | Critical | 4±1 | 4d6185b | DS-V4-Flash |
 | INT-CI-002 | Fix CI Format failure on main — findings.py:151 unformatted multi-line raise (beb0e05 broke the CI Format job only; Lint/Test/Type/Docker green); mechanical ruff format, CI re-run green on d470784 (judge PASS d366649, 2/2 criteria, tier1 lint/tests/secrets PASS) | High | 1±0 | d470784 | DS-V4-Flash |
 | OZZGRAPH-EXHAUSTIVE | Exhaustive local assessment — OZZGRAPH_EXHAUSTIVE env (default off, byte-for-byte unchanged) → config.exhaustive; local env verdict_satisfies_objectives returns not(exhaustive) (never auto-completes on COMPLETE); planner skips promoted/abandoned hypotheses + NoPlan when none remain open; runner wires config.exhaustive into planner; Juice Shop: 1-2 findings default vs 4 findings in 25-min run (judge PASS c303cf98, 5/5 criteria, tier1 lint/tests/secrets PASS; backfilled via git-history cross-reference) | Medium | 3±1 | e6c5888 | DS-V4-Flash |
 | RECON-FEEDBACK | Rejection feedback tells the model WHICH command was rejected — _record_turn_failure renders `REJECTED DuplicateFingerprintError :: <command>` in RECENT ACTIONS transcript tail; executor passes model_output['action'] through; OUTPUT_CONTRACT NEVER-repeat rule; live: 94→24 duplicate rejections, 7→17 distinct commands, 4→7 findings in same budget (judge PASS c303cf98 — judged together with OZZGRAPH-EXHAUSTIVE, same-file exception on runner.py, shared root cause) | Medium | 2±1 | bad90a8 | DS-V4-Flash |
