@@ -478,18 +478,25 @@ async def test_plan_replanned_when_model_call_budget_exhausted() -> None:
 
 @pytest.mark.asyncio
 async def test_plan_abandoned_when_graph_leaves_plan_phase() -> None:
-    """The graph no longer routing to the plan's phase abandons it (no replan)."""
+    """The graph no longer routing to the plan's phase abandons it (no replan).
+
+    (LOCAL-PHASE-GAP: REPLAN used to have zero skill packs, so a graph
+    that left EXPLOITATION could not derive a replacement plan and was
+    abandoned. pivot_hunt now covers REPLAN, so a branching graph
+    leaving EXPLOITATION REPLANs into the fallback phase instead —
+    the run continues hunting rather than dying.)
+    """
     async with StateGraph(":memory:") as graph:
         await _seed_plan_graph(graph)
-        # no supported exploitable hypothesis remains -> the graph routes to REPLAN,
-        # which has no skill packs, so no replacement plan is derivable
+        # no supported exploitable hypothesis remains -> the graph routes
+        # to REPLAN, which pivot_hunt now covers, so a replacement plan
+        # IS derivable and the plan is re-planned, not abandoned.
         await graph.update_entity("hyp-a", {"exploitable": False, "confidence": 0.8})
         await graph.update_entity("hyp-b", {"exploitable": False, "confidence": 0.7})
         evaluation = await Evaluator().decide_plan(graph)
-    assert evaluation.verdict == PlanVerdict.ABANDON
-    assert evaluation.superseded_by is None
+    assert evaluation.verdict == PlanVerdict.REPLAN
+    assert evaluation.superseded_by is not None
     assert "no longer routes" in evaluation.reason
-    assert "no replacement plan" in evaluation.reason
 
 
 @pytest.mark.asyncio

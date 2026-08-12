@@ -915,6 +915,12 @@ class AutonomousRunner:
 
         proposed_skill = self._proposed_skill(route, plan_decision)
         if proposed_skill is None:
+            # The routed phase has no advertised skills, so the model's
+            # proposal cannot be bound to one and is dropped. Record it
+            # in RECENT ACTIONS so the model SEES that its command was
+            # not executed — a silent drop makes it re-propose the same
+            # command forever (LOCAL-PHASE-GAP: REPLAN had zero skills
+            # and silently discarded every probe).
             self._append(
                 RUNNER_TURN,
                 {
@@ -924,7 +930,16 @@ class AutonomousRunner:
                     "action_kind": parsed.kind,
                     "executed": False,
                     "reason": "no skill available for the routed phase; turn skipped",
+                    **(
+                        {"action": parsed.payload}
+                        if isinstance(parsed.payload, str) and parsed.payload
+                        else {}
+                    ),
                 },
+            )
+            self._recent_actions.append(
+                f"[{route.phase.value}] REJECTED NoSkillForPhase: "
+                f"{_bounded(str(parsed.payload or parsed.rationale or ''), 200)}"
             )
             return None
         if not (parsed.payload or "").strip():

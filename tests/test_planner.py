@@ -35,7 +35,7 @@ from ozzgraph.planner import (
     PlannerSkillUnavailableError,
     PlanStep,
 )
-from ozzgraph.router import EDGE_EVIDENCE_SUPPORTS_HYPOTHESIS, PhaseRouter
+from ozzgraph.router import EDGE_EVIDENCE_SUPPORTS_HYPOTHESIS, PhaseRoute, PhaseRouter
 from ozzgraph.skills import SkillRegistry
 from ozzgraph.state_graph import StateGraph
 
@@ -453,15 +453,29 @@ async def test_invalid_exploitation_direction_payload_raises() -> None:
 
 @pytest.mark.asyncio
 async def test_planning_without_phase_skills_raises() -> None:
-    """A branching graph routed to a phase with no skill packs fails loudly."""
+    """A branching graph routed to a phase with no skill packs fails loudly.
+
+    (LOCAL-PHASE-GAP: REPLAN used to have zero skill packs — the
+    fallback phase every non-empty graph can land in — so planning
+    there raised. pivot_hunt now covers REPLAN, so REPLAN planning
+    succeeds; BOOTSTRAP (reachable only on an empty graph) remains the
+    skill-less phase that must fail loudly, AGENTS.md rule #9.)
+    """
     async with StateGraph(":memory:") as graph:
         await _seed_baseline(graph)
         await _seed_hypothesis(graph, "hyp-a", ("a1",), data={"confidence": 0.8})
         await _seed_hypothesis(graph, "hyp-b", ("b1",), data={"confidence": 0.7})
         route = await PhaseRouter().route(graph)
         assert route.phase == Phase.REPLAN
-        with pytest.raises(PlannerSkillUnavailableError, match="REPLAN"):
-            await Planner().plan(graph, route)
+        # REPLAN is now covered by pivot_hunt — planning succeeds.
+        plan = await Planner().plan(graph, route)
+        assert isinstance(plan, Plan)
+        assert plan.steps
+        # BOOTSTRAP has no skills and a branching graph cannot even
+        # route there; a manually routed skill-less phase fails loudly.
+        bootstrap_route = PhaseRoute(phase=Phase.BOOTSTRAP, predicate="graph_is_empty")
+        with pytest.raises(PlannerSkillUnavailableError, match="BOOTSTRAP"):
+            await Planner().plan(graph, bootstrap_route)
 
 
 def test_error_hierarchy_is_typed() -> None:

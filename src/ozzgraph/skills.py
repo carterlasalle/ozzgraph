@@ -827,13 +827,17 @@ EXPLOIT_CLOUD_IAM = _skill(
 #: resolved (dead ends abandoned, hypotheses promoted) — the phase
 #: router routes here on `all_hypotheses_resolved_objectives_open` and
 #: `has_new_reachable_targets`, and without a covering skill the model
-#: could not act (LOCAL-PHASE-GAP). Reuses the bounded probe
-#: vocabulary so a run that exhausted its hypotheses can keep hunting
-#: the real attack surface (e.g. the dead-end benchmark's /flag).
+#: could not act (LOCAL-PHASE-GAP). Also covers REPLAN — the fallback
+#: phase every non-empty graph lands in when no transition matched —
+#: so the model's probes are not silently dropped there for lack of a
+#: skill (a 0-skill phase rejected every proposal before the policy
+#: gate). Reuses the bounded probe vocabulary so a run that exhausted
+#: its hypotheses can keep hunting the real attack surface (e.g. the
+#: dead-end benchmark's /flag, Juice Shop's /rest/* endpoints).
 PIVOT_HUNT = _skill(
     skill_id="pivot_hunt",
     name="Pivot and continue hunting",
-    phases=(Phase.PIVOT,),
+    phases=(Phase.PIVOT, Phase.REPLAN),
     description="Pivot and continue hunting: bounded probes of new paths and targets after dead ends",
     card=(
         "Purpose: after every hypothesis is resolved (promoted or\n"
@@ -844,6 +848,7 @@ PIVOT_HUNT = _skill(
         "- curl -sS -m 5 -i <target>/robots.txt ; /sitemap.xml ; /.git/HEAD\n"
         "- curl -sS -m 5 -o /dev/null -w '%{http_code}\\n' <target>/<candidate>\n"
         "- curl -sS -m 5 -i <target>/<unexamined-path>\n"
+        "- curl -sS -m 5 <target>/<candidate> | grep -oE '/api/[A-Za-z0-9_/-]+'\n"
         "- ss -ltn ; nc -w 5 <host> <port> </dev/null   (new local surface)\n"
         "Treat every hit as a fresh hypothesis with the probe as evidence.\n"
         "Do NOT: repeat a command already in RECENT ACTIONS, run huge\n"
