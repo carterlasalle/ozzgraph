@@ -742,6 +742,11 @@ class AutonomousRunner:
             # The model reasoned or proposed a privileged/unknown kind.
             # Privileged kinds (submit/hint/exit) are supervisor-owned
             # (AGENTS.md rule #5) and are NEVER executed by the runner.
+            # AUDIT (2026-08-11): a privileged-kind proposal must also
+            # land in RECENT ACTIONS — without feedback the model
+            # re-proposes submit forever (observed: scripted benchmark
+            # models emitting `ACTION: submit` for 3000+ turns).
+            is_think = parsed.kind == "think"
             self._append(
                 RUNNER_TURN,
                 {
@@ -753,13 +758,22 @@ class AutonomousRunner:
                     "executed": False,
                     "reason": (
                         "privileged or non-action kind; supervisor-owned, not executed"
-                        if parsed.kind not in ("think",)
+                        if not is_think
                         else "reasoning only"
                     ),
                 },
             )
+            if not is_think:
+                self._recent_actions.append(
+                    f"[{route.phase.value}] REJECTED PrivilegedKind {parsed.kind}: "
+                    f"supervisor-owned, never executed by the runner"
+                )
             return None
         if not (parsed.payload or "").strip():
+            # AUDIT (2026-08-11): an empty-payload run action must also
+            # land in RECENT ACTIONS — a failure event alone is invisible
+            # to the model's context, so it would re-propose the same
+            # empty action forever.
             self._append(
                 RUNNER_MODEL_FAILURE,
                 {
@@ -767,12 +781,18 @@ class AutonomousRunner:
                     "reason": "run action with an empty payload",
                 },
             )
+            self._recent_actions.append(
+                f"[{route.phase.value}] REJECTED EmptyPayload: run action had no command"
+            )
             return None
 
         task = await self._brain.tasks.build_strategic(
             route, decision.plan, parsed, self._failed_actions
         )
         if task is None:
+            # AUDIT (2026-08-11): same feedback contract as the
+            # model-turn no-skill drop — the model must see its proposal
+            # was not executed.
             self._append(
                 RUNNER_TURN,
                 {
@@ -782,7 +802,16 @@ class AutonomousRunner:
                     "action_kind": parsed.kind,
                     "executed": False,
                     "reason": "no skill available for the routed phase; turn skipped",
+                    **(
+                        {"action": parsed.payload}
+                        if isinstance(parsed.payload, str) and parsed.payload
+                        else {}
+                    ),
                 },
+            )
+            self._recent_actions.append(
+                f"[{route.phase.value}] REJECTED NoSkillForPhase: "
+                f"{_bounded(str(parsed.payload or parsed.rationale or ''), 200)}"
             )
             return None
 
@@ -895,6 +924,11 @@ class AutonomousRunner:
             # The model reasoned or proposed a privileged/unknown kind.
             # Privileged kinds (submit/hint/exit) are supervisor-owned
             # (AGENTS.md rule #5) and are NEVER executed by the runner.
+            # AUDIT (2026-08-11): a privileged-kind proposal must also
+            # land in RECENT ACTIONS — without feedback the model
+            # re-proposes submit forever (observed: scripted benchmark
+            # models emitting `ACTION: submit` for 3000+ turns).
+            is_think = parsed.kind == "think"
             self._append(
                 RUNNER_TURN,
                 {
@@ -906,11 +940,16 @@ class AutonomousRunner:
                     "executed": False,
                     "reason": (
                         "privileged or non-action kind; supervisor-owned, not executed"
-                        if parsed.kind not in ("think",)
+                        if not is_think
                         else "reasoning only"
                     ),
                 },
             )
+            if not is_think:
+                self._recent_actions.append(
+                    f"[{route.phase.value}] REJECTED PrivilegedKind {parsed.kind}: "
+                    f"supervisor-owned, never executed by the runner"
+                )
             return None
 
         proposed_skill = self._proposed_skill(route, plan_decision)
@@ -943,12 +982,18 @@ class AutonomousRunner:
             )
             return None
         if not (parsed.payload or "").strip():
+            # AUDIT (2026-08-11): empty-payload feedback (see the
+            # strategic-turn twin) — the model must see its empty
+            # proposal was rejected, not re-propose it silently.
             self._append(
                 RUNNER_MODEL_FAILURE,
                 {
                     "phase": route.phase.value,
                     "reason": "run action with an empty payload",
                 },
+            )
+            self._recent_actions.append(
+                f"[{route.phase.value}] REJECTED EmptyPayload: run action had no command"
             )
             return None
 
