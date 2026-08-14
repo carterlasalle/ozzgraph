@@ -8,6 +8,45 @@ PR = one board task. Decompose each PR with `coding-hermes-model-router` before
 spawning a worker. Follow AGENTS.md invariants + PR scope rules; bridge every
 commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
+**Tick 2026-08-13 (#4): E2E-001 run #3 closed (judge PASS 46b440f, commit
+79de120 — verified this tick).** E2E-001 was due (run #2 was 2026-08-10; tick
+#6 since, inside the 5-10 window) → dispatched worker (deepseek-v4-flash @
+openrouter) to refresh the F2B/B2F cycle against the current kernel. Fresh
+driver run (`.coding-hermes/tests/scripts/e2e_001_driver.py` against
+tests/mcp_fake.py FakeMcpServer + ozzgraph.lab "hidden-routes"): **66 PASS /
+0 FAIL / 1 UNTESTABLE (67 checks)** — identical totals to run #2, no new gaps.
+Forensic sweep fresh: `run_events_with_flag_not_replay_required: []` —
+FLAGLEAK-001 re-verified fixed (run-only events carry digests, raw flag only in
+replay-required locations). e2e-output/tasks.md got a Run #3 summary section
+with per-dimension counts; .coding-hermes/tests/test-state.toml
+last_full_test updated to 2026-08-14T00:09:53Z with counters consistent
+(worker verified via ad-hoc TOML script — 7/7 checks); _index.md counts
+refreshed. No FAIL checks → no board tasks injected; no production code
+touched; driver scripts unchanged (no kernel contract drift). Gates: worker
+ran ruff check + ruff format --check + mypy src (62 files) clean; pre-commit
+hook ran full suite (Tier 1 PASS); Tier 2 judge PASS 46b440f (4/4 criteria,
+verdict committed on gitreins branch); foreman re-verified commit pushed
+(origin/main..HEAD=0) + CI green on 79de120. gitreins task
+created → completed → deleted, tasks.yaml clean. NEVER-DONE 14-point audit
+(fresh tool output): (1) SPEC — router/policy/skills/runner/executor/
+supervisor/config all present, PASS; (2) DOC — README/CONTRIBUTING/SECURITY/
+AGENTS + 16 docs, PASS; (3) TEST — 48 focused tests (test_config +
+test_objective_acceptance, 1.40s) passed fresh, PASS; (4) DEPS — 5 outdated
+ALL non-actionable (ast-serialize 0.7.0→0.8.0 + librt 0.14.0→0.15.0 via mypy,
+pydantic-core 2.48.0 pinned by pydantic 2.13.4 — installed 2.46.4,
+typing-inspection 0.4.2→0.4.4 via pydantic, ruff 0.16.2→0.16.3 patch-level
+dev-tool bump with loose >=0.6 constraint — no security advisory), PASS; (5)
+PITFALL — 0 TODO/FIXME/HACK/XXX, PASS; (6) PERF — benchmarks/ package + 17
+benchmark tests present, PASS; (7) ENDPOINTS — CLI-only, `ozzgraph --help` +
+`halctl --help` both work, PASS; (8) CI/CD — gh run list green on 79de120 +
+3 prior success, PASS; (9) DUCKBRAIN — tick entry written + recall-verified,
+PASS; (10) QUALITY — worktree clean, .gitignore complete, PASS; (11) WIRING —
+ozzgraph + halctl console scripts registered, PASS; (12) USABILITY — covered
+by this E2E run #3 (66P/0F/1U), PASS; (13) E2E — run #3 done THIS tick, PASS;
+(14) GITREINS-JUDGE — check-gitreins-judge PASS (model=deepseek-v4-flash).
+0 actionable gaps → board idle (only E2E-001 + NEVER-DONE) → cooldown 43200s
+(PUT + verify).
+
 **Tick 2026-08-13 (#3): NEVER-DONE 14-point audit — 0 actionable gaps, board idle.**
 Idle protocol: git-history cross-reference clean (no commits since 50cebb1,
 origin/main..HEAD=0), GitReins tasks.yaml empty (0 tasks), scheduler cooldown
