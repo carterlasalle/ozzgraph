@@ -1,11 +1,13 @@
 [project]
 name = "ozzgraph"
-last_full_test = "2026-08-10T09:28:00Z"
+last_full_test = "2026-08-14T00:09:53Z"
 
 # Coverage counters: one increment per filed report in the matching subdir.
-# E2E-001 (2026-08-10) exercised f2b/b2f/negative/crypto/wiring/audit via the
-# e2e_001_driver.py check suite (raw_results.json counts). visual/structure = 0:
-# not covered by this CLI-only run (no render/browser or schema-dim checks).
+# E2E-001 run #3 (2026-08-14) re-ran the full driver check suite
+# (e2e_001_driver.py -> e2e-output/raw_results.json): totals 66 PASS /
+# 0 FAIL / 1 UNTESTABLE — per-dimension counts UNCHANGED vs run #2
+# (2026-08-10), so counters stay. visual/structure = 0: not covered by
+# this CLI-only run (no render/browser or schema-dim checks).
 test_coverage = { f2b = 10, b2f = 5, negative = 34, visual = 0, crypto = 9, wiring = 3, structure = 0, audit = 5 }
 
 [[untested_paths]]
@@ -27,6 +29,6 @@ task_ref = "TEST-INFRA-001"
 
 [[known_gaps]]
 dimension = "crypto"
-finding = "FLAGLEAK-001 (RESOLVED 2026-08-10): raw flag material persisted at rest in run-only event-log events (flags.candidate_found, submission.accepted, submission.attempted). Fixed in a667733 — run-only events now carry flag_sha256+flag_length digests; raw flag retained only in replay-required locations (graph.entity_created in actions.jsonl, artifact content file, graph.db, replay.db). Verified by fresh E2E-001 run 2026-08-10: sweep check PASS, forensic run_events_with_flag_not_replay_required: []"
+finding = "FLAGLEAK-001 (RESOLVED 2026-08-10): raw flag material persisted at rest in run-only event-log events (flags.candidate_found, submission.accepted, submission.attempted). Fixed in a667733 — run-only events now carry flag_sha256+flag_length digests; raw flag retained only in replay-required locations (graph.entity_created in actions.jsonl, artifact content file, graph.db, replay.db). Verified by E2E-001 run #2 (2026-08-10) AND run #3 (2026-08-14): sweep check PASS, forensic run_events_with_flag_not_replay_required: [] both runs"
 severity = "high"
 task_ref = "E2E-001"
