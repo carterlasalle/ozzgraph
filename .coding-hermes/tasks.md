@@ -8,6 +8,35 @@ PR = one board task. Decompose each PR with `coding-hermes-model-router` before
 spawning a worker. Follow AGENTS.md invariants + PR scope rules; bridge every
 commit to a `gitreins task complete` so the Tier 2 judge evaluates real code.
 
+**Tick 2026-08-15 (#8): NEVER-DONE 14-point audit — 0 actionable gaps, board idle.**
+Idle protocol: git-history cross-reference clean (no new commits since abd7cc0,
+origin/main..HEAD=0), GitReins tasks.yaml empty (0 tasks), scheduler cooldown
+43200s verified no reversion (GET /api/v1/projects/ozzgraph → cooldown_s=43200,
+enabled=true). Fresh tool output this tick (run in-session, not inherited): (1)
+SPEC — docs/ 16 + adr/ 13, router/policy/skills/runner/executor present, PASS;
+(2) DOC — README/CONTRIBUTING/SECURITY/AGENTS + 16 docs, no LICENSE required
+(pyproject declares none), PASS; (3) TEST — 62 src modules / 59 test files, 48
+focused tests (test_config + test_objective_acceptance) passed fresh in 1.95s,
+PASS; (4) DEPS — 7 outdated ALL non-actionable (`uv pip list --outdated`:
+pydantic-core 2.48.0 pinned by pydantic==2.46.4 [installed 2.46.4, verified via
+importlib], ast-serialize/librt/typing-inspection via mypy/pydantic, ruff/mypy/
+types-pyyaml patch-level dev-tools, no security advisory), PASS; (5) PITFALL — 0
+TODO/FIXME/HACK/XXX + 0 stubs in src, PASS; (6) PERF — benchmarks/ registry +
+harness present, PASS; (7) ENDPOINTS — CLI-only, `ozzgraph --help` + `halctl
+--help` both OK, PASS; (8) CI/CD — gh run list 3/3 success on main (abd7cc0
+board ×2 + f20b475), PASS; (9) DUCKBRAIN — tick entry written + recall-verified
+(bfe1a717, /projects/ozzgraph/tick/2026-08-15-idle-8), PASS; (10) QUALITY — ruff
+format --check clean (62 files) + ruff check clean + mypy src strict (Success, 62
+files, via project gate) + worktree clean, PASS; (11) WIRING — ozzgraph + halctl
+console scripts registered + reachable, PASS; (12) USABILITY — covered by E2E-001
+run #3 (66P/0F/1U), PASS; (13) E2E — run #3 was at tick #4 (4 ticks ago), NOT due
+(5-10 ticks), PASS; (14) GITREINS-JUDGE — check-gitreins-judge PASS
+(deepseek/deepseek-v4-flash-0731). 0 actionable gaps → board idle (only E2E-001 +
+NEVER-DONE) → cooldown 43200s (verified via GET, no reversion). No gitreins task
+lifecycle this tick: NEVER-DONE audit produced zero code — board-only commit,
+nothing for the Tier 2 judge to evaluate (precedent: all prior idle ticks on this
+board).
+
 **Tick 2026-08-15 (#7): NEVER-DONE 14-point audit — 0 actionable gaps, board idle.**
 Idle protocol: git-history cross-reference clean (no new commits since f20b475,
 origin/main..HEAD=0), GitReins tasks.yaml empty (0 tasks), scheduler cooldown
