@@ -13,7 +13,7 @@ Infrastructure dir: `.coding-hermes/tests/` (scaffold created by TEST-INFRA-001)
 - **E2E-001 driver** (`.coding-hermes/tests/scripts/e2e_001_driver.py`): runs
   the REAL kernel end-to-end (f2b/b2f/negative/crypto/wiring/audit) against
   `tests/mcp_fake.py` + `ozzgraph.lab` "hidden-routes"; 66 PASS / 0 FAIL /
-  1 UNTESTABLE on 2026-08-14 (run #3). Evidence: `e2e-output/raw_results.json`.
+  1 UNTESTABLE on 2026-08-16 (run #4). Evidence: `e2e-output/raw_results.json`.
 - **CI docker gate**: non-root-user + startup-evidence assertions.
 - **Release DoD rehearsal**: docs/RELEASE.md maps every DoD item to
   evidence (19/19 PASS at v1.0.0).
@@ -27,7 +27,7 @@ and known-gap inventory): `visual` and `structure` dimensions have coverage
 
 ## Coverage by Dimension
 
-Counters reflect the latest E2E-001 driver run (2026-08-14, 66 PASS / 0 FAIL
+Counters reflect the latest E2E-001 driver run (2026-08-16, 66 PASS / 0 FAIL
 / 1 UNTESTABLE; see `e2e-output/raw_results.json`).
 
 | Dimension | Coverage | Status | Report dir |

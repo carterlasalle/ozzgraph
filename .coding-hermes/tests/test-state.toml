@@ -1,13 +1,13 @@
 [project]
 name = "ozzgraph"
-last_full_test = "2026-08-14T00:09:53Z"
+last_full_test = "2026-08-16T13:36:00Z"
 
 # Coverage counters: one increment per filed report in the matching subdir.
-# E2E-001 run #3 (2026-08-14) re-ran the full driver check suite
+# E2E-001 run #4 (2026-08-16) re-ran the full driver check suite
 # (e2e_001_driver.py -> e2e-output/raw_results.json): totals 66 PASS /
-# 0 FAIL / 1 UNTESTABLE — per-dimension counts UNCHANGED vs run #2
-# (2026-08-10), so counters stay. visual/structure = 0: not covered by
-# this CLI-only run (no render/browser or schema-dim checks).
+# 0 FAIL / 1 UNTESTABLE — per-dimension counts UNCHANGED vs runs #2/#3
+# (2026-08-10 / 2026-08-14), so counters stay. visual/structure = 0: not
+# covered by this CLI-only run (no render/browser or schema-dim checks).
 test_coverage = { f2b = 10, b2f = 5, negative = 34, visual = 0, crypto = 9, wiring = 3, structure = 0, audit = 5 }
 
 [[untested_paths]]
@@ -29,6 +29,6 @@ task_ref = "TEST-INFRA-001"
 
 [[known_gaps]]
 dimension = "crypto"
-finding = "FLAGLEAK-001 (RESOLVED 2026-08-10): raw flag material persisted at rest in run-only event-log events (flags.candidate_found, submission.accepted, submission.attempted). Fixed in a667733 — run-only events now carry flag_sha256+flag_length digests; raw flag retained only in replay-required locations (graph.entity_created in actions.jsonl, artifact content file, graph.db, replay.db). Verified by E2E-001 run #2 (2026-08-10) AND run #3 (2026-08-14): sweep check PASS, forensic run_events_with_flag_not_replay_required: [] both runs"
+finding = "FLAGLEAK-001 (RESOLVED 2026-08-10): raw flag material persisted at rest in run-only event-log events (flags.candidate_found, submission.accepted, submission.attempted). Fixed in a667733 — run-only events now carry flag_sha256+flag_length digests; raw flag retained only in replay-required locations (graph.entity_created in actions.jsonl, artifact content file, graph.db, replay.db). Verified by E2E-001 runs #2 (2026-08-10), #3 (2026-08-14), and #4 (2026-08-16): sweep check PASS, forensic run_events_with_flag_not_replay_required: [] in all runs"
 severity = "high"
 task_ref = "E2E-001"

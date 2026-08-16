@@ -1,5 +1,61 @@
 # E2E-001 — F2B/B2F End-to-End Cycle (ozzgraph)
 
+## Run #4 summary (2026-08-16)
+
+- **Date:** 2026-08-16 13:36 UTC (06:36 PDT) — fresh run against the
+  current kernel. Previous runs: #1 2026-08-07 (65 PASS / 1 FAIL / 1
+  UNTESTABLE), #2 2026-08-10 (66 PASS / 0 FAIL / 1 UNTESTABLE), #3
+  2026-08-14 (66 PASS / 0 FAIL / 1 UNTESTABLE).
+- **Driver:** `.coding-hermes/tests/scripts/e2e_001_driver.py` — runs the REAL
+  ozzgraph kernel end-to-end against `tests/mcp_fake.py` FakeMcpServer (HalCTF
+  platform side) + `ozzgraph.lab` "hidden-routes" target (challenge side). No
+  production code touched; flag material redacted in all output.
+- **Forensic:** `.coding-hermes/tests/scripts/e2e_001_forensic.py` — classifies
+  every store/event carrying the test flag (event log per event_type, graph.db
+  per entity, artifact index vs content, replay db).
+- **Totals:** 66 PASS / 0 FAIL / 1 UNTESTABLE (67 checks) — identical to runs
+  #2 and #3; FLAGLEAK-001 remains fixed; no new gaps, no driver changes needed
+  (kernel contract unchanged since run #3).
+- **Raw data:** `e2e-output/raw_results.json`, `e2e-output/forensic_analysis.json`
+  (regenerated 2026-08-16).
+
+### Counts per dimension
+
+| Dimension | PASS | FAIL | UNTESTABLE |
+|-----------|------|------|------------|
+| f2b       | 10   | 0    | 0          |
+| b2f       | 5    | 0    | 0          |
+| negative  | 34   | 0    | 1          |
+| wiring    | 3    | 0    | 0          |
+| audit     | 5    | 0    | 0          |
+| crypto    | 9    | 0    | 0          |
+| **TOTAL** | **66** | **0** | **1**    |
+
+### Forensic sweep result
+
+- `run_events_with_flag_not_replay_required`: **[]** ✓ — no run-only event
+  (`flags.candidate_found`, `submission.attempted`, `submission.accepted`)
+  carries the raw flag; all carry `flag_sha256` + `flag_length` digests.
+- Raw-flag locations (all replay-required): `actions.jsonl` —
+  `graph.entity_created` events only; the content-addressed artifact content
+  file (one hit, id `8956b907…`); `graph.db` (binary sqlite entity payloads).
+  Artifact INDEX records carry no flag.
+- `event_types_containing_raw_flag`: `["graph.entity_created"]` only
+  (same as runs #2 and #3).
+- Graph entities carrying the flag: `observation` (`obs-1`), `flag_candidate`
+  (`flag-…`), `submission` (`submission-1`) — all replay-required entity
+  types, consistent with prior runs.
+
+## No new gaps this run (run #4)
+
+The fresh 2026-08-16 run (driver + forensic) revealed **no new findings**:
+0 FAIL across all six exercised dimensions; the only UNTESTABLE remains the
+NUL-byte flag (by design — `execve` forbids NUL in argv, no CLI path to
+test). Driver assertions needed no updates (kernel contract did not drift
+since run #3). No new task added to `.coding-hermes/tasks.md`.
+
+---
+
 ## Run #3 summary (2026-08-14)
 
 - **Date:** 2026-08-14 00:09 UTC (2026-08-13 17:09 PDT) — fresh run against the
@@ -124,5 +180,5 @@ A flag containing a NUL byte (`\x00`) cannot be expressed through the halctl CLI
 
 ## Artifacts
 
-- `e2e-output/raw_results.json` — per-check PASS/FAIL/UNTESTABLE with details (regenerated 2026-08-14, run #3).
-- `e2e-output/forensic_analysis.json` — flag-material locations, event-type classification, graph entity list, state-dir sweep (regenerated 2026-08-14, run #3).
+- `e2e-output/raw_results.json` — per-check PASS/FAIL/UNTESTABLE with details (regenerated 2026-08-16, run #4).
+- `e2e-output/forensic_analysis.json` — flag-material locations, event-type classification, graph entity list, state-dir sweep (regenerated 2026-08-16, run #4).
